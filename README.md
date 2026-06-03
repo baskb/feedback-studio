@@ -44,11 +44,11 @@ plus a self-contained Node server that does the serving and injection.
 ## Install (Claude Code)
 
 ```
-/plugin marketplace add Bastiaan-K/feedback-studio
+/plugin marketplace add baskb/feedback-studio
 /plugin install feedback-studio@feedback-studio
 ```
 
-(Replace `Bastiaan-K/feedback-studio` with wherever you host this repo.)
+(The repo is currently private; make it public, or grant access, before others can add it.)
 
 Then, in any project:
 

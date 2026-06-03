@@ -2,3 +2,9 @@ node_modules/
 .feedback/
 .DS_Store
 *.log
+
+# Internal cross-session state — never ship
+PROGRESS.md
+DECISIONS.md
+MEMORY.md
+CLAUDE.md

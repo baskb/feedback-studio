@@ -560,7 +560,7 @@
       } else {
         const res = await fetch(API + '/comments', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ page: PAGE, pageTitle: document.title, url: location.href, anchor: opts.anchor, text, type: ctype }),
+          body: JSON.stringify({ page: PAGE, pageTitle: document.title, url: location.href, anchor: opts.anchor, text, type: ctype, sourceFile: window.__kbfSource || '' }),
         });
         const data = await res.json();
         comments.push(data.comment);

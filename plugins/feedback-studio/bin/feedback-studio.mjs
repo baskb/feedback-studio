@@ -19,8 +19,8 @@ import https from 'node:https';
 import net from 'node:net';
 import os from 'node:os';
 import { execSync, spawn } from 'node:child_process';
-import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
-import { existsSync, readFileSync, watch } from 'node:fs';
+import { readFile, writeFile, mkdir, stat, readdir } from 'node:fs/promises';
+import { existsSync, readFileSync, statSync, watch } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -46,6 +46,18 @@ const PORT = Number(args.port || process.env.PORT || 4444);
 const USE_HTTPS = !!args.https || process.env.HTTPS === '1';
 const PROXY = args.proxy ? String(args.proxy).replace(/\/+$/, '') : null;
 
+// Markdown review mode: --md <file.md> or --md <dir-of-md>.
+const MD_MODE = !!args.md;
+let MD_ROOT = null; // directory that md paths are resolved under
+let MD_SINGLE = null; // the single .md file, when --md points at one file
+if (MD_MODE) {
+  const p = path.resolve(process.cwd(), String(args.md));
+  try {
+    if (statSync(p).isDirectory()) MD_ROOT = p;
+    else { MD_ROOT = path.dirname(p); MD_SINGLE = p; }
+  } catch (e) { MD_ROOT = path.resolve(process.cwd()); }
+}
+
 const CWD = process.cwd();
 const DATA_DIR = path.join(CWD, '.feedback');
 const DATA_FILE = path.join(DATA_DIR, 'comments.json');
@@ -64,7 +76,7 @@ function resolveStaticDir() {
   }
   return null;
 }
-const STATIC_DIR = PROXY ? null : resolveStaticDir();
+const STATIC_DIR = PROXY || MD_MODE ? null : resolveStaticDir();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -162,6 +174,7 @@ async function exportMarkdown(comments) {
       const st = c.status && c.status !== 'open' ? ` · ${c.status}` : '';
       const box = (c.status === 'resolved' || c.status === 'rejected') ? '[x]' : '[ ]';
       md += `- ${box} **#${i}** \`${type}\` — on a ${kind} · by ${who}${st}\n`;
+      if (c.sourceFile) md += `  - file: \`${esc(c.sourceFile)}\`\n`;
       const quote = (c.anchor?.snippet || c.anchor?.rangeText || '').trim().replace(/\s+/g, ' ');
       if (quote) md += `  - anchor text: "${esc(quote).slice(0, 200)}"\n`;
       if (c.anchor?.selector) md += `  - css: \`${esc(c.anchor.selector)}\`\n`;
@@ -249,6 +262,7 @@ async function handleApi(req, res, url) {
         page: body.page || '/',
         pageTitle: body.pageTitle || '',
         url: body.url || '',
+        sourceFile: (body.sourceFile || '').toString().slice(0, 300),
         anchor: body.anchor || {},
         type,
         text: (body.text || '').trim(),
@@ -405,6 +419,122 @@ function openBrowser(url) {
   } catch (e) {}
 }
 
+// ---------- markdown review mode ----------
+let _marked = null;
+async function ensureMarked() {
+  if (_marked) return _marked;
+  const depsDir = path.join(GLOBAL_DATA, 'deps');
+  const pkgDir = path.join(depsDir, 'node_modules', 'marked');
+  // Load via ESM dynamic import of the resolved entry file (avoids the CJS
+  // negative-resolution cache that bites when we install during this process).
+  const load = async () => {
+    if (!existsSync(pkgDir)) return null;
+    let cands = ['lib/marked.esm.js', 'lib/marked.cjs'];
+    try {
+      const pkg = JSON.parse(readFileSync(path.join(pkgDir, 'package.json'), 'utf-8'));
+      const exp = pkg.exports && pkg.exports['.'];
+      cands = [exp && exp.import, exp && exp.default, pkg.module, pkg.main, ...cands].filter(Boolean);
+    } catch (e) {}
+    for (const c of cands) {
+      try {
+        const m = await import(pathToFileURL(path.join(pkgDir, c)).href);
+        const mk = m.marked || m.default || m;
+        if (mk && typeof mk.parse === 'function') return mk;
+      } catch (e) {}
+    }
+    return null;
+  };
+  _marked = await load();
+  if (_marked) return _marked;
+  console.log('  Setting up the Markdown renderer (one-time)...');
+  await mkdir(depsDir, { recursive: true });
+  if (!existsSync(path.join(depsDir, 'package.json'))) await writeFile(path.join(depsDir, 'package.json'), '{"name":"feedback-studio-deps","private":true}');
+  execSync('npm install marked@^12 --no-audit --no-fund --loglevel=error', { cwd: depsDir, stdio: 'inherit' });
+  _marked = await load();
+  if (!_marked) throw new Error('could not load the Markdown renderer (marked)');
+  return _marked;
+}
+
+function mdDocShell(title, sourceRel, bodyHtml) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title.replace(/[<>&]/g, '')}</title>
+<style>
+  :root { --ink:#1f1e1c; --soft:#565449; --muted:#8a8578; --paper:#faf9f5; --rule:#e7e4db; --clay:#c4623f; --code:#f2efe6; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink);
+    font:16px/1.7 ui-serif, Georgia, "Times New Roman", serif; -webkit-font-smoothing:antialiased; }
+  .doc { max-width: 46rem; margin: 0 auto; padding: 56px 24px 160px; }
+  .doc-source { font:600 12px/1 ui-monospace,"Fira Mono",monospace; color:var(--muted);
+    letter-spacing:.04em; text-transform:uppercase; margin-bottom:28px; padding-bottom:14px; border-bottom:1px solid var(--rule); }
+  h1,h2,h3,h4 { font-family: ui-sans-serif,-apple-system,"Segoe UI",system-ui,sans-serif; line-height:1.25; letter-spacing:-0.01em; margin:1.8em 0 .6em; }
+  h1 { font-size:2em; margin-top:0; } h2 { font-size:1.5em; } h3 { font-size:1.22em; } h4 { font-size:1.05em; }
+  p, li { color:var(--ink); } a { color:var(--clay); }
+  ul,ol { padding-left:1.4em; } li { margin:.25em 0; }
+  blockquote { margin:1.2em 0; padding:.4em 1.1em; border-left:3px solid var(--clay); color:var(--soft); background:rgba(196,98,63,.05); border-radius:0 8px 8px 0; }
+  code { font:0.88em ui-monospace,"Fira Mono",monospace; background:var(--code); padding:.12em .4em; border-radius:5px; }
+  pre { background:var(--code); padding:14px 16px; border-radius:10px; overflow:auto; } pre code { background:none; padding:0; }
+  table { border-collapse:collapse; width:100%; margin:1.3em 0; font:14px/1.5 ui-sans-serif,system-ui,sans-serif; }
+  th,td { border:1px solid var(--rule); padding:8px 11px; text-align:left; } th { background:#f1eee6; font-weight:650; }
+  img { max-width:100%; border-radius:8px; } hr { border:none; border-top:1px solid var(--rule); margin:2.4em 0; }
+</style></head>
+<body>
+  <article class="doc">
+    <div class="doc-source">${(sourceRel || '').replace(/[<>&]/g, '')}</div>
+    ${bodyHtml}
+  </article>
+  <script>window.__kbfSource=${JSON.stringify(sourceRel || '')};</script>
+</body></html>`;
+}
+
+async function renderMd(file) {
+  const marked = await ensureMarked();
+  const src = await readFile(file, 'utf-8');
+  const body = marked.parse(src, { gfm: true, breaks: false });
+  return mdDocShell(path.basename(file), path.relative(CWD, file).split(path.sep).join('/'), body);
+}
+
+async function listMdFiles(dir, base = dir) {
+  const out = [];
+  let entries = [];
+  try { entries = await readdir(dir, { withFileTypes: true }); } catch (e) { return out; }
+  for (const e of entries) {
+    if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) out.push(...(await listMdFiles(full, base)));
+    else if (/\.md$/i.test(e.name)) out.push(path.relative(base, full).split(path.sep).join('/'));
+  }
+  return out.sort();
+}
+
+async function renderMdIndex() {
+  const files = await listMdFiles(MD_ROOT);
+  const items = files.map((rel) => `<li><a href="/${rel.replace(/\.md$/i, '')}">${rel}</a></li>`).join('\n');
+  const body = `<h1>Markdown files</h1><p>${files.length} document${files.length === 1 ? '' : 's'} to review.</p><ul>${items || '<li>(none found)</li>'}</ul>`;
+  return mdDocShell('Markdown files', path.relative(CWD, MD_ROOT).split(path.sep).join('/') || '.', body);
+}
+
+function sendHtml(res, html, status = 200) {
+  res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.end(injectHtml(html));
+}
+
+async function serveMd(req, res, url) {
+  const pathname = decodeURIComponent(url.pathname);
+  if (pathname === '/' || pathname === '') {
+    if (MD_SINGLE) return sendHtml(res, await renderMd(MD_SINGLE));
+    return sendHtml(res, await renderMdIndex());
+  }
+  let rel = pathname.replace(/^\/+/, '');
+  if (!/\.md$/i.test(rel)) rel += '.md';
+  const file = path.normalize(path.join(MD_ROOT, rel));
+  if (!file.startsWith(MD_ROOT) || !existsSync(file)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return res.end('404 — no such markdown file: ' + rel);
+  }
+  return sendHtml(res, await renderMd(file));
+}
+
 // ---------- request handler ----------
 async function handler(req, res) {
   try {
@@ -414,6 +544,10 @@ async function handler(req, res) {
     if (url.pathname === '/__feedback/events') return handleSSE(req, res);
     if (url.pathname.startsWith('/__feedback/api')) return handleApi(req, res, url);
 
+    if (MD_MODE) {
+      if (url.pathname === '/favicon.ico') { res.writeHead(204); return res.end(); }
+      return serveMd(req, res, url);
+    }
     if (PROXY) return proxyRequest(req, res);
 
     const file = await resolveStaticFile(url.pathname);
@@ -433,7 +567,9 @@ async function handler(req, res) {
 
 // ---------- banner ----------
 function banner(scheme, ips) {
-  const src = PROXY ? `proxying ${PROXY}` : `serving ${path.relative(CWD, STATIC_DIR) || '.'}/`;
+  const src = MD_MODE ? `reviewing markdown: ${path.relative(CWD, MD_SINGLE || MD_ROOT) || '.'}`
+    : PROXY ? `proxying ${PROXY}`
+    : `serving ${path.relative(CWD, STATIC_DIR) || '.'}/`;
   console.log(`\n  Feedback Studio${USE_HTTPS ? '  (HTTPS — voice works on phones)' : ''}`);
   console.log(`  ------------------------------------------`);
   console.log(`  Source           ->  ${src}`);
@@ -454,7 +590,7 @@ function banner(scheme, ips) {
 
 // ---------- main ----------
 async function main() {
-  if (!PROXY && !STATIC_DIR) {
+  if (!PROXY && !MD_MODE && !STATIC_DIR) {
     console.error(`\n  No build directory found. Tried: ${AUTODETECT.join(', ')}.`);
     console.error(`  Build your site first, then pass --dir <folder>, or proxy a dev server with --proxy <url>.`);
     console.error(`  e.g.  feedback-studio --dir dist`);

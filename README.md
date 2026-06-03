@@ -28,6 +28,9 @@ plus a self-contained Node server that does the serving and injection.
 - **Touch-friendly** — tap then walk the DOM with ▲/▼ to pick the right element (no hover needed).
 - **Any framework** — serve a static build (`dist/ build/ out/ …`, auto-detected) or
   **proxy a running dev server** (Vite, Next, Astro, …) with live reload (CSP stripped, HMR passed through).
+- **Review Markdown too** — point it at a `.md` file or a folder of them; it renders them
+  to clean pages you can comment on. Perfect for reviewing research docs an agent delivered.
+  Each comment carries the source `.md` path, so the agent edits the file, not the HTML.
 - **Non-invasive** — injects one `<script>` and mounts its UI in a shadow root; never
   touches your site's DOM, styles, or source.
 - **Agent-ready & robust** — every comment stores the page, the comment type, a
@@ -63,15 +66,18 @@ It's a plain Node script — usable by anyone:
 node plugins/feedback-studio/bin/feedback-studio.mjs            # auto-detect a build dir
 node plugins/feedback-studio/bin/feedback-studio.mjs --dir dist
 node plugins/feedback-studio/bin/feedback-studio.mjs --proxy http://localhost:5173
-node plugins/feedback-studio/bin/feedback-studio.mjs --proxy http://localhost:5173 --https
+node plugins/feedback-studio/bin/feedback-studio.mjs --md report.md          # review one markdown file
+node plugins/feedback-studio/bin/feedback-studio.mjs --md research/ --https  # a folder of docs, phone voice
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--dir <path>` | Serve a static build directory. |
 | `--proxy <url>` | Proxy a running dev server and inject the overlay (live reload). |
+| `--md <file\|dir>` | Render a Markdown file (or a folder of them) to reviewable pages. Fetches a small renderer once. |
 | `--port <n>` | Listen port (default `4444`). |
 | `--https` | Serve over TLS with a self-signed cert (needed for phone voice-to-text). Fetches a small cert helper once. |
+| `--no-open` | Don't auto-open the browser. |
 
 Open the printed URL (use **Chrome or Edge** for voice). Hit **Comment** (bottom-right,
 or press `C`), and start clicking. On a phone, tap an element then use ▲/▼ to pick the

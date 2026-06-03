@@ -49,6 +49,23 @@ needed for HTTP). There are two things you do: **start a review session** and
    mode persists across navigation.
 5. Make sure `.feedback/` is gitignored (add it if a `.gitignore` exists and lacks it).
 
+## Review a Markdown file (research docs, not a website)
+
+Use this when the deliverable is one or more `.md` files (e.g. a research report) and
+the user wants to comment on it the same way — on headings, paragraphs, list items,
+tables, anything. The tool renders the Markdown to a clean page with the overlay on top.
+
+- **One file:** `node "${CLAUDE_PLUGIN_ROOT}/bin/feedback-studio.mjs" --md path/to/report.md`
+- **A folder of docs:** `--md path/to/research/` — the home page lists every `.md`; each
+  opens as its own reviewable page, and comments are grouped per file in the panel.
+- Add `--https` for phone-with-voice, `--port <n>` as usual. Run in the background and
+  open the printed URL. The renderer (`marked`) is fetched once on first use.
+
+When you later **process** these comments, each one carries the **source `.md` file**
+(`sourceFile` / the `file:` line in FEEDBACK.md) plus the quoted text. Open that file,
+grep for the quoted text, and edit it there — the rendered HTML is throwaway; the `.md`
+is the artifact.
+
 ## Process comments
 
 1. Read `.feedback/comments.json` (source of truth) — or `.feedback/FEEDBACK.md`

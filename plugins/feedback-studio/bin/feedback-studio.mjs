@@ -65,6 +65,8 @@ const MD_FILE = path.join(DATA_DIR, 'FEEDBACK.md');
 const CERT_DIR = path.join(DATA_DIR, '.cert');
 const GLOBAL_DATA = process.env.CLAUDE_PLUGIN_DATA || path.join(os.homedir(), '.feedback-studio');
 
+const ALLOWED_TYPES = ['fix', 'change', 'improve', 'comment', 'rephrase', 'expand', 'delete', 'question'];
+
 // Static build directories we auto-detect when neither --dir nor --proxy given.
 const AUTODETECT = ['dist', 'build', 'out', '_site', 'public', '.output/public', 'site'];
 
@@ -255,7 +257,7 @@ async function handleApi(req, res, url) {
       const body = JSON.parse((await readBody(req)) || '{}');
       const comments = await loadComments();
       const now = new Date().toISOString();
-      const type = ['fix', 'change', 'improve'].includes(body.type) ? body.type : 'change';
+      const type = ALLOWED_TYPES.includes(body.type) ? body.type : 'change';
       const c = {
         id: newId(),
         schemaVersion: 3,
@@ -285,7 +287,7 @@ async function handleApi(req, res, url) {
       if (!c) return sendJSON(res, 404, { error: 'not found' });
       if (typeof body.text === 'string') c.text = body.text.trim();
       if (['open', 'approved', 'rejected', 'resolved'].includes(body.status)) c.status = body.status;
-      if (['fix', 'change', 'improve'].includes(body.type)) c.type = body.type;
+      if (ALLOWED_TYPES.includes(body.type)) c.type = body.type;
       if (['auto', 'review'].includes(body.autonomy)) c.autonomy = body.autonomy;
       c.updatedAt = new Date().toISOString();
       await saveComments(comments);
@@ -303,6 +305,9 @@ async function handleApi(req, res, url) {
   if (resource === 'export' && req.method === 'POST') {
     await exportMarkdown(await loadComments());
     return sendJSON(res, 200, { ok: true });
+  }
+  if (resource === 'md-export' && req.method === 'POST') {
+    return sendJSON(res, 200, { ok: true, ...(await exportMarkers()) });
   }
   return sendJSON(res, 404, { error: 'unknown endpoint' });
 }
@@ -483,7 +488,7 @@ function mdDocShell(title, sourceRel, bodyHtml) {
     <div class="doc-source">${(sourceRel || '').replace(/[<>&]/g, '')}</div>
     ${bodyHtml}
   </article>
-  <script>window.__kbfSource=${JSON.stringify(sourceRel || '')};</script>
+  <script>window.__kbfMode="md";window.__kbfSource=${JSON.stringify(sourceRel || '')};</script>
 </body></html>`;
 }
 
@@ -533,6 +538,54 @@ async function serveMd(req, res, url) {
     return res.end('404 — no such markdown file: ' + rel);
   }
   return sendHtml(res, await renderMd(file));
+}
+
+// Stamp comments into their source .md as inline <!-- @FB ... --> markers,
+// the portable+greppable convention from the original review tool. Each type
+// maps to a verb; the marker lands on the source line holding the quoted text.
+const mdNorm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+function fbMarker(c) {
+  const t = mdNorm(c.text).replace(/--+>/g, '--&gt;').replace(/--/g, '–');
+  switch (c.type) {
+    case 'delete': return `<!-- @FB-DELETE${t ? ': ' + t : ''} -->`;
+    case 'expand': return `<!-- @FB-EXPAND${t ? ': ' + t : ''} -->`;
+    case 'question': return `<!-- @FB-Q${t ? ': ' + t : ''} -->`;
+    case 'rephrase': return `<!-- @FB: rephrase as "${t.replace(/"/g, '\\"')}" -->`;
+    default: return `<!-- @FB${t ? ': ' + t : ''} -->`; // comment + any web type
+  }
+}
+async function exportMarkers() {
+  const comments = await loadComments();
+  const byFile = new Map();
+  for (const c of comments) {
+    if (!c.sourceFile || c.status === 'resolved') continue;
+    if (!byFile.has(c.sourceFile)) byFile.set(c.sourceFile, []);
+    byFile.get(c.sourceFile).push(c);
+  }
+  let files = 0, stamped = 0, notFound = 0;
+  for (const [rel, list] of byFile) {
+    const file = path.normalize(path.join(CWD, rel));
+    if (!file.startsWith(CWD) || !existsSync(file)) continue;
+    let text = await readFile(file, 'utf-8');
+    const lines = text.split('\n');
+    let changed = false;
+    for (const c of list) {
+      const marker = fbMarker(c);
+      if (text.includes(marker) || lines.some((l) => l.includes(marker))) continue; // idempotent
+      const snip = mdNorm(c.anchor && (c.anchor.snippet || c.anchor.rangeText)).slice(0, 40).toLowerCase();
+      let idx = -1;
+      if (snip) idx = lines.findIndex((l) => !l.trimStart().startsWith('<!--') && mdNorm(l).toLowerCase().includes(snip));
+      if (idx < 0) { lines.push(marker); notFound++; }
+      else { lines[idx] = lines[idx].replace(/\s+$/, '') + ' ' + marker; }
+      stamped++; changed = true;
+    }
+    if (changed) {
+      await writeFile(file + '.bak', text);
+      await writeFile(file, lines.join('\n'));
+      files++;
+    }
+  }
+  return { files, stamped, notFound };
 }
 
 // ---------- request handler ----------

@@ -31,6 +31,9 @@ plus a self-contained Node server that does the serving and injection.
 - **Review Markdown too** — point it at a `.md` file or a folder of them; it renders them
   to clean pages you can comment on. Perfect for reviewing research docs an agent delivered.
   Each comment carries the source `.md` path, so the agent edits the file, not the HTML.
+  Document-flavoured types (comment / rephrase / expand / delete / question), and a **Stamp .md**
+  button that writes the comments back into the file as inline `<!-- @FB ... -->` markers —
+  portable, greppable feedback that travels with the document.
 - **Non-invasive** — injects one `<script>` and mounts its UI in a shadow root; never
   touches your site's DOM, styles, or source.
 - **Agent-ready & robust** — every comment stores the page, the comment type, a

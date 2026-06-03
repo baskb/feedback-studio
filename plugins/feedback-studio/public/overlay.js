@@ -54,15 +54,28 @@
   const langShort = (code) => code.split('-')[0].toUpperCase();
   const PLACEHOLDER = 'What needs to change here? (typed or spoken)';
 
-  // Comment types decide how much latitude the AI agent gets when it acts on a comment.
-  const TYPES = [
-    { id: 'fix', label: 'Fix', hint: 'Something is broken or wrong — reproduce and patch it.' },
-    { id: 'change', label: 'Change', hint: 'Make it exactly this — apply near-verbatim, no redesign.' },
-    { id: 'improve', label: 'Improve', hint: 'This is weak — rewrite or redesign with judgement.' },
-  ];
+  // Comment types decide how much latitude the AI agent gets. Websites and
+  // documents need different verbs, so the set depends on the mode.
+  const MODE = (typeof window !== 'undefined' && window.__kbfMode) || 'web';
+  const TYPE_SETS = {
+    web: [
+      { id: 'fix', label: 'Fix', hint: 'Something is broken or wrong — reproduce and patch it.' },
+      { id: 'change', label: 'Change', hint: 'Make it exactly this — apply near-verbatim, no redesign.' },
+      { id: 'improve', label: 'Improve', hint: 'This is weak — rewrite or redesign with judgement.' },
+    ],
+    md: [
+      { id: 'comment', label: 'Comment', hint: 'A general note about this passage.' },
+      { id: 'rephrase', label: 'Rephrase', hint: 'Propose specific replacement wording.' },
+      { id: 'expand', label: 'Expand', hint: 'Add more detail / content here.' },
+      { id: 'delete', label: 'Delete', hint: 'Remove this passage.' },
+      { id: 'question', label: 'Question', hint: 'Ask the agent something about this.' },
+    ],
+  };
+  const TYPES = TYPE_SETS[MODE] || TYPE_SETS.web;
   const TYPE_IDS = TYPES.map((t) => t.id);
-  let ctype = localStorage.getItem('kbf-ctype') || 'change';
-  if (!TYPE_IDS.includes(ctype)) ctype = 'change';
+  const ALL_TYPE_IDS = ['fix', 'change', 'improve', 'comment', 'rephrase', 'expand', 'delete', 'question'];
+  let ctype = localStorage.getItem('kbf-ctype-' + MODE) || TYPES[0].id;
+  if (!TYPE_IDS.includes(ctype)) ctype = TYPES[0].id;
 
   function normalizePath(p) {
     p = p.replace(/index\.html$/, '');
@@ -128,6 +141,7 @@
       <div class="kbf-list" id="kbf-list"></div>
       <div class="kbf-panel-foot">
         <span class="kbf-readyline" id="kbf-ready" title="Saved to .feedback/comments.json + FEEDBACK.md"></span>
+        <button class="kbf-btn kbf-btn--ghost kbf-stamp" id="kbf-stamp" title="Write these comments into the .md as @FB markers (portable + greppable)" style="display:none">Stamp .md</button>
         <button class="kbf-btn kbf-btn--primary kbf-copyfb" id="kbf-copyfb" title="Copy the command, then paste it into Claude Code / your agent">Copy /feedback</button>
       </div>
     </aside>
@@ -523,7 +537,7 @@
       const typeBtn = e.target.closest('[data-type]');
       if (typeBtn) {
         ctype = typeBtn.dataset.type;
-        localStorage.setItem('kbf-ctype', ctype);
+        localStorage.setItem('kbf-ctype-' + MODE, ctype);
         box.querySelectorAll('.kbf-type').forEach((b) => b.classList.toggle('is-active', b.dataset.type === ctype));
         return;
       }
@@ -728,7 +742,7 @@
         const num = (pageIndex.get(key).indexOf(c.id)) + 1;
         const anchorTxt = norm(c.anchor && (c.anchor.snippet || c.anchor.rangeText)) || ('<' + (c.anchor?.tag || 'element') + '>');
         const st = c.status || 'open';
-        const ct = TYPE_IDS.includes(c.type) ? c.type : 'change';
+        const ct = c.type || 'comment';
         const isAgent = c.author === 'agent';
         const who = isAgent ? (c.authorName || 'agent') : 'you';
         const thread = Array.isArray(c.thread) ? c.thread : [];
@@ -985,6 +999,16 @@
     try { await navigator.clipboard.writeText('/feedback'); toast('Copied "/feedback" — paste it into your agent'); }
     catch (e) { toast('Run /feedback in Claude Code to process these'); }
   });
+  if (MODE === 'md') {
+    const stampBtn = $('kbf-stamp');
+    stampBtn.style.display = '';
+    stampBtn.addEventListener('click', async () => {
+      try {
+        const r = await fetch(API.replace('/api', '') + '/api/md-export', { method: 'POST' }).then((x) => x.json());
+        toast(`Stamped ${r.stamped} marker${r.stamped === 1 ? '' : 's'} into ${r.files} file${r.files === 1 ? '' : 's'}` + (r.notFound ? ` (${r.notFound} appended at end)` : ''));
+      } catch (e) { toast('Stamp failed'); }
+    });
+  }
 
   document.addEventListener('keydown', (e) => {
     const typing = e.target && /^(input|textarea|select)$/i.test(e.target.nodeName) || (e.target && e.target.isContentEditable);

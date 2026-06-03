@@ -61,10 +61,34 @@ tables, anything. The tool renders the Markdown to a clean page with the overlay
 - Add `--https` for phone-with-voice, `--port <n>` as usual. Run in the background and
   open the printed URL. The renderer (`marked`) is fetched once on first use.
 
+In Markdown mode the comment **types** become document verbs: `comment` (a note),
+`rephrase` (propose wording), `expand` (add detail), `delete` (remove), `question`
+(ask). On websites the types stay `fix` / `change` / `improve`.
+
 When you later **process** these comments, each one carries the **source `.md` file**
 (`sourceFile` / the `file:` line in FEEDBACK.md) plus the quoted text. Open that file,
 grep for the quoted text, and edit it there — the rendered HTML is throwaway; the `.md`
 is the artifact.
+
+### Inline @FB markers (portable, in-document feedback)
+
+The panel's **Stamp .md** button writes the comments into the source `.md` as inline
+HTML markers, anchored on the line holding the quoted text (a `.bak` is saved first):
+
+| Type | Marker written |
+|---|---|
+| comment | `<!-- @FB: ... -->` |
+| rephrase | `<!-- @FB: rephrase as "..." -->` |
+| expand | `<!-- @FB-EXPAND: ... -->` |
+| delete | `<!-- @FB-DELETE -->` |
+| question | `<!-- @FB-Q: ... -->` |
+
+These are invisible in the rendered Markdown but greppable, so the document carries its
+own feedback even when shared without the `.feedback/` sidecar. When **processing from
+markers**: `grep -n "@FB" the.md`, apply each edit on its line, then **delete the marker**
+you handled (leave unhandled ones). Skip any top-of-file `FEEDBACK PROTOCOL` instruction
+block. The `.feedback/comments.json` sidecar (with threads, status, author) remains the
+richer source when it's available; the markers are the portable fallback.
 
 ## Process comments
 

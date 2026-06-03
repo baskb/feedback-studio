@@ -691,6 +691,11 @@ button {
 .kbf-type-fix { background: #fdece5; color: #b04a26; }
 .kbf-type-change { background: var(--kbf-clay-tint); color: var(--kbf-clay-deep); }
 .kbf-type-improve { background: #e9f1ec; color: var(--kbf-green); }
+.kbf-type-comment { background: var(--kbf-agent-tint); color: var(--kbf-agent-deep); }
+.kbf-type-rephrase { background: var(--kbf-clay-tint); color: var(--kbf-clay-deep); }
+.kbf-type-expand { background: #fff2e4; color: #b5701f; }
+.kbf-type-delete { background: #fde4e4; color: #b23b3b; }
+.kbf-type-question { background: #f0eafb; color: #6b4ec2; }
 
 /* ---------- conversation: author, status, thread ---------- */
 .kbf-card.is-agent { border-left: 3px solid var(--kbf-agent); }

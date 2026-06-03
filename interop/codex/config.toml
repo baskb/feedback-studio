@@ -1,0 +1,12 @@
+# Add to ~/.codex/config.toml (or a project .codex/config.toml).
+# Replace the path with where this repo lives on your machine.
+
+[mcp_servers.feedback-studio]
+command = "node"
+args = ["/ABS/PATH/feedback-studio/plugins/feedback-studio/bin/feedback-studio-mcp.mjs"]
+# Codex spawns the server in your project dir, so it finds ./.feedback automatically.
+# If not, pin it explicitly:
+# env = { FEEDBACK_DIR = "/ABS/PATH/your-project/.feedback" }
+
+# Equivalent one-liner:
+#   codex mcp add feedback-studio -- node /ABS/PATH/.../feedback-studio-mcp.mjs

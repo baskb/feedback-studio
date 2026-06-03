@@ -86,6 +86,15 @@ Open the printed URL (use **Chrome or Edge** for voice). Hit **Comment** (bottom
 or press `C`), and start clicking. On a phone, tap an element then use ▲/▼ to pick the
 right one. The mic dictates.
 
+## Use with other agents (Codex, Cursor, ChatGPT)
+
+The capture side is agent-agnostic and the data is plain files, so any agent can
+consume it. There's an **MCP server** (`bin/feedback-studio-mcp.mjs`, tools:
+`list_comments` / `get_comment` / `add_comment` / `reply` / `set_status`) that
+plugs into Codex CLI, Cursor, Windsurf, Cline, and Claude Code through one
+integration. ChatGPT (cloud) needs a tunnel. Full setup, including Codex
+`AGENTS.md` and a `/prompts:feedback` command, is in [INTEROP.md](INTEROP.md).
+
 ## Where comments live
 
 - `.feedback/comments.json` — structured source of truth (page, anchor, text, status).

@@ -79,6 +79,36 @@ needed for HTTP). There are two things you do: **start a review session** and
 5. Summarise what you changed, grouped by page, and explicitly list anything you left
    open (low-confidence anchors needing a re-pin, or decisions you need from the user).
 
+## Author comments as an agent (two-way conversation)
+
+Comments are a conversation, not a one-way inbox. You (or another skill, e.g. a
+front-end reviewer) can **leave your own comments on specific components** for the
+user to review, reply to, and approve. Use this to point at exact elements instead
+of describing them in prose.
+
+- **Anchor loosely.** You don't have a DOM, so anchor by either a CSS `selector`
+  or a `snippet` of the element's exact visible text — the overlay's resolver finds
+  the element and drops a pin. Provide whichever you're sure of (text is often safest).
+- **Create a comment** (server running):
+  ```bash
+  curl -s -X POST http://localhost:<port>/__feedback/api/comments \
+    -H "Content-Type: application/json" \
+    -d '{"page":"/pricing","author":"agent","authorName":"frontend-skill","type":"improve",
+         "anchor":{"snippet":"Start free trial","tag":"button"},
+         "text":"This CTA competes with the secondary button. Consider one primary action."}'
+  ```
+  Or, if the server isn't running, append the same object (with an `id`, `status:"open"`,
+  `thread:[]`, timestamps) to `.feedback/comments.json` directly — the file-watch pushes
+  it live to any open overlay.
+- **Reply in a thread:** `POST /__feedback/api/comments/<id>/reply` with
+  `{"author":"agent","authorName":"...","text":"..."}`.
+- **Statuses you act on:** the user sets `approved` (go implement it), `rejected` (drop it),
+  or replies with a question. You set `resolved` when done. Always leave agent proposals
+  as `open` so they surface as "to review".
+
+Tag agent comments with a clear `authorName` (the skill or role) so the user knows who
+is talking. Pins and cards render agent comments in a distinct colour with that label.
+
 ## Notes
 
 - **Anchors** carry several strategies (stable attribute/id, css selector, xpath, and

@@ -149,7 +149,7 @@ async function exportMarkdown(comments) {
   const open = comments.filter((c) => c.status !== 'resolved').length;
   let md = `# Feedback export\n\n`;
   md += `_Generated ${new Date().toISOString()} — ${comments.length} comment(s): ${open} open, ${comments.length - open} resolved._\n\n`;
-  md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin. Work the open items, then mark them resolved.\n\n`;
+  md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin.\n>\n> Comments are a two-way conversation. Some are authored \`by user\`, some \`by agent\` (a proposal/annotation you or another skill left on a component). Each can have a reply thread (lines marked \`↳\`). Statuses: \`open\` (needs work/decision), \`approved\` (the user said go ahead — implement it), \`rejected\` (do not), \`resolved\` (done). Implement approved items, reply to ask questions, and set the status as you go.\n\n`;
   for (const page of [...byPage.keys()].sort()) {
     const items = byPage.get(page).slice().sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
     md += `## \`${page}\`${items[0]?.pageTitle ? ` — ${items[0].pageTitle}` : ''}\n\n`;
@@ -158,13 +158,21 @@ async function exportMarkdown(comments) {
       i++;
       const kind = c.anchor?.type === 'range' ? 'text selection' : (c.anchor?.tag || 'element');
       const type = ['fix', 'change', 'improve'].includes(c.type) ? c.type : 'change';
-      md += `- ${c.status === 'resolved' ? '[x]' : '[ ]'} **#${i}** \`${type}\` — on a ${kind}\n`;
+      const who = c.author === 'agent' ? `agent${c.authorName ? ' (' + esc(c.authorName) + ')' : ''}` : 'user';
+      const st = c.status && c.status !== 'open' ? ` · ${c.status}` : '';
+      const box = (c.status === 'resolved' || c.status === 'rejected') ? '[x]' : '[ ]';
+      md += `- ${box} **#${i}** \`${type}\` — on a ${kind} · by ${who}${st}\n`;
       const quote = (c.anchor?.snippet || c.anchor?.rangeText || '').trim().replace(/\s+/g, ' ');
       if (quote) md += `  - anchor text: "${esc(quote).slice(0, 200)}"\n`;
       if (c.anchor?.selector) md += `  - css: \`${esc(c.anchor.selector)}\`\n`;
       if (c.anchor?.attrSelector) md += `  - attr: \`${esc(c.anchor.attrSelector)}\`\n`;
       if (c.anchor?.xpath) md += `  - xpath: \`${esc(c.anchor.xpath)}\`\n`;
-      md += `  - comment:\n${esc(c.text).trim().split('\n').map((l) => `    ${l}`).join('\n')}\n\n`;
+      md += `  - ${who}:\n${esc(c.text).trim().split('\n').map((l) => `    ${l}`).join('\n')}\n`;
+      for (const r of c.thread || []) {
+        const rwho = r.author === 'agent' ? `agent${r.authorName ? ' (' + esc(r.authorName) + ')' : ''}` : 'user';
+        md += `  - ↳ ${rwho}:\n${esc(r.text).trim().split('\n').map((l) => `    ${l}`).join('\n')}\n`;
+      }
+      md += `\n`;
     }
   }
   if (!comments.length) md += `_No comments yet._\n`;
@@ -210,20 +218,43 @@ async function handleApi(req, res, url) {
   if (resource === 'comments') {
     const id = parts[1];
     if (req.method === 'GET') return sendJSON(res, 200, { comments: await loadComments() });
-    if (req.method === 'POST') {
+    // POST /comments/:id/reply — add a message to a comment's conversation thread
+    if (req.method === 'POST' && id && parts[2] === 'reply') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const comments = await loadComments();
+      const c = comments.find((x) => x.id === id);
+      if (!c) return sendJSON(res, 404, { error: 'not found' });
+      const now = new Date().toISOString();
+      if (!Array.isArray(c.thread)) c.thread = [];
+      const reply = {
+        id: 'r_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7),
+        author: body.author === 'agent' ? 'agent' : 'user',
+        authorName: (body.authorName || '').toString().slice(0, 60),
+        text: (body.text || '').trim(),
+        createdAt: now,
+      };
+      c.thread.push(reply);
+      c.updatedAt = now;
+      await saveComments(comments);
+      return sendJSON(res, 201, { comment: c, reply });
+    }
+    if (req.method === 'POST' && !id) {
       const body = JSON.parse((await readBody(req)) || '{}');
       const comments = await loadComments();
       const now = new Date().toISOString();
       const type = ['fix', 'change', 'improve'].includes(body.type) ? body.type : 'change';
       const c = {
         id: newId(),
-        schemaVersion: 2,
+        schemaVersion: 3,
         page: body.page || '/',
         pageTitle: body.pageTitle || '',
         url: body.url || '',
         anchor: body.anchor || {},
         type,
         text: (body.text || '').trim(),
+        author: body.author === 'agent' ? 'agent' : 'user',
+        authorName: (body.authorName || '').toString().slice(0, 60),
+        thread: [],
         autonomy: ['auto', 'review'].includes(body.autonomy) ? body.autonomy : 'review',
         status: 'open',
         createdAt: now,
@@ -239,7 +270,7 @@ async function handleApi(req, res, url) {
       const c = comments.find((x) => x.id === id);
       if (!c) return sendJSON(res, 404, { error: 'not found' });
       if (typeof body.text === 'string') c.text = body.text.trim();
-      if (typeof body.status === 'string') c.status = body.status;
+      if (['open', 'approved', 'rejected', 'resolved'].includes(body.status)) c.status = body.status;
       if (['fix', 'change', 'improve'].includes(body.type)) c.type = body.type;
       if (['auto', 'review'].includes(body.autonomy)) c.autonomy = body.autonomy;
       c.updatedAt = new Date().toISOString();

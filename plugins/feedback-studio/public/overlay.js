@@ -18,6 +18,10 @@
   let filter = sessionStorage.getItem('kbf-filter') || 'all';
   let activeComposer = null; // { kind:'new'|'edit', anchor, rect, comment? }
   let placed = []; // [{ comment, el, pinEl }]
+  let expandedId = null; // which comment's conversation thread is open in the panel
+  let focusReplyNext = false; // focus the reply box on the next render (after an explicit expand)
+  const replyDrafts = {}; // id -> in-progress reply text, preserved across re-renders
+  const isOpenC = (c) => c.status !== 'resolved' && c.status !== 'rejected';
   let recognizing = false;
   let recognition = null;
   let rafHover = 0;
@@ -78,6 +82,9 @@
     jump: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
     up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>',
     down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
+    bot: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>',
+    send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
+    reject: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
     empty: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
   };
 
@@ -630,9 +637,13 @@
       const el = resolveAnchor(c.anchor);
       if (!el) return;
       const pin = document.createElement('div');
-      pin.className = 'kbf-pin' + (c.status === 'resolved' ? ' is-resolved' : '');
-      pin.textContent = String(idx + 1);
-      pin.title = c.text;
+      pin.className = 'kbf-pin'
+        + (c.author === 'agent' ? ' is-agent' : '')
+        + (c.status === 'resolved' ? ' is-resolved' : '')
+        + (c.status === 'approved' ? ' is-approved' : '')
+        + (c.status === 'rejected' ? ' is-rejected' : '');
+      pin.innerHTML = c.author === 'agent' ? I.bot : String(idx + 1);
+      pin.title = (c.author === 'agent' ? '[agent] ' : '') + c.text;
       pin.addEventListener('click', () => focusComment(c.id, true));
       pinsLayer.appendChild(pin);
       placed.push({ comment: c, el, pinEl: pin });
@@ -673,15 +684,17 @@
     renderPanel();
   }
   function filtered(list) {
-    if (filter === 'open') return list.filter((c) => c.status !== 'resolved');
+    if (filter === 'open') return list.filter(isOpenC);
     if (filter === 'resolved') return list.filter((c) => c.status === 'resolved');
     return list;
   }
 
   function renderPanel() {
     root.querySelectorAll('.kbf-filter').forEach((b) => b.classList.toggle('is-active', b.dataset.filter === filter));
-    const open = comments.filter((c) => c.status !== 'resolved').length;
-    subEl.textContent = `${comments.length} comment${comments.length === 1 ? '' : 's'} across the site · ${open} open`;
+    const open = comments.filter(isOpenC).length;
+    const agentOpen = comments.filter((c) => c.author === 'agent' && c.status === 'open').length;
+    subEl.textContent = `${comments.length} comment${comments.length === 1 ? '' : 's'} · ${open} open`
+      + (agentOpen ? ` · ${agentOpen} from your agent to review` : '');
 
     const view = filtered(comments);
     if (!view.length) {
@@ -714,28 +727,86 @@
       for (const c of groups.get(key)) {
         const num = (pageIndex.get(key).indexOf(c.id)) + 1;
         const anchorTxt = norm(c.anchor && (c.anchor.snippet || c.anchor.rangeText)) || ('<' + (c.anchor?.tag || 'element') + '>');
-        const done = c.status === 'resolved';
+        const st = c.status || 'open';
         const ct = TYPE_IDS.includes(c.type) ? c.type : 'change';
+        const isAgent = c.author === 'agent';
+        const who = isAgent ? (c.authorName || 'agent') : 'you';
+        const thread = Array.isArray(c.thread) ? c.thread : [];
+        const expanded = c.id === expandedId;
+        const stateClass = [
+          st === 'resolved' ? 'is-resolved' : '', st === 'approved' ? 'is-approved' : '',
+          st === 'rejected' ? 'is-rejected' : '', isAgent ? 'is-agent' : '', expanded ? 'is-expanded' : '',
+        ].filter(Boolean).join(' ');
         html += `
-          <div class="kbf-card ${done ? 'is-resolved' : ''}" data-id="${c.id}" data-page="${escapeHtml(key)}" data-url="${escapeHtml(c.url || '')}">
+          <div class="kbf-card ${stateClass}" data-id="${c.id}" data-page="${escapeHtml(key)}" data-url="${escapeHtml(c.url || '')}">
             <div class="kbf-card-top">
-              <span class="kbf-badge">${num}</span>
+              <span class="kbf-badge">${isAgent ? I.bot : num}</span>
               <span class="kbf-type-tag kbf-type-${ct}">${ct}</span>
+              <span class="kbf-author ${isAgent ? 'is-agent' : ''}">${escapeHtml(who)}</span>
+              ${st === 'approved' || st === 'rejected' ? `<span class="kbf-status kbf-status-${st}">${st}</span>` : ''}
               <span class="kbf-card-anchor" title="${escapeHtml(anchorTxt)}">${escapeHtml(anchorTxt)}</span>
             </div>
             <div class="kbf-card-text">${escapeHtml(c.text)}</div>
+            ${expanded ? `
+              ${thread.length ? `<div class="kbf-thread">${thread.map((r) => `
+                <div class="kbf-reply ${r.author === 'agent' ? 'is-agent' : ''}">
+                  <span class="kbf-reply-who">${escapeHtml(r.author === 'agent' ? (r.authorName || 'agent') : 'you')}</span>
+                  <span class="kbf-reply-text">${escapeHtml(r.text)}</span>
+                </div>`).join('')}</div>` : ''}
+              <div class="kbf-replybox">
+                <textarea class="kbf-reply-input" placeholder="Reply to this thread…" rows="1"></textarea>
+                <button class="kbf-reply-send" data-act="send" title="Send reply">${I.send}</button>
+              </div>
+              <div class="kbf-approvals">
+                ${st !== 'approved' ? `<button class="kbf-chip-btn kbf-approve" data-act="approve">${I.check} Approve</button>` : ''}
+                ${st !== 'rejected' ? `<button class="kbf-chip-btn kbf-rejectb" data-act="reject">${I.reject} Reject</button>` : ''}
+              </div>
+            ` : (thread.length ? `<button class="kbf-thread-toggle" data-act="thread">${I.comment}<span>${thread.length} repl${thread.length === 1 ? 'y' : 'ies'}</span></button>` : '')}
             <div class="kbf-card-foot">
               <span class="kbf-time">${timeAgo(c.createdAt)}</span>
+              <button class="kbf-mini" data-act="thread" title="Conversation">${I.comment}</button>
               <button class="kbf-mini" data-act="jump" title="Go to element">${I.jump}</button>
               <button class="kbf-mini" data-act="edit" title="Edit">${I.edit}</button>
-              <button class="kbf-mini kbf-mini--ok ${done ? 'is-done' : ''}" data-act="resolve" title="${done ? 'Reopen' : 'Resolve'}">${I.check}</button>
+              <button class="kbf-mini kbf-mini--ok ${st === 'resolved' ? 'is-done' : ''}" data-act="resolve" title="${st === 'resolved' ? 'Reopen' : 'Resolve'}">${I.check}</button>
               <button class="kbf-mini kbf-mini--danger" data-act="delete" title="Delete">${I.trash}</button>
             </div>
           </div>`;
       }
     }
     listEl.innerHTML = html;
+
+    // restore an in-progress reply draft and (only right after an explicit expand) focus it
+    if (expandedId) {
+      const ta = root.querySelector('.kbf-card[data-id="' + expandedId + '"] .kbf-reply-input');
+      if (ta) {
+        if (replyDrafts[expandedId]) { ta.value = replyDrafts[expandedId]; ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; }
+        if (focusReplyNext) { ta.focus(); ta.selectionStart = ta.value.length; }
+      }
+    }
+    focusReplyNext = false;
   }
+
+  function toggleExpand(c) {
+    expandedId = expandedId === c.id ? null : c.id;
+    focusReplyNext = !!expandedId;
+    renderPanel();
+    if (expandedId && normalizePath(c.page) === PAGE) focusComment(c.id, false);
+  }
+
+  listEl.addEventListener('input', (e) => {
+    if (e.target.classList.contains('kbf-reply-input')) {
+      replyDrafts[expandedId] = e.target.value;
+      e.target.style.height = 'auto';
+      e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+    }
+  });
+  listEl.addEventListener('keydown', (e) => {
+    if (e.target.classList.contains('kbf-reply-input') && e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const card = e.target.closest('.kbf-card');
+      if (card) sendReply(card.dataset.id);
+    }
+  });
 
   listEl.addEventListener('click', (e) => {
     const card = e.target.closest('.kbf-card');
@@ -743,13 +814,19 @@
     const id = card.dataset.id;
     const c = comments.find((x) => x.id === id);
     if (!c) return;
+    if (e.target.closest('.kbf-reply-input')) return;
     const actBtn = e.target.closest('[data-act]');
     const act = actBtn && actBtn.dataset.act;
     if (act === 'delete') return deleteComment(id);
     if (act === 'resolve') return toggleResolve(c);
     if (act === 'edit') return editFromCard(c);
-    // default / jump
-    goToComment(c);
+    if (act === 'thread') return toggleExpand(c);
+    if (act === 'send') return sendReply(id);
+    if (act === 'approve') return setStatus(c, 'approved');
+    if (act === 'reject') return setStatus(c, 'rejected');
+    if (act === 'jump') return goToComment(c);
+    // default: click on the card body toggles the conversation thread
+    toggleExpand(c);
   });
 
   function goToComment(c) {
@@ -799,17 +876,36 @@
   }
 
   async function toggleResolve(c) {
-    const next = c.status === 'resolved' ? 'open' : 'resolved';
+    await setStatus(c, c.status === 'resolved' ? 'open' : 'resolved');
+  }
+  async function setStatus(c, status) {
     try {
       const res = await fetch(API + '/comments/' + c.id, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: next }),
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
       });
       const data = await res.json();
       const i = comments.findIndex((x) => x.id === c.id);
       if (i >= 0) comments[i] = data.comment;
       refresh();
-      toast(next === 'resolved' ? 'Marked resolved' : 'Reopened');
+      toast(status === 'resolved' ? 'Marked resolved' : status === 'open' ? 'Reopened'
+        : status === 'approved' ? 'Approved — your agent can implement it' : 'Rejected');
     } catch (e) { toast('Update failed'); }
+  }
+  async function sendReply(id) {
+    const text = (replyDrafts[id] || '').trim();
+    if (!text) return;
+    try {
+      const res = await fetch(API + '/comments/' + id + '/reply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ author: 'user', text }),
+      });
+      const data = await res.json();
+      const i = comments.findIndex((c) => c.id === id);
+      if (i >= 0) comments[i] = data.comment;
+      delete replyDrafts[id];
+      expandedId = id;
+      refresh();
+      toast('Reply sent');
+    } catch (e) { toast('Reply failed'); }
   }
 
   async function deleteComment(id) {

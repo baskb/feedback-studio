@@ -17,6 +17,9 @@ plus a self-contained Node server that does the serving and injection.
   text selection. A numbered pin marks each spot.
 - **Comment types** — tag each note `fix` (it's broken), `change` (make it exactly this),
   or `improve` (use your judgement); the type tells the agent how much latitude it has.
+- **Two-way conversation** — agents and other skills can leave their *own* comments pinned
+  to a component (anchored by selector or visible text). You reply, approve, or reject in a
+  threaded conversation tied to the element, so the context lives on the thing you're discussing.
 - **Voice-to-text in 18 languages** — dictate feedback; English by default, pick your language from a one-tap menu (English, Spanish, Mandarin, Hindi, Arabic, Portuguese, French, German, Japanese, Korean, Russian, Italian, Dutch, Turkish, Polish, Indonesian, and more). The interface is English.
 - **Live status** — when the agent resolves a comment, its pin flips green in your open
   browser instantly (file-watch → SSE), and a "N ready for your agent" badge + a

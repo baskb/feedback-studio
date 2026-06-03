@@ -1,4 +1,4 @@
-// KB365 Feedback Studio — overlay client
+// Feedback Studio — overlay client
 // Mounted on every page via the local feedback server. Lets you attach
 // comments (typed or spoken) to any element or text selection, persists them
 // server-side, and renders pins + a cross-page review panel.
@@ -21,13 +21,34 @@
   let recognizing = false;
   let recognition = null;
   let rafHover = 0;
-  let speechLang = sessionStorage.getItem('kbf-speechlang') ||
-    ((document.documentElement.lang || '').toLowerCase().startsWith('nl') ? 'nl-NL' : 'en-US');
-  const TXT = {
-    nl: { ph: 'Wat moet hier veranderen? (getypt of ingesproken)', listening: 'Aan het luisteren… spreek nu' },
-    en: { ph: 'What needs to change here? (typed or spoken)', listening: 'Listening… speak now' },
-  };
-  const uiLang = () => (speechLang.startsWith('nl') ? 'nl' : 'en');
+  // Voice dictation languages (BCP-47, the most widely spoken + common dev locales).
+  // The UI is English by default; this only sets the speech-recognition language.
+  const LANGS = [
+    { code: 'en-US', name: 'English (US)' },
+    { code: 'en-GB', name: 'English (UK)' },
+    { code: 'es-ES', name: 'Espanol (Espana)' },
+    { code: 'es-MX', name: 'Espanol (Latinoamerica)' },
+    { code: 'zh-CN', name: '中文 (普通话)' },
+    { code: 'hi-IN', name: 'हिन्दी' },
+    { code: 'ar-SA', name: 'العربية' },
+    { code: 'pt-BR', name: 'Portugues (Brasil)' },
+    { code: 'fr-FR', name: 'Francais' },
+    { code: 'de-DE', name: 'Deutsch' },
+    { code: 'ja-JP', name: '日本語' },
+    { code: 'ko-KR', name: '한국어' },
+    { code: 'ru-RU', name: 'Русский' },
+    { code: 'it-IT', name: 'Italiano' },
+    { code: 'nl-NL', name: 'Nederlands' },
+    { code: 'tr-TR', name: 'Turkce' },
+    { code: 'pl-PL', name: 'Polski' },
+    { code: 'id-ID', name: 'Bahasa Indonesia' },
+  ];
+  const DEFAULT_LANG = 'en-US';
+  let speechLang = localStorage.getItem('kbf-voicelang') || DEFAULT_LANG;
+  if (!LANGS.some((l) => l.code === speechLang)) speechLang = DEFAULT_LANG;
+  const langName = (code) => (LANGS.find((l) => l.code === code) || LANGS[0]).name;
+  const langShort = (code) => code.split('-')[0].toUpperCase();
+  const PLACEHOLDER = 'What needs to change here? (typed or spoken)';
 
   function normalizePath(p) {
     p = p.replace(/index\.html$/, '');
@@ -360,11 +381,16 @@
         <button class="kbf-x" data-act="cancel" title="Cancel">${I.close}</button>
       </div>
       <div class="kbf-composer-body">
-        <textarea class="kbf-textarea" placeholder="${escapeHtml(TXT[uiLang()].ph)}"></textarea>
-        <div class="kbf-rec-hint"><span class="kbf-rec-dot"></span> <span class="kbf-rec-text">${escapeHtml(TXT[uiLang()].listening)}</span></div>
+        <textarea class="kbf-textarea" placeholder="${escapeHtml(PLACEHOLDER)}"></textarea>
+        <div class="kbf-rec-hint"><span class="kbf-rec-dot"></span> <span class="kbf-rec-text">Listening…</span></div>
         <div class="kbf-composer-foot">
           <button class="kbf-mic" data-act="mic" title="${SR ? 'Dictate (voice to text)' : 'Voice not supported in this browser'}">${I.mic}</button>
-          <button class="kbf-lang" data-act="lang" title="Dictation language (click to switch)">${speechLang.startsWith('nl') ? 'NL' : 'EN'}</button>
+          <div class="kbf-langwrap">
+            <button class="kbf-lang" data-act="lang" title="Voice language: ${escapeHtml(langName(speechLang))}">${escapeHtml(langShort(speechLang))}</button>
+            <div class="kbf-langmenu" hidden>
+              ${LANGS.map((l) => `<button class="kbf-langitem${l.code === speechLang ? ' is-current' : ''}" data-lang="${l.code}">${escapeHtml(l.name)}</button>`).join('')}
+            </div>
+          </div>
           <div class="kbf-spacer"></div>
           <button class="kbf-btn kbf-btn--ghost" data-act="cancel">Cancel</button>
           <button class="kbf-btn kbf-btn--primary" data-act="save" disabled>${isEdit ? 'Update' : 'Save'}</button>
@@ -385,12 +411,16 @@
     function autoGrow() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 240) + 'px'; }
     ta.addEventListener('input', () => { validate(); autoGrow(); });
 
+    const langMenu = box.querySelector('.kbf-langmenu');
     box.addEventListener('click', (e) => {
+      const langItem = e.target.closest('[data-lang]');
+      if (langItem) { setVoiceLang(langItem.dataset.lang, box, micBtn, hintText); return; }
       const act = e.target.closest('[data-act]')?.dataset.act;
       if (act === 'cancel') closeComposer();
-      else if (act === 'mic') toggleRecognition(ta, micBtn, hint, validate, autoGrow);
-      else if (act === 'lang') cycleLang(langBtn, ta, hintText);
+      else if (act === 'mic') toggleRecognition(ta, micBtn, hint, hintText, validate, autoGrow);
+      else if (act === 'lang') { langMenu.hidden = !langMenu.hidden; }
       else if (act === 'save') doSave(opts, ta.value.trim());
+      else if (langMenu && !langMenu.hidden) langMenu.hidden = true;
     });
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (ta.value.trim()) doSave(opts, ta.value.trim()); }
@@ -440,18 +470,23 @@
     if (!b) return a;
     return a + ' ' + b;
   }
-  function cycleLang(btn, ta, hintText) {
-    speechLang = speechLang.startsWith('nl') ? 'en-US' : 'nl-NL';
-    sessionStorage.setItem('kbf-speechlang', speechLang);
-    if (btn) btn.textContent = speechLang.startsWith('nl') ? 'NL' : 'EN';
-    if (ta) ta.placeholder = TXT[uiLang()].ph;
-    if (hintText) hintText.textContent = TXT[uiLang()].listening;
+  function setVoiceLang(code, box, micBtn, hintText) {
+    speechLang = code;
+    localStorage.setItem('kbf-voicelang', code);
+    const langBtn = box.querySelector('.kbf-lang');
+    if (langBtn) { langBtn.textContent = langShort(code); langBtn.title = 'Voice language: ' + langName(code); }
+    box.querySelectorAll('.kbf-langitem').forEach((it) => it.classList.toggle('is-current', it.dataset.lang === code));
+    const menu = box.querySelector('.kbf-langmenu');
+    if (menu) menu.hidden = true;
+    if (hintText) hintText.textContent = 'Listening… (' + langName(code) + ')';
     // a live language switch takes effect on the next dictation start
-    if (recognizing) { stopRecognition(); toast('Dictation language: ' + (speechLang.startsWith('nl') ? 'Nederlands' : 'English')); }
+    if (recognizing) { stopRecognition(); if (micBtn) micBtn.classList.remove('is-recording'); }
+    toast('Voice language: ' + langName(code));
   }
-  function toggleRecognition(ta, micBtn, hint, validate, autoGrow) {
+  function toggleRecognition(ta, micBtn, hint, hintText, validate, autoGrow) {
     if (!SR) return;
     if (recognizing) { stopRecognition(); micBtn.classList.remove('is-recording'); hint.classList.remove('is-on'); return; }
+    if (hintText) hintText.textContent = 'Listening… (' + langName(speechLang) + ')';
     recognition = new SR();
     recognition.lang = speechLang;
     recognition.interimResults = true;

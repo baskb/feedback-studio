@@ -15,7 +15,7 @@ plus a self-contained Node server that does the serving and injection.
 
 - **Comment on anything** — element, heading, image, table, card, section, or an exact
   text selection. A numbered pin marks each spot.
-- **Voice-to-text** — dictate feedback (auto-detects page language; NL/EN toggle).
+- **Voice-to-text in 18 languages** — dictate feedback; English by default, pick your language from a one-tap menu (English, Spanish, Mandarin, Hindi, Arabic, Portuguese, French, German, Japanese, Korean, Russian, Italian, Dutch, Turkish, Polish, Indonesian, and more). The interface is English.
 - **Works on your phone** — serves on your LAN; `--https` enables the mic off-localhost.
 - **Touch-friendly** — tap then walk the DOM with ▲/▼ to pick the right element (no hover needed).
 - **Any framework** — serve a static build (`dist/ build/ out/ …`, auto-detected) or

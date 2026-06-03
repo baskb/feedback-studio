@@ -1,4 +1,4 @@
-/* KB365 Feedback Studio — overlay styles (mounted inside a shadow root) */
+/* Feedback Studio — overlay styles (mounted inside a shadow root) */
 
 :host {
   /* Claude.ai-flavoured palette */
@@ -356,6 +356,42 @@ button {
 }
 .kbf-lang:hover { background: var(--kbf-surface-2); color: var(--kbf-ink); }
 .kbf-lang[disabled] { opacity: 0.4; cursor: not-allowed; }
+
+.kbf-langwrap { position: relative; flex: none; }
+.kbf-langmenu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 200px;
+  max-height: 248px;
+  overflow-y: auto;
+  background: var(--kbf-surface);
+  border: 1px solid var(--kbf-border);
+  border-radius: var(--kbf-radius-sm);
+  box-shadow: var(--kbf-shadow-lg);
+  padding: 5px;
+  z-index: 8;
+  animation: kbf-pop 0.14s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.kbf-langmenu[hidden] { display: none; }
+.kbf-langitem {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--kbf-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kbf-langitem:hover { background: var(--kbf-surface-2); }
+.kbf-langitem.is-current { color: var(--kbf-clay-deep); font-weight: 600; }
+.kbf-langitem.is-current::after { content: '✓'; margin-left: auto; padding-left: 8px; }
+.kbf-langmenu::-webkit-scrollbar { width: 9px; }
+.kbf-langmenu::-webkit-scrollbar-thumb { background: var(--kbf-border-strong); border-radius: 999px; border: 3px solid var(--kbf-surface); }
 
 .kbf-spacer { flex: 1; }
 

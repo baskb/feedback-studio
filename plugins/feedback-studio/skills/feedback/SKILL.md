@@ -52,26 +52,38 @@ needed for HTTP). There are two things you do: **start a review session** and
 ## Process comments
 
 1. Read `.feedback/comments.json` (source of truth) — or `.feedback/FEEDBACK.md`
-   for a readable grouped view. Each comment has: `page` (path), `anchor` (a CSS
-   `selector` + a quoted `snippet`/`rangeText` + `tag`), the `text`, and `status`.
-2. Work through every comment whose `status` is `open`. For each:
-   - Use `page` + `anchor.snippet` + `anchor.selector` to locate the exact place in
-     the source. The snippet is the rendered text/markup; grep for it.
-   - Apply the change the comment asks for. If a comment is vague, propose a concrete
-     interpretation rather than guessing silently.
+   for a readable grouped view. Each comment has: `page` (path), `type`
+   (`fix`/`change`/`improve`), `anchor` (a css `selector` + `attrSelector` + `xpath`
+   + a quoted `snippet`/`rangeText` + `tag`), the `text`, `autonomy`, and `status`.
+2. Work through every comment whose `status` is `open`, grouped by page. For each:
+   - **Locate the element with confidence.** Resolve the anchor in the source using
+     the snippet text first (grep the rendered words), cross-checked against the
+     selector/attr/xpath. **If you cannot confidently identify the one element the
+     comment refers to, do NOT edit a guess.** Leave it open, and tell the user it
+     needs a re-pin. Editing the wrong node is the worst outcome — silence beats a
+     confident wrong edit.
+   - **Act according to the `type`:**
+     - `fix` — reproduce the problem, then patch it. Lowest latitude, highest certainty.
+     - `change` — apply near-verbatim to the anchored element/text. Do not redesign around it.
+     - `improve` — rewrite or redesign the anchored thing with judgement, keeping the project's voice.
+   - If the comment text is vague (spoken comments can be garbled), propose a concrete
+     interpretation rather than guessing silently; for `improve`, offer options.
    - Keep the project's own conventions and voice (read any CLAUDE.md / style rules).
-3. After handling a comment, mark it resolved. Either:
-   - tell the user to resolve it in the overlay, or
+3. **Present the work as reviewable diffs grouped by page for the user to approve.**
+   Honour `autonomy`: `review` (default) = show the diff and let them apply/accept;
+   `auto` = apply directly. When in doubt, show the diff.
+4. After a comment's change is applied, mark it resolved (the pin flips green live):
    - PATCH it if the server is running:
      `curl -s -X PATCH http://localhost:<port>/__feedback/api/comments/<id> -H "Content-Type: application/json" -d "{\"status\":\"resolved\"}"`, or
    - edit `.feedback/comments.json` directly (set `"status": "resolved"`).
-4. Summarise what you changed, grouped by page, and call out anything you skipped or
-   need a decision on.
+5. Summarise what you changed, grouped by page, and explicitly list anything you left
+   open (low-confidence anchors needing a re-pin, or decisions you need from the user).
 
 ## Notes
 
-- **Anchors** re-attach by CSS selector first, then fall back to the quoted snippet,
-  so comments survive a rebuild as long as the content is still recognisable.
+- **Anchors** carry several strategies (stable attribute/id, css selector, xpath, and
+  a quoted text snippet). The overlay resolves with the most agreement and survives a
+  rebuild as long as the content is still recognisable; you should do the same in source.
 - **Spoken comments** can be slightly garbled (speech-to-text). Read for intent; if a
   rewrite request lacks direction, offer options.
 - The tool injects only a `<script>` into each page and mounts its UI in a shadow root,

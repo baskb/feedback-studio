@@ -15,15 +15,22 @@ plus a self-contained Node server that does the serving and injection.
 
 - **Comment on anything** — element, heading, image, table, card, section, or an exact
   text selection. A numbered pin marks each spot.
+- **Comment types** — tag each note `fix` (it's broken), `change` (make it exactly this),
+  or `improve` (use your judgement); the type tells the agent how much latitude it has.
 - **Voice-to-text in 18 languages** — dictate feedback; English by default, pick your language from a one-tap menu (English, Spanish, Mandarin, Hindi, Arabic, Portuguese, French, German, Japanese, Korean, Russian, Italian, Dutch, Turkish, Polish, Indonesian, and more). The interface is English.
+- **Live status** — when the agent resolves a comment, its pin flips green in your open
+  browser instantly (file-watch → SSE), and a "N ready for your agent" badge + a
+  copy-`/feedback` button keep the loop one paste away.
 - **Works on your phone** — serves on your LAN; `--https` enables the mic off-localhost.
 - **Touch-friendly** — tap then walk the DOM with ▲/▼ to pick the right element (no hover needed).
 - **Any framework** — serve a static build (`dist/ build/ out/ …`, auto-detected) or
-  **proxy a running dev server** (Vite, Next, Astro, …) with live reload.
+  **proxy a running dev server** (Vite, Next, Astro, …) with live reload (CSP stripped, HMR passed through).
 - **Non-invasive** — injects one `<script>` and mounts its UI in a shadow root; never
   touches your site's DOM, styles, or source.
-- **Agent-ready** — every comment stores the page, a CSS selector, a quoted snippet,
-  and your note, so an agent can re-find and act on each one.
+- **Agent-ready & robust** — every comment stores the page, the comment type, a
+  multi-strategy anchor (stable attr/id, CSS selector, XPath, quoted text) and your note.
+  Anchors re-resolve with a confidence score; when they can't, the agent is told to ask
+  for a re-pin rather than edit the wrong element. See [HARNESS.md](HARNESS.md) for the numbers.
 
 ## Install (Claude Code)
 

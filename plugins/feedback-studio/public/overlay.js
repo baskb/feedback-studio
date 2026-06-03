@@ -50,6 +50,16 @@
   const langShort = (code) => code.split('-')[0].toUpperCase();
   const PLACEHOLDER = 'What needs to change here? (typed or spoken)';
 
+  // Comment types decide how much latitude the AI agent gets when it acts on a comment.
+  const TYPES = [
+    { id: 'fix', label: 'Fix', hint: 'Something is broken or wrong — reproduce and patch it.' },
+    { id: 'change', label: 'Change', hint: 'Make it exactly this — apply near-verbatim, no redesign.' },
+    { id: 'improve', label: 'Improve', hint: 'This is weak — rewrite or redesign with judgement.' },
+  ];
+  const TYPE_IDS = TYPES.map((t) => t.id);
+  let ctype = localStorage.getItem('kbf-ctype') || 'change';
+  if (!TYPE_IDS.includes(ctype)) ctype = 'change';
+
   function normalizePath(p) {
     p = p.replace(/index\.html$/, '');
     if (p.length > 1) p = p.replace(/\/+$/, '/');
@@ -110,7 +120,8 @@
       </div>
       <div class="kbf-list" id="kbf-list"></div>
       <div class="kbf-panel-foot">
-        <div class="kbf-hintline">Saved to <b>.feedback/comments.json</b> + FEEDBACK.md</div>
+        <span class="kbf-readyline" id="kbf-ready" title="Saved to .feedback/comments.json + FEEDBACK.md"></span>
+        <button class="kbf-btn kbf-btn--primary kbf-copyfb" id="kbf-copyfb" title="Copy the command, then paste it into Claude Code / your agent">Copy /feedback</button>
       </div>
     </aside>
 
@@ -138,6 +149,7 @@
   const listEl = $('kbf-list');
   const subEl = $('kbf-panel-sub');
   const countEl = $('kbf-count');
+  const readyEl = $('kbf-ready');
   const modeBtn = $('kbf-toggle-mode');
   const modeLabel = $('kbf-mode-label');
   const toastsEl = $('kbf-toasts');
@@ -166,28 +178,87 @@
     return parts.join(' > ');
   }
   function norm(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
-  function resolveAnchor(a) {
-    if (!a) return null;
-    if (a.selector) {
-      try { const el = document.querySelector(a.selector); if (el) return el; } catch (e) {}
+
+  // A stable attribute selector (test ids, name, unique id), if one resolves uniquely.
+  function stableAttrSelector(el) {
+    const tag = el.nodeName.toLowerCase();
+    for (const a of ['data-testid', 'data-test', 'data-test-id', 'data-cy', 'data-qa', 'data-id', 'id', 'name']) {
+      const v = el.getAttribute && el.getAttribute(a);
+      if (!v) continue;
+      const sel = a === 'id' ? '#' + cssEsc(v) : tag + '[' + a + '="' + String(v).replace(/"/g, '\\"') + '"]';
+      try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (e) {}
     }
-    const snip = norm(a.snippet || a.rangeText).slice(0, 60);
-    if (snip) {
-      const tag = (a.tag || '').toLowerCase();
-      let list = [];
-      try { list = [...document.querySelectorAll(tag && tag !== 'body' ? tag : '*')]; } catch (e) { list = [...document.querySelectorAll('*')]; }
-      let found = list.find((e) => norm(e.textContent).startsWith(snip) && e.getClientRects().length);
-      if (!found) found = list.find((e) => norm(e.textContent).includes(snip));
-      if (found) return found;
-    }
-    return null;
+    return '';
   }
+  function xPath(el) {
+    if (!(el instanceof Element)) return '';
+    if (el.id) { try { if (document.querySelectorAll('#' + cssEsc(el.id)).length === 1) return '//*[@id="' + el.id + '"]'; } catch (e) {} }
+    const segs = [];
+    for (let node = el; node && node.nodeType === 1; node = node.parentElement) {
+      let i = 1;
+      for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) if (sib.nodeName === node.nodeName) i++;
+      segs.unshift(node.nodeName.toLowerCase() + '[' + i + ']');
+      if (node === document.body) break;
+    }
+    return '/' + segs.join('/');
+  }
+  function byXPath(xp) {
+    try {
+      const r = document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      return r.singleNodeValue instanceof Element ? r.singleNodeValue : null;
+    } catch (e) { return null; }
+  }
+  function byText(snip, tag) {
+    if (!snip) return null;
+    const t = norm(snip).slice(0, 80).toLowerCase(); // case-insensitive: text-transform shifts innerText case
+    let list = [];
+    try { list = [...document.querySelectorAll(tag && tag !== 'body' ? tag : '*')]; } catch (e) { list = [...document.querySelectorAll('*')]; }
+    let found = list.find((e) => norm(e.textContent).toLowerCase().startsWith(t) && e.getClientRects().length);
+    if (!found) found = list.find((e) => norm(e.textContent).toLowerCase().includes(t) && e.getClientRects().length);
+    return found || null;
+  }
+
+  // Resolve an anchor with a confidence tier. Strategies are tried strongest-first;
+  // when several independent strategies agree on the same element we are most sure.
+  function resolveWithConfidence(a) {
+    if (!a) return { el: null, confidence: null };
+    const cands = [];
+    const tryStrat = (name, fn) => { try { const el = fn(); if (el) cands.push({ name, el }); } catch (e) {} };
+    if (a.attrSelector) tryStrat('attr', () => document.querySelector(a.attrSelector));
+    if (a.selector) tryStrat('selector', () => document.querySelector(a.selector));
+    if (a.xpath) tryStrat('xpath', () => byXPath(a.xpath));
+    const snip = a.snippet || a.rangeText;
+    if (snip) tryStrat('text', () => byText(snip, a.tag));
+    if (!cands.length) return { el: null, confidence: null };
+
+    // Pick the element the most strategies agree on (attr/selector weigh extra).
+    const score = new Map();
+    const weight = { attr: 2, selector: 2, xpath: 1, text: 1 };
+    for (const c of cands) score.set(c.el, (score.get(c.el) || 0) + (weight[c.name] || 1));
+    let best = cands[0].el, bestScore = 0;
+    for (const [el, s] of score) if (s > bestScore) { best = el; bestScore = s; }
+
+    const textOk = !snip || norm(best.textContent).toLowerCase().includes(norm(snip).slice(0, 40).toLowerCase());
+    let confidence;
+    if (bestScore >= 3 && textOk) confidence = 'high';
+    else if ((cands.some((c) => c.name === 'attr') || (cands.some((c) => c.name === 'selector') && textOk))) confidence = 'high';
+    else if (textOk) confidence = 'medium';
+    else confidence = 'low';
+    return { el: best, confidence };
+  }
+  function resolveAnchor(a) { return resolveWithConfidence(a).el; }
+
   function buildElementAnchor(el) {
     return {
       type: 'element',
       selector: cssPath(el),
+      attrSelector: stableAttrSelector(el),
+      xpath: xPath(el),
       tag: el.nodeName.toLowerCase(),
-      snippet: norm(el.innerText || el.textContent).slice(0, 140) || ('<' + el.nodeName.toLowerCase() + '>'),
+      id: el.id || '',
+      // textContent (not innerText): casing as authored in source, and stable across
+      // text-transform / hidden descendants — better for re-finding and for grepping.
+      snippet: norm(el.textContent).slice(0, 140) || ('<' + el.nodeName.toLowerCase() + '>'),
     };
   }
   function buildRangeAnchor(sel) {
@@ -197,11 +268,31 @@
     return {
       type: 'range',
       selector: cssPath(container),
+      attrSelector: stableAttrSelector(container),
+      xpath: xPath(container),
       tag: container.nodeName.toLowerCase(),
+      id: container.id || '',
       rangeText: norm(sel.toString()).slice(0, 240),
       snippet: norm(sel.toString()).slice(0, 140),
     };
   }
+
+  // Test hook: the anchor an element would get (used by the anchor-rot harness).
+  window.__kbfBuildAnchor = (el) => (el && el.nodeType === 1 ? buildElementAnchor(el) : null);
+
+  // Reproducible anchor self-test: re-resolve every comment anchored on this page
+  // and report the confidence + whether the resolved element still matches the text.
+  window.__kbfSelfTest = function () {
+    const out = pageComments().map((c) => {
+      const { el, confidence } = resolveWithConfidence(c.anchor);
+      const snip = norm(c.anchor && (c.anchor.snippet || c.anchor.rangeText)).slice(0, 40).toLowerCase();
+      const textOk = el ? norm(el.textContent).toLowerCase().includes(snip) : false;
+      return { id: c.id, confidence, found: !!el, textOk };
+    });
+    const n = out.length;
+    const resolved = out.filter((o) => o.found && o.textOk).length;
+    return { total: n, resolved, rate: n ? +(resolved / n).toFixed(3) : null, detail: out };
+  };
 
   // ---------- comment mode ----------
   function setMode(on) {
@@ -381,6 +472,9 @@
         <button class="kbf-x" data-act="cancel" title="Cancel">${I.close}</button>
       </div>
       <div class="kbf-composer-body">
+        <div class="kbf-types">
+          ${TYPES.map((t) => `<button class="kbf-type${t.id === ctype ? ' is-active' : ''}" data-type="${t.id}" title="${escapeHtml(t.hint)}">${t.label}</button>`).join('')}
+        </div>
         <textarea class="kbf-textarea" placeholder="${escapeHtml(PLACEHOLDER)}"></textarea>
         <div class="kbf-rec-hint"><span class="kbf-rec-dot"></span> <span class="kbf-rec-text">Listening…</span></div>
         <div class="kbf-composer-foot">
@@ -405,7 +499,13 @@
     const hint = box.querySelector('.kbf-rec-hint');
     const hintText = box.querySelector('.kbf-rec-text');
     if (!SR) { micBtn.disabled = true; langBtn.disabled = true; }
-    if (isEdit) ta.value = opts.comment.text;
+    if (isEdit) {
+      ta.value = opts.comment.text;
+      if (opts.comment.type && TYPE_IDS.includes(opts.comment.type)) {
+        ctype = opts.comment.type;
+        box.querySelectorAll('.kbf-type').forEach((b) => b.classList.toggle('is-active', b.dataset.type === ctype));
+      }
+    }
 
     function validate() { saveBtn.disabled = !ta.value.trim(); }
     function autoGrow() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 240) + 'px'; }
@@ -413,6 +513,13 @@
 
     const langMenu = box.querySelector('.kbf-langmenu');
     box.addEventListener('click', (e) => {
+      const typeBtn = e.target.closest('[data-type]');
+      if (typeBtn) {
+        ctype = typeBtn.dataset.type;
+        localStorage.setItem('kbf-ctype', ctype);
+        box.querySelectorAll('.kbf-type').forEach((b) => b.classList.toggle('is-active', b.dataset.type === ctype));
+        return;
+      }
       const langItem = e.target.closest('[data-lang]');
       if (langItem) { setVoiceLang(langItem.dataset.lang, box, micBtn, hintText); return; }
       const act = e.target.closest('[data-act]')?.dataset.act;
@@ -437,7 +544,7 @@
     try {
       if (opts.kind === 'edit') {
         const res = await fetch(API + '/comments/' + opts.comment.id, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, type: ctype }),
         });
         const data = await res.json();
         const i = comments.findIndex((c) => c.id === data.comment.id);
@@ -446,7 +553,7 @@
       } else {
         const res = await fetch(API + '/comments', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ page: PAGE, pageTitle: document.title, url: location.href, anchor: opts.anchor, text }),
+          body: JSON.stringify({ page: PAGE, pageTitle: document.title, url: location.href, anchor: opts.anchor, text, type: ctype }),
         });
         const data = await res.json();
         comments.push(data.comment);
@@ -608,10 +715,12 @@
         const num = (pageIndex.get(key).indexOf(c.id)) + 1;
         const anchorTxt = norm(c.anchor && (c.anchor.snippet || c.anchor.rangeText)) || ('<' + (c.anchor?.tag || 'element') + '>');
         const done = c.status === 'resolved';
+        const ct = TYPE_IDS.includes(c.type) ? c.type : 'change';
         html += `
           <div class="kbf-card ${done ? 'is-resolved' : ''}" data-id="${c.id}" data-page="${escapeHtml(key)}" data-url="${escapeHtml(c.url || '')}">
             <div class="kbf-card-top">
               <span class="kbf-badge">${num}</span>
+              <span class="kbf-type-tag kbf-type-${ct}">${ct}</span>
               <span class="kbf-card-anchor" title="${escapeHtml(anchorTxt)}">${escapeHtml(anchorTxt)}</span>
             </div>
             <div class="kbf-card-text">${escapeHtml(c.text)}</div>
@@ -737,6 +846,11 @@
   function updateCount() {
     const open = comments.filter((c) => c.status !== 'resolved').length;
     countEl.textContent = open ? String(open) : '';
+    if (readyEl) {
+      readyEl.textContent = !comments.length ? 'No comments yet'
+        : open ? `${open} ready for your agent`
+        : 'All resolved';
+    }
   }
   function refresh() {
     renderPins();
@@ -744,11 +858,37 @@
     updateCount();
   }
 
+  // ---------- live updates (SSE) ----------
+  function animateResolve(id) {
+    const p = placed.find((x) => x.comment.id === id);
+    if (p) { p.pinEl.classList.add('kbf-just-resolved'); setTimeout(() => p.pinEl.classList.remove('kbf-just-resolved'), 1000); }
+  }
+  function applyComments(next) {
+    const prev = new Map(comments.map((c) => [c.id, c.status]));
+    comments = next;
+    refresh();
+    next.filter((c) => normalizePath(c.page) === PAGE && c.status === 'resolved' && prev.get(c.id) && prev.get(c.id) !== 'resolved')
+      .forEach((c) => animateResolve(c.id));
+  }
+  function subscribeLive() {
+    if (typeof EventSource === 'undefined') return;
+    try {
+      const es = new EventSource(API.replace('/api', '') + '/events');
+      es.addEventListener('comments', (e) => {
+        try { const d = JSON.parse(e.data); if (d && Array.isArray(d.comments)) applyComments(d.comments); } catch (err) {}
+      });
+    } catch (e) {}
+  }
+
   // ---------- wiring ----------
   modeBtn.addEventListener('click', () => setMode(!mode));
   $('kbf-toggle-panel').addEventListener('click', () => setPanel(!panelOpen));
   $('kbf-panel-close').addEventListener('click', () => setPanel(false));
   root.querySelectorAll('.kbf-filter').forEach((b) => b.addEventListener('click', () => setFilter(b.dataset.filter)));
+  $('kbf-copyfb').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText('/feedback'); toast('Copied "/feedback" — paste it into your agent'); }
+    catch (e) { toast('Run /feedback in Claude Code to process these'); }
+  });
 
   document.addEventListener('keydown', (e) => {
     const typing = e.target && /^(input|textarea|select)$/i.test(e.target.nodeName) || (e.target && e.target.isContentEditable);
@@ -776,6 +916,7 @@
       sessionStorage.removeItem('kbf-focus');
       setTimeout(() => focusComment(focusId, panelOpen), 400);
     }
+    subscribeLive();
   }
   load();
 })();

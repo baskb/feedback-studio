@@ -18,9 +18,9 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import os from 'node:os';
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, watch } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -149,18 +149,21 @@ async function exportMarkdown(comments) {
   const open = comments.filter((c) => c.status !== 'resolved').length;
   let md = `# Feedback export\n\n`;
   md += `_Generated ${new Date().toISOString()} — ${comments.length} comment(s): ${open} open, ${comments.length - open} resolved._\n\n`;
-  md += `> Each anchor carries a CSS selector and a quoted snippet so the comment can be re-found on its page. Work the open items, then resolve them in the overlay.\n\n`;
+  md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin. Work the open items, then mark them resolved.\n\n`;
   for (const page of [...byPage.keys()].sort()) {
     const items = byPage.get(page).slice().sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
     md += `## \`${page}\`${items[0]?.pageTitle ? ` — ${items[0].pageTitle}` : ''}\n\n`;
     let i = 0;
     for (const c of items) {
       i++;
-      const kind = c.anchor?.type === 'range' ? 'text' : (c.anchor?.tag || 'element');
-      md += `- ${c.status === 'resolved' ? '[x]' : '[ ]'} **#${i}** (${kind})\n`;
+      const kind = c.anchor?.type === 'range' ? 'text selection' : (c.anchor?.tag || 'element');
+      const type = ['fix', 'change', 'improve'].includes(c.type) ? c.type : 'change';
+      md += `- ${c.status === 'resolved' ? '[x]' : '[ ]'} **#${i}** \`${type}\` — on a ${kind}\n`;
       const quote = (c.anchor?.snippet || c.anchor?.rangeText || '').trim().replace(/\s+/g, ' ');
-      if (quote) md += `  - anchor: "${esc(quote).slice(0, 200)}"\n`;
-      if (c.anchor?.selector) md += `  - selector: \`${esc(c.anchor.selector)}\`\n`;
+      if (quote) md += `  - anchor text: "${esc(quote).slice(0, 200)}"\n`;
+      if (c.anchor?.selector) md += `  - css: \`${esc(c.anchor.selector)}\`\n`;
+      if (c.anchor?.attrSelector) md += `  - attr: \`${esc(c.anchor.attrSelector)}\`\n`;
+      if (c.anchor?.xpath) md += `  - xpath: \`${esc(c.anchor.xpath)}\`\n`;
       md += `  - comment:\n${esc(c.text).trim().split('\n').map((l) => `    ${l}`).join('\n')}\n\n`;
     }
   }
@@ -211,7 +214,21 @@ async function handleApi(req, res, url) {
       const body = JSON.parse((await readBody(req)) || '{}');
       const comments = await loadComments();
       const now = new Date().toISOString();
-      const c = { id: newId(), page: body.page || '/', pageTitle: body.pageTitle || '', url: body.url || '', anchor: body.anchor || {}, text: (body.text || '').trim(), status: 'open', createdAt: now, updatedAt: now };
+      const type = ['fix', 'change', 'improve'].includes(body.type) ? body.type : 'change';
+      const c = {
+        id: newId(),
+        schemaVersion: 2,
+        page: body.page || '/',
+        pageTitle: body.pageTitle || '',
+        url: body.url || '',
+        anchor: body.anchor || {},
+        type,
+        text: (body.text || '').trim(),
+        autonomy: ['auto', 'review'].includes(body.autonomy) ? body.autonomy : 'review',
+        status: 'open',
+        createdAt: now,
+        updatedAt: now,
+      };
       comments.push(c);
       await saveComments(comments);
       return sendJSON(res, 201, { comment: c });
@@ -223,6 +240,8 @@ async function handleApi(req, res, url) {
       if (!c) return sendJSON(res, 404, { error: 'not found' });
       if (typeof body.text === 'string') c.text = body.text.trim();
       if (typeof body.status === 'string') c.status = body.status;
+      if (['fix', 'change', 'improve'].includes(body.type)) c.type = body.type;
+      if (['auto', 'review'].includes(body.autonomy)) c.autonomy = body.autonomy;
       c.updatedAt = new Date().toISOString();
       await saveComments(comments);
       return sendJSON(res, 200, { comment: c });
@@ -275,10 +294,15 @@ function proxyRequest(req, res) {
       const chunks = [];
       pres.on('data', (c) => chunks.push(c));
       pres.on('end', () => {
-        const html = injectHtml(Buffer.concat(chunks).toString('utf-8'));
+        // Route absolute upstream-origin URLs back through us, then inject the overlay.
+        let html = Buffer.concat(chunks).toString('utf-8').split(PROXY).join('');
+        html = injectHtml(html);
         const headers = { ...pres.headers };
         delete headers['content-length'];
         delete headers['content-encoding'];
+        // Drop CSP so the injected overlay (shadow-root assets + inline) can load.
+        delete headers['content-security-policy'];
+        delete headers['content-security-policy-report-only'];
         headers['cache-control'] = 'no-store';
         res.writeHead(pres.statusCode || 200, headers);
         res.end(html);
@@ -307,12 +331,56 @@ function proxyUpgrade(req, clientSocket, head) {
   clientSocket.on('error', () => upstream.destroy());
 }
 
+// ---------- live updates (Server-Sent Events) ----------
+const sseClients = new Set();
+function handleSSE(req, res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write('retry: 2000\n\n');
+  sseClients.add(res);
+  const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 25000);
+  req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
+}
+function broadcastComments(comments) {
+  const payload = 'event: comments\ndata: ' + JSON.stringify({ comments }) + '\n\n';
+  for (const res of sseClients) { try { res.write(payload); } catch (e) {} }
+}
+// Watch the data dir so external edits (the AI agent marking comments resolved)
+// push live to any open overlay. Our own API writes hit the same file, so the
+// overlay re-syncs after every change too.
+function watchComments() {
+  let timer = null;
+  try {
+    watch(DATA_DIR, (ev, fn) => {
+      if (fn && !String(fn).startsWith('comments.json')) return;
+      clearTimeout(timer);
+      timer = setTimeout(async () => broadcastComments(await loadComments()), 120);
+    });
+  } catch (e) { /* fs.watch unavailable on this platform; SSE still pushes on reconnect */ }
+}
+
+// ---------- open the default browser ----------
+function openBrowser(url) {
+  try {
+    let cmd, cmdArgs;
+    if (process.platform === 'win32') { cmd = 'cmd'; cmdArgs = ['/c', 'start', '', url]; }
+    else if (process.platform === 'darwin') { cmd = 'open'; cmdArgs = [url]; }
+    else { cmd = 'xdg-open'; cmdArgs = [url]; }
+    spawn(cmd, cmdArgs, { stdio: 'ignore', detached: true }).unref();
+  } catch (e) {}
+}
+
 // ---------- request handler ----------
 async function handler(req, res) {
   try {
     const url = new URL(req.url, `http://localhost:${PORT}`);
     if (url.pathname === '/__feedback/overlay.js') return serveAsset(res, path.join(PUBLIC_DIR, 'overlay.js'));
     if (url.pathname === '/__feedback/overlay.css') return serveAsset(res, path.join(PUBLIC_DIR, 'overlay.css'));
+    if (url.pathname === '/__feedback/events') return handleSSE(req, res);
     if (url.pathname.startsWith('/__feedback/api')) return handleApi(req, res, url);
 
     if (PROXY) return proxyRequest(req, res);
@@ -377,7 +445,11 @@ async function main() {
     process.exit(1);
   });
   // Omit host so Node binds dual-stack (IPv6 + IPv4-mapped): covers localhost and LAN.
-  server.listen(PORT, () => banner(USE_HTTPS ? 'https' : 'http', ips));
+  server.listen(PORT, () => {
+    banner(USE_HTTPS ? 'https' : 'http', ips);
+    watchComments();
+    if (!args['no-open']) openBrowser(`${USE_HTTPS ? 'https' : 'http'}://localhost:${PORT}/`);
+  });
 }
 
 main();

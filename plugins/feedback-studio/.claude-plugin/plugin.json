@@ -1,0 +1,11 @@
+{
+  "name": "feedback-studio",
+  "displayName": "Feedback Studio",
+  "version": "0.1.0",
+  "description": "A local commenting overlay for any website. Click or tap any element (or select text) on any page and leave typed or spoken feedback; comments persist to .feedback/ for an agent to process. Works with a static build or by proxying a running dev server; optional HTTPS for phone voice-to-text.",
+  "author": {
+    "name": "Bastiaan Kortenbout"
+  },
+  "keywords": ["feedback", "review", "comments", "overlay", "annotations", "voice", "ux"],
+  "license": "MIT"
+}

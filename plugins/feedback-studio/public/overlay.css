@@ -23,7 +23,7 @@
   --kbf-shadow-lg: 0 18px 48px rgba(40, 33, 20, 0.18), 0 6px 16px rgba(40, 33, 20, 0.1);
   --kbf-radius: 14px;
   --kbf-radius-sm: 10px;
-  --kbf-font: ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+  --kbf-font: ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
 
   all: initial;
   position: fixed;
@@ -118,18 +118,52 @@ button {
 
 /* ---------- hover highlight ---------- */
 
-.kbf-highlight {
+/* The hover/selection highlight and the comment-target highlight share ONE look
+   (border only, no fill), so they're identical whether you're selecting an
+   element or already commenting on it. See the sheen border below. */
+.kbf-highlight,
+.kbf-target {
   position: fixed;
   pointer-events: none;
-  border: 2px solid var(--kbf-clay);
-  border-radius: 6px;
-  background: rgba(217, 119, 87, 0.08);
-  box-shadow: 0 0 0 9999px rgba(31, 30, 28, 0.02);
-  transition: all 0.08s linear;
-  opacity: 0;
+  border-radius: 8px;
+}
+/* A warm clay border with a soft lighter sheen sweeping along it — on-brand,
+   "alive" but calm. Border only, no fill. Shared by the hover/selection
+   highlight and the comment target so they look identical. */
+.kbf-highlight::before,
+.kbf-target::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: linear-gradient(115deg,
+    var(--kbf-clay-deep) 0%, var(--kbf-clay) 28%, #eccba6 50%, var(--kbf-clay) 72%, var(--kbf-clay-deep) 100%);
+  background-size: 220% 100%;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  animation: kbf-sheen 3.4s linear infinite;
+}
+.kbf-highlight {
   z-index: 1;
+  opacity: 0;
+  box-shadow: 0 0 0 9999px rgba(31, 30, 28, 0.02);
+  transition: left 0.08s linear, top 0.08s linear, width 0.08s linear, height 0.08s linear, opacity 0.12s linear;
 }
 .kbf-highlight.is-on { opacity: 1; }
+.kbf-target { z-index: 4; }
+@keyframes kbf-sheen {
+  from { background-position: 120% 0; }
+  to   { background-position: -120% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :host *, :host *::before, :host *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 
 .kbf-tag {
   position: absolute;
@@ -843,3 +877,40 @@ button {
   .kbf-fab span.kbf-fab-label { display: none; }
   .kbf-fab { padding: 0; width: 48px; justify-content: center; }
 }
+
+/* ---------- interaction states (tactile press + keyboard focus) ---------- */
+/* Declared last so :active wins over the earlier :hover rules. Gives every
+   control a physical "push" (which matters on touch, where there's no hover)
+   and a visible keyboard focus ring. */
+.kbf-fab:active,
+.kbf-fab--mini:active { transform: translateY(1px) scale(0.97); }
+.kbf-btn:active,
+.kbf-copyfb:active,
+.kbf-stamp:active { transform: translateY(1px); }
+.kbf-type:active,
+.kbf-filter:active,
+.kbf-chip-btn:active { transform: scale(0.96); }
+.kbf-mini:active,
+.kbf-x:active { transform: scale(0.88); }
+.kbf-mic:active { transform: scale(0.93); }
+.kbf-reply-send:active { transform: scale(0.92); }
+.kbf-pin:active { transform: scale(1.04); opacity: 1; }
+
+.kbf-fab:focus-visible,
+.kbf-fab--mini:focus-visible,
+.kbf-btn:focus-visible,
+.kbf-copyfb:focus-visible,
+.kbf-stamp:focus-visible,
+.kbf-type:focus-visible,
+.kbf-filter:focus-visible,
+.kbf-mini:focus-visible,
+.kbf-mic:focus-visible,
+.kbf-x:focus-visible,
+.kbf-reply-send:focus-visible,
+.kbf-chip-btn:focus-visible,
+.kbf-langwrap:focus-within {
+  outline: 2px solid var(--kbf-clay);
+  outline-offset: 2px;
+}
+/* The transparent native <select> sits over the chip; show the ring on the chip. */
+.kbf-langselect:focus-visible { outline: none; }

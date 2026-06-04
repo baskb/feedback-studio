@@ -33,6 +33,7 @@
   let filter = SS.get('kbf-filter') || 'all';
   let activeComposer = null; // { kind:'new'|'edit', anchor, rect, comment? }
   let placed = []; // [{ comment, el, pinEl }]
+  let targetEls = []; // rainbow highlight boxes over the element/text being commented on
   let expandedId = null; // which comment's conversation thread is open in the panel
   let focusReplyNext = false; // focus the reply box on the next render (after an explicit expand)
   const replyDrafts = {}; // id -> in-progress reply text, preserved across re-renders
@@ -130,6 +131,7 @@
   const ui = document.createElement('div');
   ui.innerHTML = `
     <div class="kbf-highlight" id="kbf-hl"><span class="kbf-tag" id="kbf-tag"></span></div>
+    <div id="kbf-targets"></div>
     <div id="kbf-pins"></div>
     <div class="kbf-picker" id="kbf-picker">
       <span class="kbf-picker-tag" id="kbf-picker-tag"></span>
@@ -178,6 +180,7 @@
   const hl = $('kbf-hl');
   const hlTag = $('kbf-tag');
   const pinsLayer = $('kbf-pins');
+  const targetsLayer = $('kbf-targets');
   const picker = $('kbf-picker');
   const pickerTag = $('kbf-picker-tag');
   const composerSlot = $('kbf-composer-slot');
@@ -445,13 +448,13 @@
       const sel = window.getSelection();
       if (sel && !sel.isCollapsed && norm(sel.toString())) {
         clearPick();
-        openComposer({ kind: 'new', anchor: buildRangeAnchor(sel), rect: sel.getRangeAt(0).getBoundingClientRect() });
+        openComposer({ kind: 'new', anchor: buildRangeAnchor(sel), rect: sel.getRangeAt(0).getBoundingClientRect(), range: sel.getRangeAt(0).cloneRange() });
         return;
       }
       if (moved > 10) return; // a scroll / swipe / drag, not a tap
       if (!(target instanceof Element) || target === document.body || target === document.documentElement) return;
       if (type === 'mouse') {
-        openComposer({ kind: 'new', anchor: buildElementAnchor(target), rect: target.getBoundingClientRect() });
+        openComposer({ kind: 'new', anchor: buildElementAnchor(target), rect: target.getBoundingClientRect(), el: target });
       } else {
         startPick(target); // touch / pen: confirm + adjust with the picker
       }
@@ -512,18 +515,54 @@
     else if (act === 'comment') {
       const el = pickChain[pickIdx];
       picker.style.display = 'none';
-      if (el) openComposer({ kind: 'new', anchor: buildElementAnchor(el), rect: el.getBoundingClientRect() });
+      if (el) openComposer({ kind: 'new', anchor: buildElementAnchor(el), rect: el.getBoundingClientRect(), el });
     }
   });
 
   // ---------- composer ----------
   function closeComposer() {
     stopRecognition();
+    clearTarget();
     activeComposer = null;
     composerSlot.innerHTML = '';
     pickChain = [];
     pickIdx = 0;
     picker.style.display = 'none';
+  }
+
+  // Rainbow highlight over exactly what's being commented on, while the composer
+  // is open (the native text selection is lost once the textarea takes focus).
+  function clearTarget() {
+    targetEls.forEach((e) => e.remove());
+    targetEls = [];
+  }
+  function targetRects() {
+    const a = activeComposer;
+    if (!a) return [];
+    if (a.range) { try { return [...a.range.getClientRects()].filter((r) => r.width || r.height); } catch (e) { return []; } }
+    const el = a.el && a.el.isConnected ? a.el : resolveAnchor(a.anchor);
+    if (el && el.getClientRects().length) return [el.getBoundingClientRect()];
+    return [];
+  }
+  function showTarget() {
+    clearTarget();
+    for (const r of targetRects()) {
+      const d = document.createElement('div');
+      d.className = 'kbf-target';
+      d.style.cssText = `left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px`;
+      targetsLayer.appendChild(d);
+      targetEls.push(d);
+    }
+  }
+  function positionTarget() {
+    if (!activeComposer || !targetEls.length) return;
+    const rects = targetRects();
+    if (rects.length !== targetEls.length) { showTarget(); return; }
+    rects.forEach((r, i) => {
+      const d = targetEls[i];
+      d.style.left = r.left + 'px'; d.style.top = r.top + 'px';
+      d.style.width = r.width + 'px'; d.style.height = r.height + 'px';
+    });
   }
 
   function positionComposer(box, rect) {
@@ -580,6 +619,7 @@
         </div>
       </div>`;
     composerSlot.appendChild(box);
+    showTarget();
 
     const ta = box.querySelector('.kbf-textarea');
     const micBtn = box.querySelector('[data-act="mic"]');
@@ -779,6 +819,7 @@
     rafPos = requestAnimationFrame(() => {
       rafPos = 0;
       positionPins();
+      positionTarget();
       if (pickChain.length && picker.style.display !== 'none') renderPick();
     });
   }
@@ -1035,7 +1076,7 @@
     const el = resolveAnchor(c.anchor);
     const rect = el ? el.getBoundingClientRect() : { left: window.innerWidth / 2 - 170, right: 0, top: 120, bottom: 140 };
     if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
-    setTimeout(() => openComposer({ kind: 'edit', anchor: c.anchor, rect: (el ? el.getBoundingClientRect() : rect), comment: c }), el ? 260 : 0);
+    setTimeout(() => openComposer({ kind: 'edit', anchor: c.anchor, rect: (el ? el.getBoundingClientRect() : rect), comment: c, el }), el ? 260 : 0);
   }
 
   async function toggleResolve(c) {

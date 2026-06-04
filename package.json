@@ -1,0 +1,48 @@
+{
+  "name": "feedback-studio",
+  "version": "0.1.0",
+  "description": "Local visual feedback overlay for a site you're building or a Markdown file — click or select anything, leave typed or spoken feedback, and let your coding agent process it. Zero-dependency Node + MCP server; also a Claude Code plugin.",
+  "keywords": [
+    "feedback",
+    "review",
+    "comments",
+    "overlay",
+    "annotations",
+    "voice",
+    "markdown",
+    "claude-code",
+    "mcp",
+    "ai",
+    "agent",
+    "visual-feedback"
+  ],
+  "homepage": "https://github.com/baskb/feedback-studio#readme",
+  "bugs": {
+    "url": "https://github.com/baskb/feedback-studio/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/baskb/feedback-studio.git"
+  },
+  "license": "MIT",
+  "author": "Bastiaan Kortenbout <bastiaan@kb365.nl> (https://www.kb365.nl)",
+  "bin": {
+    "feedback-studio": "plugins/feedback-studio/bin/feedback-studio.mjs",
+    "feedback-studio-mcp": "plugins/feedback-studio/bin/feedback-studio-mcp.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "plugins/feedback-studio/bin/",
+    "plugins/feedback-studio/lib/",
+    "plugins/feedback-studio/public/",
+    "plugins/feedback-studio/skills/",
+    "plugins/feedback-studio/.claude-plugin/",
+    "plugins/feedback-studio/README.md"
+  ],
+  "scripts": {
+    "test": "node --test plugins/feedback-studio/test/store.test.mjs",
+    "smoke": "node plugins/feedback-studio/test/smoke.mjs && node plugins/feedback-studio/test/mcp-smoke.mjs"
+  }
+}

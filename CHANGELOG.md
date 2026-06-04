@@ -7,6 +7,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- npm packaging: `npx feedback-studio …` (no clone/install needed), a global install, and a
+  `feedback-studio-mcp` bin for the MCP server. The package declares zero runtime dependencies.
 - `--tunnel`: opens a public HTTPS URL via a Cloudflare quick tunnel (lazily fetches
   the `cloudflared` helper, no account needed). Phone review with a real certificate —
   no browser warning, the mic works, on any network. Nothing is exposed on the LAN.

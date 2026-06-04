@@ -62,15 +62,22 @@ applies the feedback.
 
 ## Use the server directly (without Claude Code)
 
-It's a plain Node script — usable by anyone:
+It's a zero-dependency Node script — usable by anyone. Quickest is `npx` (no clone, no install):
+
+```bash
+npx feedback-studio --dir dist                      # serve a static build
+npx feedback-studio --proxy http://localhost:5173   # proxy a running dev server
+npx feedback-studio --md report.md                  # review one Markdown file
+npx feedback-studio --md report.md --tunnel         # review on your phone, real HTTPS, no cert warning
+npx feedback-studio --md research/ --https          # a folder of docs, phone voice over the LAN
+```
+
+Or install it globally — `npm i -g feedback-studio`, then `feedback-studio --dir dist` — or run it from a clone:
 
 ```bash
 node plugins/feedback-studio/bin/feedback-studio.mjs            # auto-detect a build dir
 node plugins/feedback-studio/bin/feedback-studio.mjs --dir dist
 node plugins/feedback-studio/bin/feedback-studio.mjs --proxy http://localhost:5173
-node plugins/feedback-studio/bin/feedback-studio.mjs --md report.md          # review one markdown file
-node plugins/feedback-studio/bin/feedback-studio.mjs --md report.md --tunnel # review on your phone, real HTTPS, no cert warning
-node plugins/feedback-studio/bin/feedback-studio.mjs --md research/ --https  # a folder of docs, phone voice over the LAN
 ```
 
 | Flag | Meaning |

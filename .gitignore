@@ -3,6 +3,7 @@ node_modules/
 .DS_Store
 *.log
 *.bak
+*.tgz
 
 # Internal cross-session state — never ship
 PROGRESS.md

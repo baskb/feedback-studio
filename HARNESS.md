@@ -2,7 +2,7 @@
 
 The whole tool rests on one risky promise: when the agent acts on a comment, it
 edits the **right** element. If anchors silently rot, the agent confidently edits
-the wrong node — the existential risk in [PLAN.md](PLAN.md) §9. So anchors use
+the wrong node — the existential risk this tool is built around. So anchors use
 several independent strategies and a confidence tier, and when confidence is low
 the contract is to **refuse and ask for a re-pin**, never to guess.
 
@@ -61,7 +61,7 @@ vote that ships now only moves borderline structural-only matches from `high`
 toward `medium`/`low` — the safe direction — so the confident-correct counts can
 only hold or improve. Re-measured per release.)_
 
-## Still to do (the full gate from PLAN.md §9)
+## Still to do (the full pre-launch gate)
 
 This measures a single page under synthetic perturbation. The full pre-launch gate
 is a multi-page harness that rebuilds the site after *real* content edits and reports

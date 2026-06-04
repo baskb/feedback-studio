@@ -5,8 +5,9 @@ node_modules/
 *.bak
 *.tgz
 
-# Internal cross-session state — never ship
+# Internal cross-session state + strategy — never ship
 PROGRESS.md
 DECISIONS.md
 MEMORY.md
 CLAUDE.md
+PLAN.md

@@ -984,13 +984,20 @@
     toggleExpand(c);
   });
 
+  // The panel goes full-screen on phones (≤480px), so it would cover the element
+  // we jump to — close it first there.
+  function panelIsFullScreen() {
+    return window.matchMedia ? window.matchMedia('(max-width: 480px)').matches : window.innerWidth <= 480;
+  }
   function goToComment(c) {
     const key = normalizePath(c.page);
     if (key === PAGE) {
-      focusComment(c.id, false);
+      if (panelIsFullScreen()) setPanel(false);
+      const found = focusComment(c.id, false);
+      if (!found) toast("Couldn't locate this element on the page — it may need a re-pin.");
     } else {
       SS.set('kbf-focus', c.id);
-      SS.set('kbf-panel', '1');
+      SS.set('kbf-panel', panelIsFullScreen() ? '0' : '1');
       location.href = c.url || (location.origin + key);
     }
   }
@@ -1007,6 +1014,7 @@
     if (openPanel) setPanel(true);
     const card = root.querySelector('.kbf-card[data-id="' + id + '"]');
     if (card) { card.scrollIntoView({ block: 'nearest' }); flashCard(card); }
+    return !!p; // whether the element was found on the page
   }
 
   function flashEl(el) {

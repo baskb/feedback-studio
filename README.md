@@ -150,7 +150,11 @@ real source files, it's a deliberate action (hence the `.bak` backups).
   helper is fetched once, no account needed) and prints a public `https://…trycloudflare.com`
   URL with a *real* certificate — no warning, the mic works, and it reaches your phone on any
   network, not just the same Wi-Fi. The URL is public while the server runs; stop the server
-  (Ctrl+C) to close it.
+  (Ctrl+C) to close it. **Tradeoff:** this is the one mode that leaves your machine — to make
+  the public link work, your page and comments are routed through Cloudflare's edge (nothing is
+  stored there, but the session is no longer local-only/no-egress, and anyone with the link can
+  view and comment). Treat the URL like a secret, prefer the LAN paths (or staying local) for
+  sensitive content, and note that quick tunnels are for ad-hoc review, not a stable/production URL.
 - **Voice** needs a Chromium browser and a secure context. `localhost` counts as secure, and
   so does the `--tunnel` URL; a phone over plain `http://<lan-ip>` does not — so use `--tunnel`
   (or `--https`) for phone voice.

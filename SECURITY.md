@@ -18,6 +18,19 @@ phone). When you do:
 - `--proxy` is pinned to the single upstream you configure; it is not an open
   forward proxy.
 
+When you use `--tunnel`:
+
+- This is the **one mode that sends data off your machine.** To create the public
+  `trycloudflare.com` link, your page content and comments are routed through
+  Cloudflare's edge. Nothing is stored there, but the session is no longer
+  local-only / no-egress.
+- The URL is **public and unauthenticated** while the server runs — anyone who has
+  it can view *and* comment / edit / resolve. Treat the link like a password, share
+  it only with people you trust, and stop the server to revoke it.
+- Cloudflare quick tunnels are for **ad-hoc review, not a stable or production URL**,
+  and carry no uptime guarantee.
+- For sensitive content, prefer the LAN paths (`--https` + `--host`) or staying fully local.
+
 ## Supported versions
 
 This is pre-1.0; only the latest release is supported. Please test against `main`

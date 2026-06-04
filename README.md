@@ -1,6 +1,8 @@
 # Feedback Studio
 
-A local visual feedback overlay for any website **or Markdown file**. Turn on comment
+A local visual feedback overlay for a website **you're building** — or any **Markdown
+file**. Point it at your static build or your local dev server (it doesn't comment on
+public sites you browse — there's no extension), or at a `.md` file. Turn on comment
 mode, then **click or tap any element** (or select any text) on any page — or any
 heading, paragraph, or table in a rendered `.md` — and leave a comment, **typed or
 spoken**. Comments persist to `.feedback/comments.json` (plus a readable `FEEDBACK.md`)

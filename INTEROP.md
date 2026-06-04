@@ -23,6 +23,13 @@ node /path/to/feedback-studio/plugins/feedback-studio/bin/feedback-studio.mjs --
 
 Then: *"read `.feedback/FEEDBACK.md` and apply the open comments; mark each resolved in `.feedback/comments.json` when done."* That already works in Codex, Cursor, Cline, Windsurf, or ChatGPT (paste the file).
 
+> **Editing `comments.json` directly:** prefer the MCP tools (Level 1) for writes —
+> they're atomic and locked, so they're safe even while the overlay is open. If you
+> *do* hand-edit the file, do it when nothing else is writing (the overlay/server
+> and the MCP server each write it), and keep it valid JSON. A malformed file is
+> refused (an error), never silently treated as empty, so a bad edit can't wipe
+> your comments — but it will block writes until you fix it.
+
 ## Level 1 — the MCP server (recommended; one integration, every agent)
 
 `bin/feedback-studio-mcp.mjs` is an MCP **stdio** server over the project's

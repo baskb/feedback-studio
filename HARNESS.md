@@ -11,14 +11,25 @@ the contract is to **refuse and ask for a re-pin**, never to guess.
 Each comment stores, in order of strength: a stable attribute/id selector, a CSS
 `nth-of-type` path, an XPath, and a normalized quoted text snippet (`textContent`,
 so the casing matches source and survives `text-transform`). On resolve, every
-strategy runs; the element the most strategies agree on wins. Confidence:
+strategy runs and votes for an element.
 
-- **high** — a stable attr/id resolves, or the css selector resolves and the text still matches.
-- **medium** — only the text matches, or only structure matches.
-- **low** — something resolved but the text no longer matches (probably the wrong node).
+The strategies are grouped into **independent families**. The CSS selector and
+the XPath are both positional encodings of the *same* DOM path, so after an edit
+they rot **together** — their agreement is not independent corroboration. They
+count as one `structural` family; a stable `attr`/id is a second family; the
+quoted `text` is a third. A "strong" text match means the resolved element's text
+*starts with* the snippet (an over-broad ancestor that merely *contains* it
+counts as weak, not strong). Confidence:
+
+- **high** — a stable attr/id resolves with the text still matching, **or** structure resolves **and** the text strongly matches (two independent families agree). A unique attr/id with no text to check is also high.
+- **medium** — text is present but not a clean match (re-check before editing), or an attr resolves but the content has changed.
+- **low** — only structure resolved (positional only — likely rotted), or nothing corroborates.
 - **none** — nothing resolved.
 
-`low`/`none` are the refuse-and-re-pin cases.
+`low`/`none` are the refuse-and-re-pin cases. The key invariant the family
+grouping protects: a selector and xpath that have rotted to the *same* wrong
+element can no longer be mistaken for two strategies agreeing, so they can't
+produce a confident wrong edit.
 
 ## Reproduce
 
@@ -44,6 +55,11 @@ reload and after DOM perturbations.
 The safety property holds: in the harsh case the 5 that could not be re-found
 correctly degraded to `low`/`none` rather than resolving to a confident wrong
 element. Those are exactly the comments the `/feedback` skill leaves open for a re-pin.
+
+_(Table is the baseline from the earlier additive weighting. The family-grouped
+vote that ships now only moves borderline structural-only matches from `high`
+toward `medium`/`low` — the safe direction — so the confident-correct counts can
+only hold or improve. Re-measured per release.)_
 
 ## Still to do (the full gate from PLAN.md §9)
 

@@ -1,0 +1,73 @@
+// Live smoke test: boots the server against a temp site and exercises the HTTP
+// surface (injection, API, CSRF guard, path-traversal guard). Not part of the
+// unit suite — run manually: node test/smoke.mjs
+import { spawn } from 'node:child_process';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = mkdtempSync(path.join(tmpdir(), 'fbs-smoke-'));
+const site = path.join(root, 'site');
+mkdirSync(site);
+writeFileSync(path.join(site, 'index.html'), '<!doctype html><html><body><h1 id="t">Hi</h1></body></html>');
+writeFileSync(path.join(root, 'secret.txt'), 'TOP SECRET');
+
+const PORT = 4567;
+const ORIGIN = `http://127.0.0.1:${PORT}`;
+const bin = path.join(__dirname, '..', 'bin', 'feedback-studio.mjs');
+const srv = spawn(process.execPath, [bin, '--dir', site, '--port', String(PORT), '--no-open'], { stdio: 'ignore', cwd: root });
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let failures = 0;
+function check(name, cond) { console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}`); if (!cond) failures++; }
+
+try {
+  await sleep(700);
+
+  const home = await fetch(ORIGIN + '/');
+  const homeBody = await home.text();
+  check('serves index', home.status === 200);
+  check('injects overlay script', homeBody.includes('/__feedback/overlay.js'));
+
+  const list = await (await fetch(ORIGIN + '/__feedback/api/comments')).json();
+  check('GET comments returns array', Array.isArray(list.comments));
+
+  const good = await fetch(ORIGIN + '/__feedback/api/comments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ page: '/', text: 'same-origin works', anchor: { selector: '#t', snippet: 'Hi' } }),
+  });
+  check('same-origin POST accepted (201)', good.status === 201);
+
+  const evil = await fetch(ORIGIN + '/__feedback/api/comments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://evil.example' },
+    body: JSON.stringify({ page: '/', text: 'cross-site' }),
+  });
+  check('cross-site POST blocked (403)', evil.status === 403);
+
+  const bad = await fetch(ORIGIN + '/__feedback/api/comments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN }, body: '{ not json',
+  });
+  check('malformed JSON => 400', bad.status === 400);
+
+  const trav = await fetch(ORIGIN + '/%2e%2e/%2e%2e/secret.txt');
+  const travBody = await trav.text();
+  check('path traversal blocked', trav.status === 404 && !travBody.includes('TOP SECRET'));
+
+  const asset = await fetch(ORIGIN + '/__feedback/overlay.js');
+  check('serves overlay asset', asset.status === 200);
+
+  // the same-origin comment should have persisted
+  const after = await (await fetch(ORIGIN + '/__feedback/api/comments')).json();
+  check('comment persisted', after.comments.length === 1 && after.comments[0].text === 'same-origin works');
+} catch (e) {
+  console.log('FAIL  exception:', e.message);
+  failures++;
+} finally {
+  srv.kill();
+  await sleep(400); // let the child release file handles before cleanup (Windows)
+  try { rmSync(root, { recursive: true, force: true }); } catch (e) { /* temp dir, OS will reap */ }
+  console.log(failures ? `\n${failures} smoke check(s) failed` : '\nall smoke checks passed');
+  process.exit(failures ? 1 : 0);
+}

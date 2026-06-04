@@ -8,14 +8,29 @@
   window.__kbfMounted = true;
 
   const API = '/__feedback/api';
+  const ROOT = API.replace(/\/api$/, ''); // '/__feedback' — base for /events and /api/*
   const PAGE = normalizePath(location.pathname);
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
+  // Storage can throw in private mode / sandboxed iframes — never let that abort
+  // the overlay. These wrappers degrade to no-ops instead.
+  function mkStore(get) {
+    let s = null;
+    try { s = get(); } catch (e) {}
+    return {
+      get(k) { try { return s ? s.getItem(k) : null; } catch (e) { return null; } },
+      set(k, v) { try { if (s) s.setItem(k, v); } catch (e) {} },
+      remove(k) { try { if (s) s.removeItem(k); } catch (e) {} },
+    };
+  }
+  const SS = mkStore(() => window.sessionStorage);
+  const LS = mkStore(() => window.localStorage);
+
   // ---------- state ----------
   let comments = [];
-  let mode = sessionStorage.getItem('kbf-mode') === '1';
-  let panelOpen = sessionStorage.getItem('kbf-panel') === '1';
-  let filter = sessionStorage.getItem('kbf-filter') || 'all';
+  let mode = SS.get('kbf-mode') === '1';
+  let panelOpen = SS.get('kbf-panel') === '1';
+  let filter = SS.get('kbf-filter') || 'all';
   let activeComposer = null; // { kind:'new'|'edit', anchor, rect, comment? }
   let placed = []; // [{ comment, el, pinEl }]
   let expandedId = null; // which comment's conversation thread is open in the panel
@@ -24,6 +39,7 @@
   const isOpenC = (c) => c.status !== 'resolved' && c.status !== 'rejected';
   let recognizing = false;
   let recognition = null;
+  let voiceManualStop = false; // true when the user (not a pause) stopped dictation
   let rafHover = 0;
   // Voice dictation languages (BCP-47, the most widely spoken + common dev locales).
   // The UI is English by default; this only sets the speech-recognition language.
@@ -48,7 +64,7 @@
     { code: 'id-ID', name: 'Bahasa Indonesia' },
   ];
   const DEFAULT_LANG = 'en-US';
-  let speechLang = localStorage.getItem('kbf-voicelang') || DEFAULT_LANG;
+  let speechLang = LS.get('kbf-voicelang') || DEFAULT_LANG;
   if (!LANGS.some((l) => l.code === speechLang)) speechLang = DEFAULT_LANG;
   const langName = (code) => (LANGS.find((l) => l.code === code) || LANGS[0]).name;
   const langShort = (code) => code.split('-')[0].toUpperCase();
@@ -73,8 +89,7 @@
   };
   const TYPES = TYPE_SETS[MODE] || TYPE_SETS.web;
   const TYPE_IDS = TYPES.map((t) => t.id);
-  const ALL_TYPE_IDS = ['fix', 'change', 'improve', 'comment', 'rephrase', 'expand', 'delete', 'question'];
-  let ctype = localStorage.getItem('kbf-ctype-' + MODE) || TYPES[0].id;
+  let ctype = LS.get('kbf-ctype-' + MODE) || TYPES[0].id;
   if (!TYPE_IDS.includes(ctype)) ctype = TYPES[0].id;
 
   function normalizePath(p) {
@@ -125,17 +140,17 @@
     </div>
     <div id="kbf-composer-slot"></div>
 
-    <aside class="kbf-panel ${panelOpen ? 'is-open' : ''}" id="kbf-panel">
+    <aside class="kbf-panel ${panelOpen ? 'is-open' : ''}" id="kbf-panel" role="region" aria-label="Feedback">
       <div class="kbf-panel-head">
         <div class="kbf-panel-title">
           <h2>Feedback</h2>
-          <button class="kbf-x" id="kbf-panel-close" title="Close">${I.close}</button>
+          <button class="kbf-x" id="kbf-panel-close" title="Close" aria-label="Close feedback panel">${I.close}</button>
         </div>
         <div class="kbf-panel-sub" id="kbf-panel-sub"></div>
-        <div class="kbf-filters">
-          <button class="kbf-filter" data-filter="all">All</button>
-          <button class="kbf-filter" data-filter="open">Open</button>
-          <button class="kbf-filter" data-filter="resolved">Resolved</button>
+        <div class="kbf-filters" role="group" aria-label="Filter comments">
+          <button class="kbf-filter" data-filter="all" aria-pressed="false">All</button>
+          <button class="kbf-filter" data-filter="open" aria-pressed="false">Open</button>
+          <button class="kbf-filter" data-filter="resolved" aria-pressed="false">Resolved</button>
         </div>
       </div>
       <div class="kbf-list" id="kbf-list"></div>
@@ -147,15 +162,15 @@
     </aside>
 
     <div class="kbf-fab-wrap">
-      <button class="kbf-fab kbf-fab--mini" id="kbf-toggle-panel" title="Open feedback list">
+      <button class="kbf-fab kbf-fab--mini" id="kbf-toggle-panel" title="Open feedback list" aria-label="Open feedback list" aria-expanded="${panelOpen ? 'true' : 'false'}">
         ${I.list}<span class="kbf-count" id="kbf-count"></span>
       </button>
-      <button class="kbf-fab" id="kbf-toggle-mode" title="Toggle comment mode (C)">
+      <button class="kbf-fab" id="kbf-toggle-mode" title="Toggle comment mode (C)" aria-pressed="false">
         ${I.comment}<span class="kbf-fab-label" id="kbf-mode-label">Comment</span>
       </button>
     </div>
 
-    <div class="kbf-toasts" id="kbf-toasts"></div>
+    <div class="kbf-toasts" id="kbf-toasts" role="status" aria-live="polite"></div>
   `;
   root.appendChild(ui);
 
@@ -229,45 +244,90 @@
       return r.singleNodeValue instanceof Element ? r.singleNodeValue : null;
     } catch (e) { return null; }
   }
-  function byText(snip, tag) {
+  // Cache the all-elements scan for one resolve pass (renderPins resolves every
+  // comment; without this each byText() fallback re-walks the whole DOM).
+  function makePool() {
+    let all = null;
+    return { all() { if (!all) { try { all = [...document.querySelectorAll('*')]; } catch (e) { all = []; } } return all; } };
+  }
+  function byText(snip, tag, pool) {
     if (!snip) return null;
     const t = norm(snip).slice(0, 80).toLowerCase(); // case-insensitive: text-transform shifts innerText case
-    let list = [];
-    try { list = [...document.querySelectorAll(tag && tag !== 'body' ? tag : '*')]; } catch (e) { list = [...document.querySelectorAll('*')]; }
+    let list;
+    if (tag && tag !== 'body') {
+      try { list = [...document.querySelectorAll(tag)]; } catch (e) { list = pool ? pool.all() : [...document.querySelectorAll('*')]; }
+    } else {
+      list = pool ? pool.all() : [...document.querySelectorAll('*')];
+    }
     let found = list.find((e) => norm(e.textContent).toLowerCase().startsWith(t) && e.getClientRects().length);
     if (!found) found = list.find((e) => norm(e.textContent).toLowerCase().includes(t) && e.getClientRects().length);
     return found || null;
   }
 
-  // Resolve an anchor with a confidence tier. Strategies are tried strongest-first;
-  // when several independent strategies agree on the same element we are most sure.
-  function resolveWithConfidence(a) {
+  // How well an element's text corroborates the stored snippet.
+  //   strong = text starts with the snippet (the element itself, not a wrapper)
+  //   weak   = snippet is buried inside much larger text (likely an over-broad ancestor)
+  //   none   = snippet not present at all
+  function textRel(el, snip) {
+    if (!snip) return 'strong';
+    const a = norm(el.textContent).toLowerCase();
+    const b = norm(snip).toLowerCase().slice(0, 80);
+    if (!b) return 'strong';
+    if (a.startsWith(b)) return 'strong';
+    if (a.includes(b)) return a.length <= b.length * 1.6 ? 'strong' : 'weak';
+    return 'none';
+  }
+  // A built anchor with no text gets a "<tag>" placeholder snippet — not real text.
+  const isPlaceholderSnippet = (s) => !s || /^<[a-z0-9]+>$/i.test(s);
+
+  // Resolve an anchor with a confidence tier. The key safety property: selector
+  // and xpath are BOTH positional encodings of the same DOM path, so they rot
+  // together after an edit — their agreement is not independent corroboration.
+  // We group them into one "structural" family and require a genuinely
+  // independent signal (a stable attr, or a strong text match) before we call a
+  // match "high". Anything weaker degrades to medium/low so a guessed wrong
+  // element is never edited with confidence.
+  function resolveWithConfidence(a, pool) {
     if (!a) return { el: null, confidence: null };
+    const rawSnip = a.snippet || a.rangeText;
+    const hasText = !isPlaceholderSnippet(rawSnip);
     const cands = [];
     const tryStrat = (name, fn) => { try { const el = fn(); if (el) cands.push({ name, el }); } catch (e) {} };
     if (a.attrSelector) tryStrat('attr', () => document.querySelector(a.attrSelector));
     if (a.selector) tryStrat('selector', () => document.querySelector(a.selector));
     if (a.xpath) tryStrat('xpath', () => byXPath(a.xpath));
-    const snip = a.snippet || a.rangeText;
-    if (snip) tryStrat('text', () => byText(snip, a.tag));
+    if (hasText) tryStrat('text', () => byText(rawSnip, a.tag, pool));
     if (!cands.length) return { el: null, confidence: null };
 
-    // Pick the element the most strategies agree on (attr/selector weigh extra).
-    const score = new Map();
-    const weight = { attr: 2, selector: 2, xpath: 1, text: 1 };
-    for (const c of cands) score.set(c.el, (score.get(c.el) || 0) + (weight[c.name] || 1));
-    let best = cands[0].el, bestScore = 0;
-    for (const [el, s] of score) if (s > bestScore) { best = el; bestScore = s; }
+    const familyOf = { attr: 'attr', selector: 'structural', xpath: 'structural', text: 'text' };
+    const weight = { attr: 3, structural: 2, text: 2 };
+    const fams = new Map(); // element -> Set(families pointing at it)
+    for (const c of cands) {
+      if (!fams.has(c.el)) fams.set(c.el, new Set());
+      fams.get(c.el).add(familyOf[c.name]);
+    }
+    // Pick the element backed by the strongest combination of independent families.
+    let best = cands[0].el, bestScore = -1;
+    for (const [el, set] of fams) {
+      let s = 0; for (const f of set) s += weight[f] || 0;
+      if (s > bestScore) { best = el; bestScore = s; }
+    }
+    const set = fams.get(best);
 
-    const textOk = !snip || norm(best.textContent).toLowerCase().includes(norm(snip).slice(0, 40).toLowerCase());
     let confidence;
-    if (bestScore >= 3 && textOk) confidence = 'high';
-    else if ((cands.some((c) => c.name === 'attr') || (cands.some((c) => c.name === 'selector') && textOk))) confidence = 'high';
-    else if (textOk) confidence = 'medium';
-    else confidence = 'low';
+    if (hasText) {
+      const tr = textRel(best, rawSnip);
+      if ((set.has('attr') || set.has('structural')) && tr === 'strong') confidence = 'high';
+      else if (set.has('text') && tr === 'strong') confidence = 'high';
+      else if (tr !== 'none') confidence = 'medium'; // text present but not a clean match → re-check
+      else confidence = 'low';
+    } else {
+      // No real text to corroborate. Trust only a uniquely-resolving stable attr.
+      confidence = set.has('attr') ? 'high' : 'low';
+    }
     return { el: best, confidence };
   }
-  function resolveAnchor(a) { return resolveWithConfidence(a).el; }
+  function resolveAnchor(a, pool) { return resolveWithConfidence(a, pool).el; }
 
   function buildElementAnchor(el) {
     return {
@@ -304,22 +364,25 @@
   // Reproducible anchor self-test: re-resolve every comment anchored on this page
   // and report the confidence + whether the resolved element still matches the text.
   window.__kbfSelfTest = function () {
+    const pool = makePool();
     const out = pageComments().map((c) => {
-      const { el, confidence } = resolveWithConfidence(c.anchor);
-      const snip = norm(c.anchor && (c.anchor.snippet || c.anchor.rangeText)).slice(0, 40).toLowerCase();
-      const textOk = el ? norm(el.textContent).toLowerCase().includes(snip) : false;
+      const { el, confidence } = resolveWithConfidence(c.anchor, pool);
+      const snip = c.anchor && (c.anchor.snippet || c.anchor.rangeText);
+      const textOk = el ? textRel(el, snip) !== 'none' : false;
       return { id: c.id, confidence, found: !!el, textOk };
     });
     const n = out.length;
-    const resolved = out.filter((o) => o.found && o.textOk).length;
+    // "Resolved" = confidently re-found (high/medium); low/none are refuse-and-re-pin.
+    const resolved = out.filter((o) => o.confidence === 'high' || o.confidence === 'medium').length;
     return { total: n, resolved, rate: n ? +(resolved / n).toFixed(3) : null, detail: out };
   };
 
   // ---------- comment mode ----------
   function setMode(on) {
     mode = on;
-    sessionStorage.setItem('kbf-mode', on ? '1' : '0');
+    SS.set('kbf-mode', on ? '1' : '0');
     modeBtn.classList.toggle('is-active', on);
+    modeBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
     modeLabel.textContent = on ? 'Commenting' : 'Comment';
     document.documentElement.style.cursor = on ? 'crosshair' : '';
     if (!on) { hideHighlight(); closeComposer(); }
@@ -338,8 +401,11 @@
   }
 
   function isInUI(e) {
-    const path = e.composedPath ? e.composedPath() : [];
-    return path.includes(host);
+    if (e.composedPath) {
+      const p = e.composedPath();
+      if (p && p.length) return p.includes(host);
+    }
+    return !!(e.target && host.contains(e.target));
   }
 
   document.addEventListener('mousemove', (e) => {
@@ -486,6 +552,8 @@
 
     const box = document.createElement('div');
     box.className = 'kbf-composer';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', isEdit ? 'Edit comment' : 'Add a comment');
     box.innerHTML = `
       <div class="kbf-composer-head">
         <span class="kbf-chip">${escapeHtml(kindLabel)}</span>
@@ -497,15 +565,15 @@
           ${TYPES.map((t) => `<button class="kbf-type${t.id === ctype ? ' is-active' : ''}" data-type="${t.id}" title="${escapeHtml(t.hint)}">${t.label}</button>`).join('')}
         </div>
         <textarea class="kbf-textarea" placeholder="${escapeHtml(PLACEHOLDER)}"></textarea>
-        <div class="kbf-rec-hint"><span class="kbf-rec-dot"></span> <span class="kbf-rec-text">Listening…</span></div>
+        <div class="kbf-rec-hint" role="status" aria-live="polite"><span class="kbf-rec-dot"></span> <span class="kbf-rec-text">Listening…</span></div>
         <div class="kbf-composer-foot">
-          <button class="kbf-mic" data-act="mic" title="${SR ? 'Dictate (voice to text)' : 'Voice not supported in this browser'}">${I.mic}</button>
-          <div class="kbf-langwrap">
-            <button class="kbf-lang" data-act="lang" title="Voice language: ${escapeHtml(langName(speechLang))}">${escapeHtml(langShort(speechLang))}</button>
-            <div class="kbf-langmenu" hidden>
-              ${LANGS.map((l) => `<button class="kbf-langitem${l.code === speechLang ? ' is-current' : ''}" data-lang="${l.code}">${escapeHtml(l.name)}</button>`).join('')}
-            </div>
-          </div>
+          <button class="kbf-mic" data-act="mic" aria-pressed="false" aria-label="Dictate (voice to text)" title="${SR ? 'Dictate (voice to text)' : 'Voice not supported in this browser'}">${I.mic}</button>
+          <label class="kbf-langwrap" title="Voice language: ${escapeHtml(langName(speechLang))}">
+            <span class="kbf-lang" aria-hidden="true">${escapeHtml(langShort(speechLang))}</span>
+            <select class="kbf-langselect" aria-label="Voice language">
+              ${LANGS.map((l) => `<option value="${l.code}"${l.code === speechLang ? ' selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}
+            </select>
+          </label>
           <div class="kbf-spacer"></div>
           <button class="kbf-btn kbf-btn--ghost" data-act="cancel">Cancel</button>
           <button class="kbf-btn kbf-btn--primary" data-act="save" disabled>${isEdit ? 'Update' : 'Save'}</button>
@@ -515,11 +583,12 @@
 
     const ta = box.querySelector('.kbf-textarea');
     const micBtn = box.querySelector('[data-act="mic"]');
-    const langBtn = box.querySelector('[data-act="lang"]');
+    const langSel = box.querySelector('.kbf-langselect');
+    const langWrap = box.querySelector('.kbf-langwrap');
     const saveBtn = box.querySelector('[data-act="save"]');
     const hint = box.querySelector('.kbf-rec-hint');
     const hintText = box.querySelector('.kbf-rec-text');
-    if (!SR) { micBtn.disabled = true; langBtn.disabled = true; }
+    if (!SR) { micBtn.disabled = true; langSel.disabled = true; langWrap.classList.add('is-disabled'); }
     if (isEdit) {
       ta.value = opts.comment.text;
       if (opts.comment.type && TYPE_IDS.includes(opts.comment.type)) {
@@ -532,24 +601,20 @@
     function autoGrow() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 240) + 'px'; }
     ta.addEventListener('input', () => { validate(); autoGrow(); });
 
-    const langMenu = box.querySelector('.kbf-langmenu');
     box.addEventListener('click', (e) => {
       const typeBtn = e.target.closest('[data-type]');
       if (typeBtn) {
         ctype = typeBtn.dataset.type;
-        localStorage.setItem('kbf-ctype-' + MODE, ctype);
+        LS.set('kbf-ctype-' + MODE, ctype);
         box.querySelectorAll('.kbf-type').forEach((b) => b.classList.toggle('is-active', b.dataset.type === ctype));
         return;
       }
-      const langItem = e.target.closest('[data-lang]');
-      if (langItem) { setVoiceLang(langItem.dataset.lang, box, micBtn, hintText); return; }
       const act = e.target.closest('[data-act]')?.dataset.act;
       if (act === 'cancel') closeComposer();
       else if (act === 'mic') toggleRecognition(ta, micBtn, hint, hintText, validate, autoGrow);
-      else if (act === 'lang') { langMenu.hidden = !langMenu.hidden; }
       else if (act === 'save') doSave(opts, ta.value.trim());
-      else if (langMenu && !langMenu.hidden) langMenu.hidden = true;
     });
+    langSel.addEventListener('change', () => setVoiceLang(langSel.value, box, micBtn, hintText));
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (ta.value.trim()) doSave(opts, ta.value.trim()); }
     });
@@ -589,6 +654,7 @@
 
   // ---------- voice ----------
   function stopRecognition() {
+    voiceManualStop = true;
     if (recognition) { try { recognition.stop(); } catch (e) {} }
     recognizing = false;
   }
@@ -600,12 +666,13 @@
   }
   function setVoiceLang(code, box, micBtn, hintText) {
     speechLang = code;
-    localStorage.setItem('kbf-voicelang', code);
-    const langBtn = box.querySelector('.kbf-lang');
-    if (langBtn) { langBtn.textContent = langShort(code); langBtn.title = 'Voice language: ' + langName(code); }
-    box.querySelectorAll('.kbf-langitem').forEach((it) => it.classList.toggle('is-current', it.dataset.lang === code));
-    const menu = box.querySelector('.kbf-langmenu');
-    if (menu) menu.hidden = true;
+    LS.set('kbf-voicelang', code);
+    const chip = box.querySelector('.kbf-lang');
+    if (chip) chip.textContent = langShort(code);
+    const wrap = box.querySelector('.kbf-langwrap');
+    if (wrap) wrap.title = 'Voice language: ' + langName(code);
+    const sel = box.querySelector('.kbf-langselect');
+    if (sel && sel.value !== code) sel.value = code;
     if (hintText) hintText.textContent = 'Listening… (' + langName(code) + ')';
     // a live language switch takes effect on the next dictation start
     if (recognizing) { stopRecognition(); if (micBtn) micBtn.classList.remove('is-recording'); }
@@ -613,30 +680,57 @@
   }
   function toggleRecognition(ta, micBtn, hint, hintText, validate, autoGrow) {
     if (!SR) return;
-    if (recognizing) { stopRecognition(); micBtn.classList.remove('is-recording'); hint.classList.remove('is-on'); return; }
+    const setPressed = (on) => {
+      micBtn.classList.toggle('is-recording', on);
+      micBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      hint.classList.toggle('is-on', on);
+    };
+    if (recognizing) { stopRecognition(); setPressed(false); return; }
+    voiceManualStop = false;
+    let voiceErrored = false;
     if (hintText) hintText.textContent = 'Listening… (' + langName(speechLang) + ')';
     recognition = new SR();
     recognition.lang = speechLang;
     recognition.interimResults = true;
     recognition.continuous = true;
     let committed = ta.value;
+    let lastApplied = ta.value;
     recognition.onresult = (e) => {
+      // If the user typed into the box since our last write, adopt that as the
+      // base so manual edits made while dictating aren't discarded.
+      if (ta.value !== lastApplied) committed = ta.value;
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const seg = e.results[i][0].transcript;
         if (e.results[i].isFinal) committed = appendSentence(committed, seg);
         else interim += seg;
       }
-      ta.value = interim ? appendSentence(committed, interim) : committed;
+      const val = interim ? appendSentence(committed, interim) : committed;
+      ta.value = val; lastApplied = val;
       validate(); autoGrow();
     };
-    recognition.onend = () => { recognizing = false; micBtn.classList.remove('is-recording'); hint.classList.remove('is-on'); };
     recognition.onerror = (ev) => {
-      recognizing = false; micBtn.classList.remove('is-recording'); hint.classList.remove('is-on');
-      if (ev.error === 'not-allowed') toast('Microphone blocked — allow mic access');
+      voiceErrored = true;
+      const msg = {
+        'not-allowed': 'Microphone blocked — allow mic access',
+        'service-not-allowed': 'Microphone blocked — allow mic access',
+        'no-speech': 'No speech detected — try again',
+        'audio-capture': 'No microphone found',
+        'network': 'Voice recognition network error',
+      }[ev.error];
+      if (msg) toast(msg);
     };
-    try { recognition.start(); recognizing = true; micBtn.classList.add('is-recording'); hint.classList.add('is-on'); }
-    catch (e) {}
+    recognition.onend = () => {
+      // The engine auto-stops after a silence; keep listening unless the user
+      // toggled off or an error ended it.
+      if (!voiceManualStop && !voiceErrored) {
+        try { recognition.start(); return; } catch (e) {}
+      }
+      recognizing = false;
+      setPressed(false);
+    };
+    try { recognition.start(); recognizing = true; setPressed(true); }
+    catch (e) { recognizing = false; setPressed(false); }
   }
 
   // ---------- pins ----------
@@ -647,8 +741,9 @@
     pinsLayer.innerHTML = '';
     placed = [];
     const list = pageComments();
+    const pool = makePool();
     list.forEach((c, idx) => {
-      const el = resolveAnchor(c.anchor);
+      const el = resolveAnchor(c.anchor, pool);
       if (!el) return;
       const pin = document.createElement('div');
       pin.className = 'kbf-pin'
@@ -658,7 +753,12 @@
         + (c.status === 'rejected' ? ' is-rejected' : '');
       pin.innerHTML = c.author === 'agent' ? I.bot : String(idx + 1);
       pin.title = (c.author === 'agent' ? '[agent] ' : '') + c.text;
-      pin.addEventListener('click', () => focusComment(c.id, true));
+      pin.setAttribute('role', 'button');
+      pin.tabIndex = 0;
+      pin.setAttribute('aria-label', (c.author === 'agent' ? 'Agent comment: ' : 'Comment: ') + norm(c.text).slice(0, 80));
+      const activate = () => focusComment(c.id, true);
+      pin.addEventListener('click', activate);
+      pin.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
       pinsLayer.appendChild(pin);
       placed.push({ comment: c, el, pinEl: pin });
     });
@@ -685,16 +785,35 @@
   window.addEventListener('scroll', schedulePos, true);
   window.addEventListener('resize', schedulePos);
 
+  // In proxied SPAs / HMR the host page swaps its DOM on route changes: anchored
+  // elements detach and pins read zeros with no recovery until a full reload.
+  // Re-resolve (debounced) when the page mutates, and re-attach our host if the
+  // host page removed it. Shadow-DOM mutations are encapsulated, so our own pin
+  // updates don't trigger this.
+  let moTimer = 0;
+  function startDomObserver() {
+    if (typeof MutationObserver === 'undefined') return;
+    const obs = new MutationObserver((muts) => {
+      if (!muts.some((m) => !host.contains(m.target))) return; // all inside our UI
+      if (!host.isConnected) (document.body || document.documentElement).appendChild(host);
+      clearTimeout(moTimer);
+      moTimer = setTimeout(() => { renderPins(); if (panelOpen) renderPanel(); }, 200);
+    });
+    try { obs.observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
+  }
+
   // ---------- panel ----------
   function setPanel(open) {
     panelOpen = open;
-    sessionStorage.setItem('kbf-panel', open ? '1' : '0');
+    SS.set('kbf-panel', open ? '1' : '0');
     panel.classList.toggle('is-open', open);
+    const tb = $('kbf-toggle-panel');
+    if (tb) tb.setAttribute('aria-expanded', open ? 'true' : 'false');
     if (open) renderPanel();
   }
   function setFilter(f) {
     filter = f;
-    sessionStorage.setItem('kbf-filter', f);
+    SS.set('kbf-filter', f);
     renderPanel();
   }
   function filtered(list) {
@@ -704,7 +823,11 @@
   }
 
   function renderPanel() {
-    root.querySelectorAll('.kbf-filter').forEach((b) => b.classList.toggle('is-active', b.dataset.filter === filter));
+    root.querySelectorAll('.kbf-filter').forEach((b) => {
+      const on = b.dataset.filter === filter;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
     const open = comments.filter(isOpenC).length;
     const agentOpen = comments.filter((c) => c.author === 'agent' && c.status === 'open').length;
     subEl.textContent = `${comments.length} comment${comments.length === 1 ? '' : 's'} · ${open} open`
@@ -787,15 +910,33 @@
           </div>`;
       }
     }
+    // Preserve reply-box focus + caret across the re-render (an SSE push or a
+    // reply sent elsewhere shouldn't yank the cursor out mid-sentence).
+    const active = root.activeElement;
+    let restore = null;
+    if (active && active.classList && active.classList.contains('kbf-reply-input')) {
+      const card = active.closest('.kbf-card');
+      restore = { id: card && card.dataset.id, start: active.selectionStart, end: active.selectionEnd };
+    }
+
     listEl.innerHTML = html;
 
-    // restore an in-progress reply draft and (only right after an explicit expand) focus it
+    // restore an in-progress reply draft for the expanded card
     if (expandedId) {
       const ta = root.querySelector('.kbf-card[data-id="' + expandedId + '"] .kbf-reply-input');
-      if (ta) {
-        if (replyDrafts[expandedId]) { ta.value = replyDrafts[expandedId]; ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; }
-        if (focusReplyNext) { ta.focus(); ta.selectionStart = ta.value.length; }
+      if (ta && replyDrafts[expandedId]) {
+        ta.value = replyDrafts[expandedId];
+        ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
       }
+    }
+    // restore focus + caret if a reply box was focused before this re-render…
+    if (restore && restore.id) {
+      const ta = root.querySelector('.kbf-card[data-id="' + restore.id + '"] .kbf-reply-input');
+      if (ta) { ta.focus(); try { ta.setSelectionRange(restore.start, restore.end); } catch (e) {} }
+    } else if (focusReplyNext && expandedId) {
+      // …or focus it once, right after an explicit expand
+      const ta = root.querySelector('.kbf-card[data-id="' + expandedId + '"] .kbf-reply-input');
+      if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length; }
     }
     focusReplyNext = false;
   }
@@ -848,8 +989,8 @@
     if (key === PAGE) {
       focusComment(c.id, false);
     } else {
-      sessionStorage.setItem('kbf-focus', c.id);
-      sessionStorage.setItem('kbf-panel', '1');
+      SS.set('kbf-focus', c.id);
+      SS.set('kbf-panel', '1');
       location.href = c.url || (location.origin + key);
     }
   }
@@ -946,7 +1087,9 @@
   }
   function timeAgo(iso) {
     if (!iso) return '';
-    const d = (Date.now() - new Date(iso).getTime()) / 1000;
+    const t = new Date(iso).getTime();
+    if (isNaN(t)) return '';
+    const d = (Date.now() - t) / 1000;
     if (d < 60) return 'just now';
     if (d < 3600) return Math.floor(d / 60) + 'm ago';
     if (d < 86400) return Math.floor(d / 3600) + 'h ago';
@@ -980,13 +1123,38 @@
     next.filter((c) => normalizePath(c.page) === PAGE && c.status === 'resolved' && prev.get(c.id) && prev.get(c.id) !== 'resolved')
       .forEach((c) => animateResolve(c.id));
   }
+  let es = null;
+  let sseBackoff = 1000;
   function subscribeLive() {
     if (typeof EventSource === 'undefined') return;
+    try { es = new EventSource(ROOT + '/events'); }
+    catch (e) { scheduleResubscribe(); return; }
+    es.addEventListener('comments', (e) => {
+      sseBackoff = 1000;
+      try { const d = JSON.parse(e.data); if (d && Array.isArray(d.comments)) applyComments(d.comments); } catch (err) {}
+    });
+    es.onopen = () => { sseBackoff = 1000; resync(); };
+    es.onerror = () => {
+      // EventSource silently auto-retries transient blips; it does NOT recover
+      // from a terminal close (proxy idle-timeout, dev-server restart). Handle
+      // that ourselves with capped backoff and a full resync on reconnect.
+      if (es && es.readyState === EventSource.CLOSED) {
+        try { es.close(); } catch (e) {}
+        es = null;
+        scheduleResubscribe();
+      }
+    };
+  }
+  function scheduleResubscribe() {
+    const wait = Math.min(sseBackoff, 15000);
+    sseBackoff = Math.min(sseBackoff * 2, 15000);
+    setTimeout(subscribeLive, wait);
+  }
+  async function resync() {
     try {
-      const es = new EventSource(API.replace('/api', '') + '/events');
-      es.addEventListener('comments', (e) => {
-        try { const d = JSON.parse(e.data); if (d && Array.isArray(d.comments)) applyComments(d.comments); } catch (err) {}
-      });
+      const res = await fetch(API + '/comments');
+      const data = await res.json();
+      if (data && Array.isArray(data.comments)) applyComments(data.comments);
     } catch (e) {}
   }
 
@@ -1004,7 +1172,7 @@
     stampBtn.style.display = '';
     stampBtn.addEventListener('click', async () => {
       try {
-        const r = await fetch(API.replace('/api', '') + '/api/md-export', { method: 'POST' }).then((x) => x.json());
+        const r = await fetch(API + '/md-export', { method: 'POST' }).then((x) => x.json());
         toast(`Stamped ${r.stamped} marker${r.stamped === 1 ? '' : 's'} into ${r.files} file${r.files === 1 ? '' : 's'}` + (r.notFound ? ` (${r.notFound} appended at end)` : ''));
       } catch (e) { toast('Stamp failed'); }
     });
@@ -1031,12 +1199,13 @@
     setMode(mode);
     refresh();
     if (panelOpen) { panel.classList.add('is-open'); renderPanel(); }
-    const focusId = sessionStorage.getItem('kbf-focus');
+    const focusId = SS.get('kbf-focus');
     if (focusId) {
-      sessionStorage.removeItem('kbf-focus');
+      SS.remove('kbf-focus');
       setTimeout(() => focusComment(focusId, panelOpen), 400);
     }
     subscribeLive();
+    startDomObserver();
   }
   load();
 })();

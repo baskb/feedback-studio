@@ -3,14 +3,15 @@
 > Produced by a multi-agent workflow: 5 persona brainstorms (creative marketer,
 > website builder/UX, productivity expert, developer/architect, and the AI agent
 > that consumes the comments) → two adversarial critique rounds → synthesis.
-> Status: planning only. Repo stays private until the v1 core is proven.
+> Status: v1 core built and hardened (security pass, `node --test` suite, CI; June 2026).
+> Desktop and LAN phone review (`--https`) both ship. Preparing to go public.
 
 ## TL;DR
 
 1. **Build one thing perfectly: the local `npx` visual-review loop for sites *you* build with an AI agent.** No extension, no store, no signup, no cloud. Comments land as files in your repo; your coding agent reads them and ships the fixes.
 2. **The differentiator is voice review from the couch, supervised batch-resolve.** Capture comments by speaking; then paste one command and watch the agent propose diffs you approve in seconds. Not autonomous overnight editing. That framing is a trust landmine and is killed.
 3. **The existential risk is the agent editing the wrong element.** Before any marketing, build an anchor-rot test harness against a real re-rendering site and publish the resolve-rate. No marketing survives a tool that confidently edits the wrong node.
-4. **Ship desktop voice in v1** so the first launch already carries the differentiator. Phone voice comes in Wave 2 over a tunnel, never a self-signed cert stack.
+4. **Ship desktop *and* phone voice in v1.** Desktop voice works on `localhost`; phone voice ships via `--https` (self-signed cert) over the LAN. The self-signed LAN path was **kept, not cut** — instead it's contained: the server binds to loopback by default, `--host 0.0.0.0` is an explicit opt-in to expose it, and all mutating API routes reject cross-site writes. A hosted tunnel stays the cleaner Wave 2 escalation.
 5. **Three comment types, three roadmap phases, one hero demo video.** Win a small vocal core of solo agentic devs who use it every build. Everyone else arrives sideways through the `FEEDBACK.md` that shows up in a repo they share.
 
 ---
@@ -34,7 +35,7 @@
 
 ---
 
-## 2. Architecture: the firm call
+## 2. Architecture: the firm call <!-- @FB-Q: T at -->
 
 **Primary path: the local `npx` proxy/static server. This is the product and the moat. Everything is built around it.** No browser extension, no bookmarklet, no hosted SaaS, no third-party-site support in v1, and it is said loudly in the README.
 
@@ -104,7 +105,8 @@ This is the launchable core. Mark this as the first release.
 - `npx` zero-config proxy/static boot, browser auto-open, shadow-root overlay live. Comment mode is a toggle; with mode off the page behaves 100% normally.
 - Narrow, tested proxy support: Vite, Astro, Next (CSP rewrite + HMR pass-through + absolute-URL handling).
 - Click-element and select-text capture; mobile DOM walk (tap, then up/down to pick the block).
-- **Desktop voice capture (Web Speech API, NL/EN auto-detect + toggle).** This is what makes Wave 1 differentiated.
+- **Desktop voice capture (Web Speech API, 18-language picker, English default).** This is what makes Wave 1 differentiated.
+- **Phone review over a secure tunnel (`--tunnel`):** fetches `cloudflared` on first use and opens a real-cert `https://…trycloudflare.com` URL — no cert warning, mic works on any network, nothing exposed on the LAN. The easy, install-and-go phone path. (Self-signed `--https` + `--host 0.0.0.0` remains the no-tunnel LAN fallback; the API binds to loopback by default and mutating routes reject cross-site requests, so the exposed surface is contained.)
 - Three comment types (fix / change / improve) as a sticky one-tap post-click pill.
 - Frozen, versioned `comment` schema; `comments.json` ↔ `FEEDBACK.md` deterministic round-trip.
 - Pins + side panel (filter, jump-to, edit, resolve, delete); "N ready" badge + copy-paste `/feedback`.
@@ -115,7 +117,7 @@ This is the launchable core. Mark this as the first release.
 - **Published anchor resolve-rate from the §9 harness, in the README, as a credibility flex.**
 
 ### NEXT — the phone/voice escalation and reach (Wave 2)
-- **Phone handoff over a tunnel** (`--tunnel` shells out to a trusted tunnel giving a real HTTPS URL + QR). Mic just works, no cert-trust hell, no LAN-security surface. The couch-review launch.
+- **Tunnel polish** (the `--tunnel` itself now ships in NOW): a scannable QR for the public URL, one-click share, and an optional pinned/named tunnel for repeat sessions. The polished couch-review launch.
 - MCP server + one-click "Add to Claude Code / Cursor / Windsurf" config block.
 - `ask` and `comment` comment types, alongside the client-handoff use cases where they earn their place.
 - Agent-contract richness: changelog-on-resolve, automated `needs-info` re-pin, autonomy-dial UI.
@@ -169,7 +171,7 @@ The rule: widen the funnel by marketing the artifact, not by building per-person
 1. **The agent edits the wrong element and the user reverts forever (existential).** Visual feedback is where AI is most confidently wrong. *Mitigation:* multi-strategy anchors + confidence score; below threshold the agent **refuses and requests a re-pin** rather than guessing; every change is a reviewable diff. **Decisive proof, not a promise: build a 20-page anchor-rot test harness against a real re-rendering site (the KB365 v3 site is ideal — canvas scenes, scoped CSS, dynamic content), measure the resolved-vs-flagged rate, and publish it. If it is below ~85% on a real site, the product is not ready and no marketing fixes that.** This is "test on ONE before replicating to N" at its hardest.
 2. **The "pins go green live" promise is real plumbing.** *Mitigation:* the file-watch → SSE → overlay channel is a named NOW deliverable (§6). If it slips, downgrade the promise honestly to "re-open to see resolved pins" and do not market the live moment until it ships.
 3. **Proxy correctness (CSP / HMR / absolute URLs).** The second-most-likely "doesn't work on my site" source after anchor rot. *Mitigation:* support a narrow, hand-tested list of dev servers (Vite, Astro, Next); rewrite CSP, pass HMR sockets through, handle absolute asset URLs. Narrow and reliable over universal and flaky.
-4. **Phone/voice security and support burden.** Self-signed certs on phones are a UX nightmare (scare screens, manual iOS trust) and the #1 future issue-tracker sinkhole for one person. *Mitigation:* **cut the self-signed cert stack entirely.** Use `--tunnel` for a real HTTPS URL so the mic just works and there is no LAN-security surface to defend. Phone *text* over plain LAN http is the fallback if a tunnel is unavailable.
+4. **Phone/voice security and support burden.** Self-signed certs on phones are a UX wrinkle (a one-time "not private" scare screen → Proceed) and a potential issue-tracker sink for one person. *Mitigation as shipped:* phone voice uses `--https` with a self-signed cert over the LAN, but the surface is **contained, not removed** — the server binds to **loopback by default**, LAN exposure is an explicit `--host 0.0.0.0` opt-in, and every mutating API route rejects **cross-site** requests (Origin/Host mismatch), so a page on another origin can't reach the local API. A hosted `--tunnel` (real HTTPS, no cert step, no LAN surface) remains the cleaner Wave 2 path. Phone *text* over plain LAN http is the no-cert fallback.
 5. **Privacy.** *Mitigation:* anchor the story on the true invariant — **everything stays in `.feedback/` on your machine, local-only, no network egress.** This survives the Next-phase screenshot/computed-style feature (a screenshot is page capture, but it never leaves the machine). Do not sell "we only capture the snippet," which the roadmap breaks.
 6. **One-person maintainability.** *Mitigation:* no backend, no accounts, no extension, no cert stack. Keep schema and storage stable and boring; front-ends and agent clients are thin and replaceable. A sharp finished tool *is* the brand goal; a sprawling half-maintained one hurts it.
 7. **"Just another Vibe Annotations" silence.** *Mitigation:* never lead with the incumbent's line. Lead with the two things they lack — no extension and voice. Ship voice in Wave 1 so Show HN fires at a genuinely differentiated build.

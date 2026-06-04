@@ -217,15 +217,19 @@ button {
   box-shadow: var(--kbf-shadow-sm), 0 0 0 2px #fff;
   pointer-events: auto;
   cursor: pointer;
-  transition: transform 0.15s cubic-bezier(0.2, 0.7, 0.3, 1);
+  /* Slightly transparent so the text under the pin stays readable; snaps to full
+     opacity on hover / keyboard focus / when active. */
+  opacity: 0.6;
+  transition: transform 0.15s cubic-bezier(0.2, 0.7, 0.3, 1), opacity 0.15s;
   z-index: 2;
 }
-.kbf-pin:hover { transform: scale(1.12); }
+.kbf-pin:hover, .kbf-pin:focus-visible { transform: scale(1.12); opacity: 1; }
+.kbf-pin:focus-visible { outline: 2px solid var(--kbf-clay); outline-offset: 2px; }
 .kbf-pin.is-agent { background: var(--kbf-agent); border-radius: 50% 50% 2px 50%; }
 .kbf-pin.is-agent svg { width: 15px; height: 15px; }
 .kbf-pin.is-resolved { background: var(--kbf-green); }
 .kbf-pin.is-rejected { background: var(--kbf-muted); }
-.kbf-pin.is-active { transform: scale(1.18); box-shadow: var(--kbf-shadow-md), 0 0 0 3px var(--kbf-clay-tint); }
+.kbf-pin.is-active { transform: scale(1.18); opacity: 1; box-shadow: var(--kbf-shadow-md), 0 0 0 3px var(--kbf-clay-tint); }
 
 /* ---------- composer popover ---------- */
 
@@ -294,6 +298,7 @@ button {
   width: 100%;
   min-height: 92px;
   max-height: 240px;
+  overscroll-behavior: contain;
   resize: vertical;
   border: 1px solid var(--kbf-border-strong);
   border-radius: var(--kbf-radius-sm);
@@ -347,6 +352,9 @@ button {
 }
 
 .kbf-lang {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
   height: 38px;
   min-width: 38px;
@@ -360,44 +368,29 @@ button {
   letter-spacing: 0.03em;
   transition: all 0.15s;
 }
-.kbf-lang:hover { background: var(--kbf-surface-2); color: var(--kbf-ink); }
-.kbf-lang[disabled] { opacity: 0.4; cursor: not-allowed; }
 
-.kbf-langwrap { position: relative; flex: none; }
-.kbf-langmenu {
+/* Voice language picker: a compact chip with a NATIVE <select> overlaid on top
+   (transparent). On mobile this opens the OS language picker — which scrolls
+   perfectly, never clips, and never scrolls the page behind it — while the chip
+   stays small. No custom dropdown to misbehave on touch. */
+.kbf-langwrap { position: relative; flex: none; display: inline-flex; }
+.kbf-langwrap:hover .kbf-lang { background: var(--kbf-surface-2); color: var(--kbf-ink); }
+.kbf-langselect {
   position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  width: 200px;
-  max-height: 248px;
-  overflow-y: auto;
-  background: var(--kbf-surface);
-  border: 1px solid var(--kbf-border);
-  border-radius: var(--kbf-radius-sm);
-  box-shadow: var(--kbf-shadow-lg);
-  padding: 5px;
-  z-index: 8;
-  animation: kbf-pop 0.14s cubic-bezier(0.2, 0.7, 0.3, 1);
-}
-.kbf-langmenu[hidden] { display: none; }
-.kbf-langitem {
-  display: flex;
-  align-items: center;
+  inset: 0;
   width: 100%;
-  text-align: left;
-  padding: 8px 10px;
-  border-radius: 8px;
-  font-size: 13px;
-  color: var(--kbf-ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 16px; /* >=16px stops iOS from zooming the page when it opens */
+  -webkit-appearance: none;
+  appearance: none;
 }
-.kbf-langitem:hover { background: var(--kbf-surface-2); }
-.kbf-langitem.is-current { color: var(--kbf-clay-deep); font-weight: 600; }
-.kbf-langitem.is-current::after { content: '✓'; margin-left: auto; padding-left: 8px; }
-.kbf-langmenu::-webkit-scrollbar { width: 9px; }
-.kbf-langmenu::-webkit-scrollbar-thumb { background: var(--kbf-border-strong); border-radius: 999px; border: 3px solid var(--kbf-surface); }
+.kbf-langwrap.is-disabled { opacity: 0.4; }
+.kbf-langwrap.is-disabled .kbf-langselect { cursor: not-allowed; }
 
 .kbf-spacer { flex: 1; }
 
@@ -499,6 +492,8 @@ button {
 .kbf-list {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 10px 14px 24px;
 }
 

@@ -9,20 +9,28 @@
 // Modes:
 //   --dir <path>     serve a static build directory (auto-detected if omitted)
 //   --proxy <url>    proxy a running dev server (e.g. http://localhost:5173)
+//   --md <path>      review a Markdown file or a folder of them
 //   --port <n>       listen port (default 4444)
+//   --host <addr>    bind address (default 127.0.0.1; use 0.0.0.0 for phone/LAN)
 //   --https          serve over TLS with a self-signed cert (voice on phones)
 //
-// HTTP needs zero dependencies. --https fetches a tiny cert helper once.
+// HTTP needs zero dependencies. --https / --md fetch a tiny helper once.
 
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
+import tls from 'node:tls';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
-import { readFile, writeFile, mkdir, stat, readdir } from 'node:fs/promises';
-import { existsSync, readFileSync, statSync, watch } from 'node:fs';
+import { readFile, writeFile, mkdir, stat, readdir, chmod } from 'node:fs/promises';
+import { existsSync, readFileSync, statSync, watch, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import {
+  ALLOWED_TYPES, STATUSES, AUTONOMY,
+  readComments, writeComments, mutate, makeComment, makeReply, exportMarkdown,
+} from '../lib/store.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -42,9 +50,29 @@ function parseArgs(argv) {
   return out;
 }
 const args = parseArgs(process.argv.slice(2));
+
 const PORT = Number(args.port || process.env.PORT || 4444);
-const USE_HTTPS = !!args.https || process.env.HTTPS === '1';
-const PROXY = args.proxy ? String(args.proxy).replace(/\/+$/, '') : null;
+if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
+  console.error(`\n  Invalid port: ${args.port || process.env.PORT}. Use --port <1-65535>.\n`);
+  process.exit(1);
+}
+// Bind to loopback by default so the mutating API isn't reachable from the LAN.
+// Pass --host 0.0.0.0 to expose it (e.g. to comment from your phone).
+const HOST = args.host ? String(args.host) : '127.0.0.1';
+const EXPOSE_LAN = HOST === '0.0.0.0' || HOST === '::' || (args.host && HOST !== '127.0.0.1' && HOST !== 'localhost' && HOST !== '::1');
+// --tunnel routes the phone through a real-cert public URL (cloudflared), so we
+// serve plain http locally and let the tunnel terminate TLS — no self-signed cert.
+const TUNNEL = !!args.tunnel;
+const USE_HTTPS = (!!args.https || process.env.HTTPS === '1') && !TUNNEL;
+
+let PROXY_URL = null;
+if (args.proxy) {
+  try { PROXY_URL = new URL(String(args.proxy)); }
+  catch (e) { console.error(`\n  Invalid --proxy URL: ${args.proxy}\n`); process.exit(1); }
+}
+const PROXY = PROXY_URL ? PROXY_URL.origin : null;
+const PROXY_AGENT = PROXY_URL && PROXY_URL.protocol === 'https:' ? https : http;
+const PROXY_PORT = PROXY_URL ? Number(PROXY_URL.port || (PROXY_URL.protocol === 'https:' ? 443 : 80)) : 0;
 
 // Markdown review mode: --md <file.md> or --md <dir-of-md>.
 const MD_MODE = !!args.md;
@@ -61,11 +89,8 @@ if (MD_MODE) {
 const CWD = process.cwd();
 const DATA_DIR = path.join(CWD, '.feedback');
 const DATA_FILE = path.join(DATA_DIR, 'comments.json');
-const MD_FILE = path.join(DATA_DIR, 'FEEDBACK.md');
 const CERT_DIR = path.join(DATA_DIR, '.cert');
 const GLOBAL_DATA = process.env.CLAUDE_PLUGIN_DATA || path.join(os.homedir(), '.feedback-studio');
-
-const ALLOWED_TYPES = ['fix', 'change', 'improve', 'comment', 'rephrase', 'expand', 'delete', 'question'];
 
 // Static build directories we auto-detect when neither --dir nor --proxy given.
 const AUTODETECT = ['dist', 'build', 'out', '_site', 'public', '.output/public', 'site'];
@@ -87,12 +112,16 @@ const MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
   '.avif': 'image/avif', '.gif': 'image/gif', '.ico': 'image/x-icon', '.mp4': 'video/mp4',
   '.webm': 'video/webm', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf',
-  '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml; charset=utf-8', '.map': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml; charset=utf-8',
+  '.map': 'application/json; charset=utf-8', '.wasm': 'application/wasm',
 };
 
 const INJECT = `\n<script src="/__feedback/overlay.js" defer></script>\n`;
 function injectHtml(html) {
-  if (html.includes('</body>')) return html.replace('</body>', INJECT + '</body>');
+  // Inject before the LAST </body> (an earlier one may live inside a <script>
+  // or <template>); fall back to appending if there's no closing body tag.
+  const i = html.lastIndexOf('</body>');
+  if (i !== -1) return html.slice(0, i) + INJECT + html.slice(i);
   return html + INJECT;
 }
 
@@ -116,7 +145,13 @@ async function ensureSelfsigned() {
   console.log('  Setting up the HTTPS certificate helper (one-time)...');
   await mkdir(depsDir, { recursive: true });
   await writeFile(path.join(depsDir, 'package.json'), '{"name":"feedback-studio-deps","private":true}');
-  execSync('npm install selfsigned@^5 --no-audit --no-fund --loglevel=error', { cwd: depsDir, stdio: 'inherit' });
+  try {
+    // --ignore-scripts blocks install-time lifecycle scripts (supply-chain hardening).
+    execSync('npm install selfsigned@^5 --no-audit --no-fund --ignore-scripts --loglevel=error', { cwd: depsDir, stdio: 'inherit' });
+  } catch (e) {
+    throw new Error('could not install the HTTPS helper "selfsigned" (npm failed). Run without --https, or install it manually in ' + depsDir);
+  }
+  if (!existsSync(local)) throw new Error('the HTTPS helper "selfsigned" did not install correctly');
   return (await import(pathToFileURL(local).href)).default;
 }
 
@@ -140,78 +175,51 @@ async function getTlsOptions(ips) {
   return { key: pems.private, cert: pems.cert };
 }
 
-// ---------- data ----------
-async function loadComments() {
-  try {
-    const parsed = JSON.parse(await readFile(DATA_FILE, 'utf-8'));
-    return Array.isArray(parsed.comments) ? parsed.comments : [];
-  } catch (e) { return []; }
-}
-async function saveComments(comments) {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(DATA_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), comments }, null, 2));
-  await exportMarkdown(comments).catch((e) => console.error('MD export failed:', e.message));
-}
-function esc(s) { return String(s == null ? '' : s); }
-async function exportMarkdown(comments) {
-  const byPage = new Map();
-  for (const c of comments) {
-    const key = c.page || '/';
-    if (!byPage.has(key)) byPage.set(key, []);
-    byPage.get(key).push(c);
-  }
-  const open = comments.filter((c) => c.status !== 'resolved').length;
-  let md = `# Feedback export\n\n`;
-  md += `_Generated ${new Date().toISOString()} — ${comments.length} comment(s): ${open} open, ${comments.length - open} resolved._\n\n`;
-  md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin.\n>\n> Comments are a two-way conversation. Some are authored \`by user\`, some \`by agent\` (a proposal/annotation you or another skill left on a component). Each can have a reply thread (lines marked \`↳\`). Statuses: \`open\` (needs work/decision), \`approved\` (the user said go ahead — implement it), \`rejected\` (do not), \`resolved\` (done). Implement approved items, reply to ask questions, and set the status as you go.\n\n`;
-  for (const page of [...byPage.keys()].sort()) {
-    const items = byPage.get(page).slice().sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
-    md += `## \`${page}\`${items[0]?.pageTitle ? ` — ${items[0].pageTitle}` : ''}\n\n`;
-    let i = 0;
-    for (const c of items) {
-      i++;
-      const kind = c.anchor?.type === 'range' ? 'text selection' : (c.anchor?.tag || 'element');
-      const type = ['fix', 'change', 'improve'].includes(c.type) ? c.type : 'change';
-      const who = c.author === 'agent' ? `agent${c.authorName ? ' (' + esc(c.authorName) + ')' : ''}` : 'user';
-      const st = c.status && c.status !== 'open' ? ` · ${c.status}` : '';
-      const box = (c.status === 'resolved' || c.status === 'rejected') ? '[x]' : '[ ]';
-      md += `- ${box} **#${i}** \`${type}\` — on a ${kind} · by ${who}${st}\n`;
-      if (c.sourceFile) md += `  - file: \`${esc(c.sourceFile)}\`\n`;
-      const quote = (c.anchor?.snippet || c.anchor?.rangeText || '').trim().replace(/\s+/g, ' ');
-      if (quote) md += `  - anchor text: "${esc(quote).slice(0, 200)}"\n`;
-      if (c.anchor?.selector) md += `  - css: \`${esc(c.anchor.selector)}\`\n`;
-      if (c.anchor?.attrSelector) md += `  - attr: \`${esc(c.anchor.attrSelector)}\`\n`;
-      if (c.anchor?.xpath) md += `  - xpath: \`${esc(c.anchor.xpath)}\`\n`;
-      md += `  - ${who}:\n${esc(c.text).trim().split('\n').map((l) => `    ${l}`).join('\n')}\n`;
-      for (const r of c.thread || []) {
-        const rwho = r.author === 'agent' ? `agent${r.authorName ? ' (' + esc(r.authorName) + ')' : ''}` : 'user';
-        md += `  - ↳ ${rwho}:\n${esc(r.text).trim().split('\n').map((l) => `    ${l}`).join('\n')}\n`;
-      }
-      md += `\n`;
-    }
-  }
-  if (!comments.length) md += `_No comments yet._\n`;
-  await writeFile(MD_FILE, md);
-}
-
 // ---------- helpers ----------
 function sendJSON(res, status, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(body);
 }
+
+const BODY_LIMIT = 1_000_000; // 1 MB
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let data = '';
-    req.on('data', (c) => { data += c; if (data.length > 1e6) reject(new Error('body too large')); });
-    req.on('end', () => resolve(data));
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > BODY_LIMIT) {
+        const e = new Error('request body too large');
+        e.statusCode = 413;
+        req.destroy(); // stop buffering attacker-controlled data
+        reject(e);
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
     req.on('error', reject);
   });
 }
-function newId() { return 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8); }
+async function readJson(req) {
+  const raw = await readBody(req);
+  if (!raw) return {};
+  try { return JSON.parse(raw); }
+  catch (e) { const err = new Error('invalid JSON body'); err.statusCode = 400; throw err; }
+}
+
+// A path that stays inside `root` (no traversal, no symlink-style escape via ..).
+function within(root, target) {
+  const rel = path.relative(root, target);
+  return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel));
+}
 function safeJoin(root, urlPath) {
-  const resolved = path.normalize(path.join(root, decodeURIComponent(urlPath.split('?')[0])));
-  return resolved.startsWith(root) ? resolved : null;
+  let decoded;
+  try { decoded = decodeURIComponent(urlPath.split('?')[0]); }
+  catch (e) { return null; }
+  const target = path.normalize(path.join(root, decoded));
+  return within(root, target) ? target : null;
 }
 async function resolveStaticFile(urlPath) {
   let target = safeJoin(STATIC_DIR, urlPath);
@@ -226,90 +234,98 @@ async function resolveStaticFile(urlPath) {
   return existsSync(target) ? target : null;
 }
 
+// Reject cross-site browser writes: a page on another origin can fire a fetch at
+// us, but its Origin header won't match our Host. Same-origin (the overlay) and
+// non-browser clients (no Origin header) are allowed.
+function crossSite(req) {
+  const o = req.headers.origin;
+  if (!o) return false;
+  try { return new URL(o).host !== req.headers.host; }
+  catch (e) { return true; }
+}
+
 // ---------- API ----------
 async function handleApi(req, res, url) {
   const parts = url.pathname.replace(/^\/__feedback\/api\/?/, '').split('/').filter(Boolean);
   const resource = parts[0] || '';
-  if (resource === 'comments') {
-    const id = parts[1];
-    if (req.method === 'GET') return sendJSON(res, 200, { comments: await loadComments() });
-    // POST /comments/:id/reply — add a message to a comment's conversation thread
-    if (req.method === 'POST' && id && parts[2] === 'reply') {
-      const body = JSON.parse((await readBody(req)) || '{}');
-      const comments = await loadComments();
-      const c = comments.find((x) => x.id === id);
-      if (!c) return sendJSON(res, 404, { error: 'not found' });
-      const now = new Date().toISOString();
-      if (!Array.isArray(c.thread)) c.thread = [];
-      const reply = {
-        id: 'r_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7),
-        author: body.author === 'agent' ? 'agent' : 'user',
-        authorName: (body.authorName || '').toString().slice(0, 60),
-        text: (body.text || '').trim(),
-        createdAt: now,
-      };
-      c.thread.push(reply);
-      c.updatedAt = now;
-      await saveComments(comments);
-      return sendJSON(res, 201, { comment: c, reply });
+  const mutating = req.method !== 'GET' && req.method !== 'HEAD';
+  if (mutating && crossSite(req)) return sendJSON(res, 403, { error: 'cross-site request blocked' });
+
+  try {
+    if (resource === 'comments') {
+      const id = parts[1];
+      if (req.method === 'GET') return sendJSON(res, 200, { comments: await readComments(DATA_DIR) });
+
+      // POST /comments/:id/reply — add a message to a comment's conversation thread
+      if (req.method === 'POST' && id && parts[2] === 'reply') {
+        const body = await readJson(req);
+        const out = await mutate(DATA_DIR, (list) => {
+          const c = list.find((x) => x.id === id);
+          if (!c) return { comments: list, value: { notFound: true } };
+          if (!Array.isArray(c.thread)) c.thread = [];
+          const reply = makeReply({ author: body.author, authorName: body.authorName, text: body.text });
+          c.thread.push(reply);
+          c.updatedAt = new Date().toISOString();
+          return { comments: list, value: { comment: c, reply } };
+        });
+        if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
+        broadcastSoon();
+        return sendJSON(res, 201, out);
+      }
+
+      if (req.method === 'POST' && !id) {
+        const body = await readJson(req);
+        const comment = await mutate(DATA_DIR, (list) => {
+          const c = makeComment(body);
+          list.push(c);
+          return { comments: list, value: c };
+        });
+        broadcastSoon();
+        return sendJSON(res, 201, { comment });
+      }
+
+      if (req.method === 'PATCH' && id) {
+        const body = await readJson(req);
+        const out = await mutate(DATA_DIR, (list) => {
+          const c = list.find((x) => x.id === id);
+          if (!c) return { comments: list, value: { notFound: true } };
+          if (typeof body.text === 'string') c.text = body.text.trim().slice(0, 10000);
+          if (STATUSES.includes(body.status)) c.status = body.status;
+          if (ALLOWED_TYPES.includes(body.type)) c.type = body.type;
+          if (AUTONOMY.includes(body.autonomy)) c.autonomy = body.autonomy;
+          c.updatedAt = new Date().toISOString();
+          return { comments: list, value: { comment: c } };
+        });
+        if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
+        broadcastSoon();
+        return sendJSON(res, 200, out);
+      }
+
+      if (req.method === 'DELETE' && id) {
+        const out = await mutate(DATA_DIR, (list) => {
+          const next = list.filter((x) => x.id !== id);
+          if (next.length === list.length) return { comments: list, value: { notFound: true } };
+          return { comments: next, value: { ok: true } };
+        });
+        if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
+        broadcastSoon();
+        return sendJSON(res, 200, { ok: true });
+      }
     }
-    if (req.method === 'POST' && !id) {
-      const body = JSON.parse((await readBody(req)) || '{}');
-      const comments = await loadComments();
-      const now = new Date().toISOString();
-      const type = ALLOWED_TYPES.includes(body.type) ? body.type : 'change';
-      const c = {
-        id: newId(),
-        schemaVersion: 3,
-        page: body.page || '/',
-        pageTitle: body.pageTitle || '',
-        url: body.url || '',
-        sourceFile: (body.sourceFile || '').toString().slice(0, 300),
-        anchor: body.anchor || {},
-        type,
-        text: (body.text || '').trim(),
-        author: body.author === 'agent' ? 'agent' : 'user',
-        authorName: (body.authorName || '').toString().slice(0, 60),
-        thread: [],
-        autonomy: ['auto', 'review'].includes(body.autonomy) ? body.autonomy : 'review',
-        status: 'open',
-        createdAt: now,
-        updatedAt: now,
-      };
-      comments.push(c);
-      await saveComments(comments);
-      return sendJSON(res, 201, { comment: c });
-    }
-    if (req.method === 'PATCH' && id) {
-      const body = JSON.parse((await readBody(req)) || '{}');
-      const comments = await loadComments();
-      const c = comments.find((x) => x.id === id);
-      if (!c) return sendJSON(res, 404, { error: 'not found' });
-      if (typeof body.text === 'string') c.text = body.text.trim();
-      if (['open', 'approved', 'rejected', 'resolved'].includes(body.status)) c.status = body.status;
-      if (ALLOWED_TYPES.includes(body.type)) c.type = body.type;
-      if (['auto', 'review'].includes(body.autonomy)) c.autonomy = body.autonomy;
-      c.updatedAt = new Date().toISOString();
-      await saveComments(comments);
-      return sendJSON(res, 200, { comment: c });
-    }
-    if (req.method === 'DELETE' && id) {
-      let comments = await loadComments();
-      const before = comments.length;
-      comments = comments.filter((x) => x.id !== id);
-      if (comments.length === before) return sendJSON(res, 404, { error: 'not found' });
-      await saveComments(comments);
+    if (resource === 'export' && req.method === 'POST') {
+      await exportMarkdown(DATA_DIR, await readComments(DATA_DIR));
       return sendJSON(res, 200, { ok: true });
     }
+    if (resource === 'md-export' && req.method === 'POST') {
+      return sendJSON(res, 200, { ok: true, ...(await exportMarkers()) });
+    }
+    return sendJSON(res, 404, { error: 'unknown endpoint' });
+  } catch (err) {
+    if (err.statusCode) return sendJSON(res, err.statusCode, { error: err.message });
+    if (err.code === 'ECORRUPT') return sendJSON(res, 500, { error: 'comments.json is unreadable — fix or remove .feedback/comments.json' });
+    console.error('API error:', err);
+    return sendJSON(res, 500, { error: 'internal error' });
   }
-  if (resource === 'export' && req.method === 'POST') {
-    await exportMarkdown(await loadComments());
-    return sendJSON(res, 200, { ok: true });
-  }
-  if (resource === 'md-export' && req.method === 'POST') {
-    return sendJSON(res, 200, { ok: true, ...(await exportMarkers()) });
-  }
-  return sendJSON(res, 404, { error: 'unknown endpoint' });
 }
 
 // ---------- asset + static serving ----------
@@ -332,13 +348,17 @@ async function serveStatic(res, file) {
 }
 
 // ---------- proxy serving ----------
+// Requests are pinned to the configured upstream origin: only the path+query of
+// the incoming request is forwarded, never a host derived from the request line,
+// so this can't be turned into an open proxy / SSRF pivot.
 function proxyRequest(req, res) {
-  const u = new URL(req.url, PROXY);
+  const u = new URL(req.url, PROXY_URL);
   const opts = {
-    hostname: u.hostname, port: u.port || 80, path: u.pathname + u.search, method: req.method,
-    headers: { ...req.headers, host: u.host, 'accept-encoding': 'identity' },
+    protocol: PROXY_URL.protocol, hostname: PROXY_URL.hostname, port: PROXY_PORT,
+    path: u.pathname + u.search, method: req.method,
+    headers: { ...req.headers, host: PROXY_URL.host, 'accept-encoding': 'identity' },
   };
-  const preq = http.request(opts, (pres) => {
+  const preq = PROXY_AGENT.request(opts, (pres) => {
     const ct = pres.headers['content-type'] || '';
     if (ct.includes('text/html')) {
       const chunks = [];
@@ -362,53 +382,106 @@ function proxyRequest(req, res) {
       pres.pipe(res);
     }
   });
-  preq.on('error', (e) => { res.writeHead(502, { 'Content-Type': 'text/plain' }); res.end('Upstream error: ' + e.message + '\nIs the dev server running at ' + PROXY + ' ?'); });
+  preq.on('error', (e) => {
+    if (res.headersSent) { res.end(); return; }
+    res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Upstream not reachable. Is the dev server running at ' + PROXY + ' ?');
+  });
   req.pipe(preq);
 }
 
 // Pass HMR / live-reload websockets straight through to the upstream dev server.
 function proxyUpgrade(req, clientSocket, head) {
-  const u = new URL(PROXY);
-  const upstream = net.connect(Number(u.port) || 80, u.hostname, () => {
+  const onReady = (upstream) => {
     upstream.write(`${req.method} ${req.url} HTTP/1.1\r\n`);
     for (let i = 0; i < req.rawHeaders.length; i += 2) upstream.write(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`);
     upstream.write('\r\n');
     if (head && head.length) upstream.write(head);
     upstream.pipe(clientSocket);
     clientSocket.pipe(upstream);
-  });
+  };
+  let upstream;
+  if (PROXY_URL.protocol === 'https:') {
+    upstream = tls.connect(PROXY_PORT, PROXY_URL.hostname, { servername: PROXY_URL.hostname }, () => onReady(upstream));
+  } else {
+    upstream = net.connect(PROXY_PORT, PROXY_URL.hostname, () => onReady(upstream));
+  }
+  upstream.setTimeout(10000, () => upstream.destroy());
   upstream.on('error', () => clientSocket.destroy());
   clientSocket.on('error', () => upstream.destroy());
 }
 
 // ---------- live updates (Server-Sent Events) ----------
 const sseClients = new Set();
+const MAX_SSE = 50;
+const SSE_DRAIN_MS = 30000;
+let _lastBroadcast = '';
+
+function dropSse(res) {
+  if (!res) return;
+  if (res._kbfDrain) { clearTimeout(res._kbfDrain); res._kbfDrain = null; }
+  sseClients.delete(res);
+  try { res.end(); } catch (e) {}
+}
+// Write to one client with backpressure handling: if the socket buffer is full
+// (a slow/stalled client), give it a grace window to drain, then drop it — a
+// stuck client must not make broadcasts buffer in memory unboundedly.
+function writeSse(res, payload) {
+  let ok = false;
+  try { ok = res.write(payload); } catch (e) { dropSse(res); return; }
+  if (!ok && !res._kbfDrain) {
+    res._kbfDrain = setTimeout(() => dropSse(res), SSE_DRAIN_MS);
+    res.once('drain', () => { clearTimeout(res._kbfDrain); res._kbfDrain = null; });
+  }
+}
 function handleSSE(req, res) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-store',
-    Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
   res.write('retry: 2000\n\n');
+  // Bound the client set: drop the oldest stream if we somehow accumulate many.
+  if (sseClients.size >= MAX_SSE) dropSse(sseClients.values().next().value);
   sseClients.add(res);
-  const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (e) {} }, 25000);
-  req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
+  const ping = setInterval(() => writeSse(res, ': ping\n\n'), 25000);
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    clearInterval(ping);
+    if (res._kbfDrain) { clearTimeout(res._kbfDrain); res._kbfDrain = null; }
+    sseClients.delete(res);
+  };
+  req.on('close', cleanup);
+  res.on('close', cleanup);
+  res.on('error', cleanup);
 }
 function broadcastComments(comments) {
   const payload = 'event: comments\ndata: ' + JSON.stringify({ comments }) + '\n\n';
-  for (const res of sseClients) { try { res.write(payload); } catch (e) {} }
+  // Skip if identical to the last payload (file-watch + our own write both fire).
+  const h = crypto.createHash('sha1').update(payload).digest('hex');
+  if (h === _lastBroadcast) return;
+  _lastBroadcast = h;
+  for (const res of [...sseClients]) writeSse(res, payload);
 }
-// Watch the data dir so external edits (the AI agent marking comments resolved)
-// push live to any open overlay. Our own API writes hit the same file, so the
-// overlay re-syncs after every change too.
+async function broadcastFromDisk() {
+  try { broadcastComments(await readComments(DATA_DIR)); } catch (e) { /* corrupt mid-edit; ignore */ }
+}
+let _bcTimer = null;
+function broadcastSoon() { clearTimeout(_bcTimer); _bcTimer = setTimeout(broadcastFromDisk, 30); }
+
+// Watch the data dir so EXTERNAL edits (an agent marking comments resolved, or
+// the MCP server writing) push live to any open overlay. Our own API writes
+// broadcast directly via broadcastSoon(); the dedup in broadcastComments keeps
+// the two paths from double-sending.
 function watchComments() {
   let timer = null;
   try {
     watch(DATA_DIR, (ev, fn) => {
-      if (fn && !String(fn).startsWith('comments.json')) return;
+      if (fn && String(fn) !== 'comments.json') return; // ignore .tmp / .lock / FEEDBACK.md
       clearTimeout(timer);
-      timer = setTimeout(async () => broadcastComments(await loadComments()), 120);
+      timer = setTimeout(broadcastFromDisk, 120);
     });
   } catch (e) { /* fs.watch unavailable on this platform; SSE still pushes on reconnect */ }
 }
@@ -422,6 +495,80 @@ function openBrowser(url) {
     else { cmd = 'xdg-open'; cmdArgs = [url]; }
     spawn(cmd, cmdArgs, { stdio: 'ignore', detached: true }).unref();
   } catch (e) {}
+}
+
+// ---------- secure tunnel (cloudflared quick tunnel) ----------
+// Gives the phone a real-certificate https://<rand>.trycloudflare.com URL, so
+// there's no self-signed warning and the mic works on any network. The helper
+// binary is fetched once into ~/.feedback-studio/bin (same lazy pattern as the
+// --https / --md helpers); no Cloudflare account is needed for a quick tunnel.
+function cloudflaredAsset() {
+  const base = 'https://github.com/cloudflare/cloudflared/releases/latest/download/';
+  const a64 = process.arch === 'arm64' ? 'arm64' : 'amd64';
+  if (process.platform === 'win32') return { url: base + `cloudflared-windows-${a64}.exe`, kind: 'exe' };
+  if (process.platform === 'darwin') return { url: base + `cloudflared-darwin-${a64}.tgz`, kind: 'tgz' };
+  if (process.platform === 'linux') {
+    const a = process.arch === 'arm64' ? 'arm64' : (process.arch === 'arm' ? 'arm' : 'amd64');
+    return { url: base + `cloudflared-linux-${a}`, kind: 'bin' };
+  }
+  return null;
+}
+function httpDownload(url, dest) {
+  return new Promise((resolve, reject) => {
+    const file = createWriteStream(dest);
+    const get = (u) => https.get(u, { headers: { 'User-Agent': 'feedback-studio' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) { res.resume(); return get(new URL(res.headers.location, u).href); }
+      if (res.statusCode !== 200) { res.resume(); file.close(); return reject(new Error('download failed: HTTP ' + res.statusCode)); }
+      res.pipe(file);
+      file.on('finish', () => file.close(() => resolve()));
+    }).on('error', reject);
+    get(url);
+  });
+}
+async function ensureCloudflared() {
+  // 1) already on PATH?
+  try {
+    const probe = process.platform === 'win32' ? 'where cloudflared' : 'command -v cloudflared';
+    const out = execSync(probe, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim().split(/\r?\n/)[0];
+    if (out) return out;
+  } catch (e) {}
+  // 2) previously downloaded?
+  const binDir = path.join(GLOBAL_DATA, 'bin');
+  const exe = path.join(binDir, process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared');
+  if (existsSync(exe)) return exe;
+  // 3) fetch it
+  const asset = cloudflaredAsset();
+  if (!asset) throw new Error('no prebuilt cloudflared for ' + process.platform + '/' + process.arch + ' — install cloudflared manually, then re-run with --tunnel');
+  console.log('  Setting up the secure tunnel helper (one-time, ~50 MB)...');
+  await mkdir(binDir, { recursive: true });
+  if (asset.kind === 'tgz') {
+    const tgz = exe + '.tgz';
+    await httpDownload(asset.url, tgz);
+    execSync(`tar -xzf "${tgz}" -C "${binDir}"`); // extracts a `cloudflared` binary
+    await chmod(exe, 0o755).catch(() => {});
+  } else {
+    await httpDownload(asset.url, exe);
+    if (process.platform !== 'win32') await chmod(exe, 0o755).catch(() => {});
+  }
+  if (!existsSync(exe)) throw new Error('cloudflared did not install correctly');
+  return exe;
+}
+let tunnelProc = null;
+function startTunnel(cfPath, port) {
+  return new Promise((resolve, reject) => {
+    const cf = spawn(cfPath, ['tunnel', '--no-autoupdate', '--url', `http://localhost:${port}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+    tunnelProc = cf;
+    let url = null;
+    const scan = (b) => {
+      const m = b.toString().match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
+      if (m && !url) { url = m[0]; resolve(url); }
+    };
+    cf.stdout.on('data', scan);
+    cf.stderr.on('data', scan);
+    cf.on('error', (e) => { if (!url) reject(e); });
+    cf.on('exit', (code) => { if (!url) reject(new Error('cloudflared exited (code ' + code + ') before a tunnel URL appeared')); });
+    setTimeout(() => { if (!url) reject(new Error('timed out waiting for the tunnel URL')); }, 30000);
+  });
 }
 
 // ---------- markdown review mode ----------
@@ -454,16 +601,22 @@ async function ensureMarked() {
   console.log('  Setting up the Markdown renderer (one-time)...');
   await mkdir(depsDir, { recursive: true });
   if (!existsSync(path.join(depsDir, 'package.json'))) await writeFile(path.join(depsDir, 'package.json'), '{"name":"feedback-studio-deps","private":true}');
-  execSync('npm install marked@^12 --no-audit --no-fund --loglevel=error', { cwd: depsDir, stdio: 'inherit' });
+  try {
+    execSync('npm install marked@^12 --no-audit --no-fund --ignore-scripts --loglevel=error', { cwd: depsDir, stdio: 'inherit' });
+  } catch (e) {
+    throw new Error('could not install the Markdown renderer "marked" (npm failed). Install it manually in ' + depsDir);
+  }
   _marked = await load();
   if (!_marked) throw new Error('could not load the Markdown renderer (marked)');
   return _marked;
 }
 
+function htmlAttr(s) { return String(s || '').replace(/[<>&"]/g, (m) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[m])); }
+
 function mdDocShell(title, sourceRel, bodyHtml) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${title.replace(/[<>&]/g, '')}</title>
+<title>${htmlAttr(title)}</title>
 <style>
   :root { --ink:#1f1e1c; --soft:#565449; --muted:#8a8578; --paper:#faf9f5; --rule:#e7e4db; --clay:#c4623f; --code:#f2efe6; }
   * { box-sizing: border-box; }
@@ -485,7 +638,7 @@ function mdDocShell(title, sourceRel, bodyHtml) {
 </style></head>
 <body>
   <article class="doc">
-    <div class="doc-source">${(sourceRel || '').replace(/[<>&]/g, '')}</div>
+    <div class="doc-source">${htmlAttr(sourceRel || '')}</div>
     ${bodyHtml}
   </article>
   <script>window.__kbfMode="md";window.__kbfSource=${JSON.stringify(sourceRel || '')};</script>
@@ -514,7 +667,7 @@ async function listMdFiles(dir, base = dir) {
 
 async function renderMdIndex() {
   const files = await listMdFiles(MD_ROOT);
-  const items = files.map((rel) => `<li><a href="/${rel.replace(/\.md$/i, '')}">${rel}</a></li>`).join('\n');
+  const items = files.map((rel) => `<li><a href="/${htmlAttr(rel.replace(/\.md$/i, ''))}">${htmlAttr(rel)}</a></li>`).join('\n');
   const body = `<h1>Markdown files</h1><p>${files.length} document${files.length === 1 ? '' : 's'} to review.</p><ul>${items || '<li>(none found)</li>'}</ul>`;
   return mdDocShell('Markdown files', path.relative(CWD, MD_ROOT).split(path.sep).join('/') || '.', body);
 }
@@ -525,7 +678,9 @@ function sendHtml(res, html, status = 200) {
 }
 
 async function serveMd(req, res, url) {
-  const pathname = decodeURIComponent(url.pathname);
+  let pathname;
+  try { pathname = decodeURIComponent(url.pathname); }
+  catch (e) { res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('400 — bad path'); }
   if (pathname === '/' || pathname === '') {
     if (MD_SINGLE) return sendHtml(res, await renderMd(MD_SINGLE));
     return sendHtml(res, await renderMdIndex());
@@ -533,9 +688,9 @@ async function serveMd(req, res, url) {
   let rel = pathname.replace(/^\/+/, '');
   if (!/\.md$/i.test(rel)) rel += '.md';
   const file = path.normalize(path.join(MD_ROOT, rel));
-  if (!file.startsWith(MD_ROOT) || !existsSync(file)) {
+  if (!within(MD_ROOT, file) || !existsSync(file)) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end('404 — no such markdown file: ' + rel);
+    return res.end('404 — no such markdown file');
   }
   return sendHtml(res, await renderMd(file));
 }
@@ -555,7 +710,7 @@ function fbMarker(c) {
   }
 }
 async function exportMarkers() {
-  const comments = await loadComments();
+  const comments = await readComments(DATA_DIR);
   const byFile = new Map();
   for (const c of comments) {
     if (!c.sourceFile || c.status === 'resolved') continue;
@@ -565,7 +720,7 @@ async function exportMarkers() {
   let files = 0, stamped = 0, notFound = 0;
   for (const [rel, list] of byFile) {
     const file = path.normalize(path.join(CWD, rel));
-    if (!file.startsWith(CWD) || !existsSync(file)) continue;
+    if (!within(CWD, file) || !existsSync(file)) continue;
     let text = await readFile(file, 'utf-8');
     const lines = text.split('\n');
     let changed = false;
@@ -608,35 +763,45 @@ async function handler(req, res) {
       const notFound = path.join(STATIC_DIR, '404.html');
       if (existsSync(notFound)) { res.statusCode = 404; return serveStatic(res, notFound); }
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-      return res.end('404 — not found in ' + STATIC_DIR);
+      return res.end('404 — not found');
     }
     return serveStatic(res, file);
   } catch (err) {
-    console.error(err);
-    res.writeHead(500, { 'Content-Type': 'text/plain' });
-    res.end('500 — ' + err.message);
+    console.error('Request error:', err);
+    if (res.headersSent) { try { res.end(); } catch (e) {} return; }
+    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('500 — internal error');
   }
 }
 
 // ---------- banner ----------
-function banner(scheme, ips) {
+function banner(scheme, ips, publicUrl) {
   const src = MD_MODE ? `reviewing markdown: ${path.relative(CWD, MD_SINGLE || MD_ROOT) || '.'}`
     : PROXY ? `proxying ${PROXY}`
     : `serving ${path.relative(CWD, STATIC_DIR) || '.'}/`;
-  console.log(`\n  Feedback Studio${USE_HTTPS ? '  (HTTPS — voice works on phones)' : ''}`);
+  const tag = publicUrl ? '  (secure tunnel — voice works anywhere)' : USE_HTTPS ? '  (HTTPS — voice works on phones)' : '';
+  console.log(`\n  Feedback Studio${tag}`);
   console.log(`  ------------------------------------------`);
   console.log(`  Source           ->  ${src}`);
   console.log(`  On this computer ->  ${scheme}://localhost:${PORT}/`);
-  if (ips.length) {
+  if (publicUrl) {
+    console.log(`  On your phone    ->  ${publicUrl}/   (any network — real cert, no warning)`);
+  } else if (EXPOSE_LAN && ips.length) {
     console.log(`  On your phone    ->  ${scheme}://${ips[0]}:${PORT}/   (same Wi-Fi)`);
     ips.slice(1).forEach((ip) => console.log(`                       ${scheme}://${ip}:${PORT}/`));
+  } else if (ips.length) {
+    console.log(`  Phone/LAN        ->  off by default. Re-run with --tunnel (recommended) or --host 0.0.0.0.`);
   }
   console.log(`  Comments         ->  .feedback/comments.json  (+ FEEDBACK.md)`);
-  if (USE_HTTPS) {
+  if (publicUrl) {
+    console.log(`\n  The tunnel URL is public while the server runs — anyone with the link can`);
+    console.log(`  view and comment. Ctrl+C closes it.`);
+  } else if (USE_HTTPS) {
     console.log(`\n  Phone: the browser will warn the certificate isn't trusted (self-signed).`);
     console.log(`  Tap Advanced -> Proceed, then the mic / voice-to-text works.`);
-  } else {
-    console.log(`\n  Phone can view + type + click over http. For VOICE on a phone add --https.`);
+    console.log(`  (Tip: --tunnel gives a real cert with no warning at all.)`);
+  } else if (EXPOSE_LAN) {
+    console.log(`\n  Phone can view + type + click over http. For VOICE on a phone use --tunnel (or --https).`);
   }
   console.log(`  Ctrl+C to stop.\n`);
 }
@@ -651,7 +816,7 @@ async function main() {
     process.exit(1);
   }
   await mkdir(DATA_DIR, { recursive: true });
-  if (!existsSync(DATA_FILE)) await saveComments([]);
+  if (!existsSync(DATA_FILE)) await writeComments(DATA_DIR, []);
 
   const ips = lanIPs();
   let server;
@@ -659,16 +824,43 @@ async function main() {
   else server = http.createServer(handler);
 
   if (PROXY) server.on('upgrade', proxyUpgrade);
+
+  // Listen errors are fatal; connection-level errors are not.
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') console.error(`\n  Port ${PORT} is already in use. Stop the other server or pass --port <n>.\n`);
     else console.error(err);
     process.exit(1);
   });
-  // Omit host so Node binds dual-stack (IPv6 + IPv4-mapped): covers localhost and LAN.
-  server.listen(PORT, () => {
-    banner(USE_HTTPS ? 'https' : 'http', ips);
+  server.on('clientError', (err, socket) => { try { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch (e) {} });
+
+  let shuttingDown = false;
+  const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    if (tunnelProc) { try { tunnelProc.kill(); } catch (e) {} }
+    for (const res of sseClients) { try { res.end(); } catch (e) {} }
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 2000).unref(); // don't hang on a stuck socket
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+
+  const scheme = USE_HTTPS ? 'https' : 'http';
+  server.listen(PORT, HOST, async () => {
     watchComments();
-    if (!args['no-open']) openBrowser(`${USE_HTTPS ? 'https' : 'http'}://localhost:${PORT}/`);
+    let publicUrl = null;
+    if (TUNNEL) {
+      try {
+        const cf = await ensureCloudflared();
+        console.log('  Opening a secure tunnel (real HTTPS, works on any network)...');
+        publicUrl = await startTunnel(cf, PORT);
+      } catch (e) {
+        console.error('\n  Tunnel failed: ' + e.message);
+        console.error('  Serving locally instead. For phone voice without a tunnel: --https --host 0.0.0.0\n');
+      }
+    }
+    banner(scheme, ips, publicUrl);
+    if (!args['no-open']) openBrowser(`${scheme}://localhost:${PORT}/`);
   });
 }
 

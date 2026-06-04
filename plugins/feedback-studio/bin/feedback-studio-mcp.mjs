@@ -5,35 +5,37 @@
 // Windsurf, Cline, Claude Code, or ChatGPT via a tunnel). It reads and writes
 // the same .feedback/comments.json the overlay uses, so it works whether or not
 // the review server is running — and when it IS running, the overlay updates
-// live (its file-watch picks up these writes).
+// live (its file-watch picks up these writes). Writes go through the same
+// atomic, cross-process-locked store the HTTP server uses, so the two can write
+// concurrently without losing data.
 //
 // Transport: newline-delimited JSON-RPC 2.0 over stdin/stdout (MCP stdio).
 // All diagnostics go to stderr; stdout carries protocol messages only.
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  STATUSES, ALLOWED_TYPES, WEB_TYPES, MD_TYPES,
+  readComments, mutate, makeComment, makeReply,
+} from '../lib/store.mjs';
 
 const FEEDBACK_DIR = process.env.FEEDBACK_DIR
   ? path.resolve(process.env.FEEDBACK_DIR)
   : path.join(process.cwd(), '.feedback');
-const DATA_FILE = path.join(FEEDBACK_DIR, 'comments.json');
 
-const ALLOWED_TYPES = ['fix', 'change', 'improve', 'comment', 'rephrase', 'expand', 'delete', 'question'];
-const STATUSES = ['open', 'approved', 'rejected', 'resolved'];
-
-// ---------- data ----------
-async function loadComments() {
+// Single-source the version from the plugin manifest (don't hand-maintain it here).
+const SERVER_VERSION = (() => {
   try {
-    const parsed = JSON.parse(await readFile(DATA_FILE, 'utf-8'));
-    return Array.isArray(parsed.comments) ? parsed.comments : [];
-  } catch (e) { return []; }
-}
-async function saveComments(comments) {
-  await mkdir(FEEDBACK_DIR, { recursive: true });
-  await writeFile(DATA_FILE, JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), comments }, null, 2));
-}
-function newId(p = 'c') { return p + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8); }
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const pkg = JSON.parse(readFileSync(path.join(here, '..', '.claude-plugin', 'plugin.json'), 'utf-8'));
+    return pkg.version || '0.0.0';
+  } catch (e) { return '0.0.0'; }
+})();
+
+// Protocol versions this server understands, newest first.
+const SUPPORTED_PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
+
 const isOpen = (c) => c.status !== 'resolved' && c.status !== 'rejected';
 
 function summarize(c) {
@@ -71,14 +73,14 @@ const TOOLS = [
   },
   {
     name: 'add_comment',
-    description: 'Leave a NEW agent-authored comment pinned to a page element. Anchor by a CSS selector or a quoted snippet of the visible text (snippet is safest). Shows up in the reviewer\'s overlay for them to reply to or approve.',
+    description: 'Leave a NEW agent-authored comment pinned to a page element. Anchor by a CSS selector or a quoted snippet of the visible text (snippet is safest). Comments authored here are text/selector-anchored only (an agent has no live DOM), so they resolve at best at "medium" confidence in the overlay. Type defaults to "change" for a web page, or "comment" when sourceFile (a .md) is given.',
     inputSchema: {
       type: 'object',
       required: ['page', 'text'],
       properties: {
         page: { type: 'string', description: 'Page path the comment is on (e.g. "/" or "/report").' },
         text: { type: 'string' },
-        type: { type: 'string', enum: ALLOWED_TYPES, description: 'Defaults to "comment".' },
+        type: { type: 'string', enum: ALLOWED_TYPES, description: `Web: ${WEB_TYPES.join('/')}. Markdown: ${MD_TYPES.join('/')}. A type that doesn't fit the page kind is coerced to the default.` },
         anchor: {
           type: 'object',
           properties: { selector: { type: 'string' }, snippet: { type: 'string', description: 'Exact visible text of the element.' } },
@@ -105,11 +107,33 @@ const TOOLS = [
     },
   },
 ];
+const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
-async function callTool(name, args) {
-  args = args || {};
+// Validate args against a tool's declared required fields + enums. Throws a
+// clear Error (surfaced to the agent as a tool error) on the first problem.
+function validateArgs(tool, args) {
+  const schema = tool.inputSchema || {};
+  for (const req of schema.required || []) {
+    if (args[req] === undefined || args[req] === null || args[req] === '') {
+      throw new Error(`missing required argument "${req}" for ${tool.name}`);
+    }
+  }
+  for (const [key, spec] of Object.entries(schema.properties || {})) {
+    if (args[key] === undefined || args[key] === null) continue;
+    if (spec.enum && !spec.enum.includes(args[key])) {
+      throw new Error(`"${key}" must be one of: ${spec.enum.join(', ')}`);
+    }
+  }
+}
+
+async function callTool(name, rawArgs) {
+  const tool = TOOL_BY_NAME.get(name);
+  if (!tool) throw new Error('unknown tool: ' + name);
+  const args = rawArgs || {};
+  validateArgs(tool, args);
+
   if (name === 'list_comments') {
-    let list = await loadComments();
+    let list = await readComments(FEEDBACK_DIR);
     const status = args.status || 'actionable';
     if (status === 'actionable') list = list.filter(isOpen);
     else if (status !== 'all') list = list.filter((c) => c.status === status);
@@ -117,46 +141,48 @@ async function callTool(name, args) {
     return { count: list.length, comments: list.map(summarize) };
   }
   if (name === 'get_comment') {
-    const c = (await loadComments()).find((x) => x.id === args.id);
+    const c = (await readComments(FEEDBACK_DIR)).find((x) => x.id === args.id);
     if (!c) throw new Error('no comment with id ' + args.id);
     return c;
   }
   if (name === 'add_comment') {
-    const comments = await loadComments();
-    const now = new Date().toISOString();
-    const c = {
-      id: newId(), schemaVersion: 3,
-      page: args.page || '/', pageTitle: '', url: '',
-      sourceFile: (args.sourceFile || '').toString().slice(0, 300),
-      anchor: { type: 'element', selector: (args.anchor && args.anchor.selector) || '', snippet: (args.anchor && args.anchor.snippet) || '', tag: '' },
-      type: ALLOWED_TYPES.includes(args.type) ? args.type : 'comment',
-      text: (args.text || '').trim(),
-      author: 'agent', authorName: (args.authorName || 'agent').toString().slice(0, 60),
-      thread: [], autonomy: 'review', status: 'open', createdAt: now, updatedAt: now,
-    };
-    comments.push(c);
-    await saveComments(comments);
+    const c = await mutate(FEEDBACK_DIR, (list) => {
+      const comment = makeComment({
+        page: args.page,
+        text: args.text,
+        type: args.type,
+        sourceFile: args.sourceFile,
+        anchor: { type: 'element', selector: args.anchor && args.anchor.selector, snippet: args.anchor && args.anchor.snippet },
+        author: 'agent',
+        authorName: args.authorName || 'agent',
+      });
+      list.push(comment);
+      return { comments: list, value: comment };
+    });
     return { ok: true, id: c.id, comment: summarize(c) };
   }
   if (name === 'reply') {
-    const comments = await loadComments();
-    const c = comments.find((x) => x.id === args.id);
-    if (!c) throw new Error('no comment with id ' + args.id);
-    if (!Array.isArray(c.thread)) c.thread = [];
-    c.thread.push({ id: newId('r'), author: 'agent', authorName: (args.authorName || 'agent').toString().slice(0, 60), text: (args.text || '').trim(), createdAt: new Date().toISOString() });
-    c.updatedAt = new Date().toISOString();
-    await saveComments(comments);
-    return { ok: true, replies: c.thread.length };
+    const out = await mutate(FEEDBACK_DIR, (list) => {
+      const c = list.find((x) => x.id === args.id);
+      if (!c) return { comments: list, value: { notFound: true } };
+      if (!Array.isArray(c.thread)) c.thread = [];
+      c.thread.push(makeReply({ author: 'agent', authorName: args.authorName || 'agent', text: args.text }));
+      c.updatedAt = new Date().toISOString();
+      return { comments: list, value: { ok: true, replies: c.thread.length } };
+    });
+    if (out.notFound) throw new Error('no comment with id ' + args.id);
+    return out;
   }
   if (name === 'set_status') {
-    if (!STATUSES.includes(args.status)) throw new Error('status must be one of ' + STATUSES.join(', '));
-    const comments = await loadComments();
-    const c = comments.find((x) => x.id === args.id);
-    if (!c) throw new Error('no comment with id ' + args.id);
-    c.status = args.status;
-    c.updatedAt = new Date().toISOString();
-    await saveComments(comments);
-    return { ok: true, id: c.id, status: c.status };
+    const out = await mutate(FEEDBACK_DIR, (list) => {
+      const c = list.find((x) => x.id === args.id);
+      if (!c) return { comments: list, value: { notFound: true } };
+      c.status = args.status;
+      c.updatedAt = new Date().toISOString();
+      return { comments: list, value: { ok: true, id: c.id, status: c.status } };
+    });
+    if (out.notFound) throw new Error('no comment with id ' + args.id);
+    return out;
   }
   throw new Error('unknown tool: ' + name);
 }
@@ -172,10 +198,12 @@ async function handleMessage(msg) {
   const isRequest = id !== undefined && id !== null;
 
   if (method === 'initialize') {
+    const want = params && params.protocolVersion;
+    const protocolVersion = SUPPORTED_PROTOCOLS.includes(want) ? want : SUPPORTED_PROTOCOLS[0];
     return reply(id, {
-      protocolVersion: (params && params.protocolVersion) || '2025-06-18',
+      protocolVersion,
       capabilities: { tools: {} },
-      serverInfo: { name: 'feedback-studio', version: '0.1.0' },
+      serverInfo: { name: 'feedback-studio', version: SERVER_VERSION },
     });
   }
   if (method === 'notifications/initialized' || method === 'initialized') return; // notification
@@ -187,6 +215,8 @@ async function handleMessage(msg) {
       const result = await callTool(toolName, params && params.arguments);
       return reply(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });
     } catch (e) {
+      // Tool-level failures are reported as isError results per the MCP spec,
+      // not as JSON-RPC protocol errors.
       return reply(id, { content: [{ type: 'text', text: 'Error: ' + e.message }], isError: true });
     }
   }
@@ -209,9 +239,10 @@ process.stdin.on('data', (chunk) => {
     buf = buf.slice(nl + 1);
     if (!line) continue;
     let msg;
-    try { msg = JSON.parse(line); } catch (e) { continue; }
+    try { msg = JSON.parse(line); }
+    catch (e) { replyError(null, -32700, 'Parse error'); continue; }
     enqueue(msg);
   }
 });
 process.stdin.on('end', () => { queue.then(() => process.exit(0)); });
-process.stderr.write(`feedback-studio MCP server ready (data: ${DATA_FILE})\n`);
+process.stderr.write(`feedback-studio MCP server ${SERVER_VERSION} ready (data: ${FEEDBACK_DIR})\n`);

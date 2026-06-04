@@ -2,6 +2,7 @@ node_modules/
 .feedback/
 .DS_Store
 *.log
+*.bak
 
 # Internal cross-session state — never ship
 PROGRESS.md

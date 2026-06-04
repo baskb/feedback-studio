@@ -60,10 +60,3 @@ _(Table is the baseline from the earlier additive weighting. The family-grouped
 vote that ships now only moves borderline structural-only matches from `high`
 toward `medium`/`low` — the safe direction — so the confident-correct counts can
 only hold or improve. Re-measured per release.)_
-
-## Still to do (the full pre-launch gate)
-
-This measures a single page under synthetic perturbation. The full pre-launch gate
-is a multi-page harness that rebuilds the site after *real* content edits and reports
-the rate per release, targeting ≥85% on a real site. The primitives above
-(`__kbfSelfTest`, `__kbfBuildAnchor`) are what that harness is built on.

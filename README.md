@@ -1,9 +1,10 @@
 # Feedback Studio
 
-A local visual feedback overlay for any website. Turn on comment mode, then
-**click or tap any element** (or select any text) on any page and leave a comment,
-**typed or spoken**. Comments persist to `.feedback/comments.json` (plus a readable
-`FEEDBACK.md`) so your coding agent can process them on your signal.
+A local visual feedback overlay for any website **or Markdown file**. Turn on comment
+mode, then **click or tap any element** (or select any text) on any page — or any
+heading, paragraph, or table in a rendered `.md` — and leave a comment, **typed or
+spoken**. Comments persist to `.feedback/comments.json` (plus a readable `FEEDBACK.md`)
+so your coding agent can process them on your signal.
 
 Built as a [Claude Code](https://claude.com/claude-code) plugin: a skill that
 launches the tool against your project and works through the collected comments,

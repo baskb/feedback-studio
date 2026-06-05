@@ -532,11 +532,11 @@ button {
 }
 
 .kbf-group-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--kbf-muted);
+  color: var(--kbf-ink-soft);
   margin: 16px 4px 8px;
   display: flex;
   align-items: center;
@@ -615,9 +615,11 @@ button {
 }
 .kbf-time { flex: 1; font-size: 11px; color: var(--kbf-muted); }
 .kbf-mini {
-  height: 26px;
+  height: 32px;
+  min-width: 32px;
   padding: 0 9px;
   border-radius: 6px;
+  justify-content: center;
   font-size: 12px;
   font-weight: 540;
   color: var(--kbf-ink-soft);
@@ -637,11 +639,21 @@ button {
 }
 .kbf-empty svg { width: 34px; height: 34px; opacity: 0.5; margin-bottom: 12px; }
 .kbf-empty p { margin: 0; font-size: 13.5px; line-height: 1.55; }
+.kbf-empty-kbd { display: inline-block; margin-top: 8px; font-size: 12px; color: var(--kbf-ink-soft); }
+.kbf-empty-kbd kbd {
+  font-family: var(--kbf-mono, ui-monospace, monospace);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--kbf-surface-2);
+  border: 1px solid var(--kbf-border);
+}
 
 .kbf-panel-foot {
   padding: 12px 16px;
   border-top: 1px solid var(--kbf-border);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -650,6 +662,19 @@ button {
   font-size: 11.5px;
   color: var(--kbf-muted);
   line-height: 1.4;
+}
+.kbf-copyfb-caption {
+  flex-basis: 100%;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--kbf-muted);
+  line-height: 1.4;
+}
+.kbf-kbd-hint {
+  opacity: 0.55;
+  font-size: 0.9em;
+  font-weight: 500;
+  margin-left: 2px;
 }
 
 /* ---------- toast ---------- */
@@ -679,6 +704,19 @@ button {
 }
 .kbf-toast.is-out { animation: kbf-toast-out 0.2s forwards; }
 .kbf-toast svg { width: 15px; height: 15px; color: var(--kbf-clay); }
+.kbf-toast--error { background: #3a2820; }
+.kbf-toast--error svg { color: var(--kbf-clay); }
+.kbf-toast-action {
+  pointer-events: auto;
+  margin-left: 4px;
+  padding: 2px 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 640;
+  color: var(--kbf-clay-tint);
+  background: rgba(255, 255, 255, 0.12);
+}
+.kbf-toast-action:hover { background: rgba(255, 255, 255, 0.22); color: #fff; }
 @keyframes kbf-toast-in { from { opacity: 0; transform: translateY(8px); } }
 @keyframes kbf-toast-out { to { opacity: 0; transform: translateY(8px); } }
 

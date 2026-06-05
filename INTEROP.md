@@ -4,14 +4,14 @@ Feedback Studio is agent-agnostic by design. The **tool** (the review server,
 overlay, voice, markdown rendering) has nothing Claude-specific in it, and the
 **data** is plain files:
 
-- `.feedback/comments.json` — structured source of truth (page, anchor, type, author, status, thread).
-- `.feedback/FEEDBACK.md` — a readable digest grouped by page.
+- `.feedback/comments.json`: structured source of truth (page, anchor, type, author, status, thread).
+- `.feedback/FEEDBACK.md`: a readable digest grouped by page.
 - inline `<!-- @FB ... -->` markers (markdown mode, after "Stamp .md").
 
 So the only thing that differs per agent is **how the agent reads/acts on the
 feedback**. There are three levels, cheapest first.
 
-## Level 0 — any agent, zero setup
+## Level 0: any agent, zero setup
 
 Point any coding agent at the files. The review server is a plain Node script,
 so any agent that can run a shell command and read files can use it:
@@ -23,14 +23,14 @@ node /path/to/feedback-studio/plugins/feedback-studio/bin/feedback-studio.mjs --
 
 Then: *"read `.feedback/FEEDBACK.md` and apply the open comments; mark each resolved in `.feedback/comments.json` when done."* That already works in Codex, Cursor, Cline, Windsurf, or ChatGPT (paste the file).
 
-> **Editing `comments.json` directly:** prefer the MCP tools (Level 1) for writes —
+> **Editing `comments.json` directly:** prefer the MCP tools (Level 1) for writes;
 > they're atomic and locked, so they're safe even while the overlay is open. If you
 > *do* hand-edit the file, do it when nothing else is writing (the overlay/server
 > and the MCP server each write it), and keep it valid JSON. A malformed file is
 > refused (an error), never silently treated as empty, so a bad edit can't wipe
-> your comments — but it will block writes until you fix it.
+> your comments, but it will block writes until you fix it.
 
-## Level 1 — the MCP server (recommended; one integration, every agent)
+## Level 1: the MCP server (recommended; one integration, every agent)
 
 `bin/feedback-studio-mcp.mjs` is an MCP **stdio** server over the project's
 `.feedback/comments.json`. It needs no other process running, and when the
@@ -64,10 +64,10 @@ Same stdio server, in each tool's MCP config (`command: node`, `args: [<abs path
 { "mcpServers": { "feedback-studio": { "command": "node", "args": ["/ABS/PATH/.../feedback-studio-mcp.mjs"] } } }
 ```
 
-## Level 2 — ChatGPT (cloud)
+## Level 2: ChatGPT (cloud)
 
 ChatGPT's Developer Mode is a full MCP client, but it **only connects to remote
-MCP servers over HTTPS — not local stdio**. Feedback Studio's MCP server is local
+MCP servers over HTTPS, not local stdio**. Feedback Studio's MCP server is local
 stdio by design (your comments never leave your machine), so the supported path for
 ChatGPT is **Level 0**: paste `FEEDBACK.md` into the chat and let it work from there.
 

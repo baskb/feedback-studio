@@ -115,6 +115,7 @@
     send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>',
     reject: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
     empty: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+    alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16.5" x2="12" y2="16.5"/></svg>',
   };
 
   // ---------- shadow host ----------
@@ -160,6 +161,7 @@
         <span class="kbf-readyline" id="kbf-ready" title="Saved to .feedback/comments.json + FEEDBACK.md"></span>
         <button class="kbf-btn kbf-btn--ghost kbf-stamp" id="kbf-stamp" title="Write these comments into the .md as @FB markers (portable + greppable)" style="display:none">Stamp .md</button>
         <button class="kbf-btn kbf-btn--primary kbf-copyfb" id="kbf-copyfb" title="Copy the command, then paste it into Claude Code / your agent">Copy /feedback</button>
+        <span class="kbf-copyfb-caption">Paste into Claude Code / your agent to apply these.</span>
       </div>
     </aside>
 
@@ -615,7 +617,7 @@
           </label>
           <div class="kbf-spacer"></div>
           <button class="kbf-btn kbf-btn--ghost" data-act="cancel">Cancel</button>
-          <button class="kbf-btn kbf-btn--primary" data-act="save" disabled>${isEdit ? 'Update' : 'Save'}</button>
+          <button class="kbf-btn kbf-btn--primary" data-act="save" title="${isEdit ? 'Update' : 'Save'} (⌘↵ / Ctrl+Enter)" disabled>${isEdit ? 'Update' : 'Save'} <span class="kbf-kbd-hint">⌘↵</span></button>
         </div>
       </div>`;
     composerSlot.appendChild(box);
@@ -688,7 +690,7 @@
       closeComposer();
       refresh();
     } catch (e) {
-      toast('Save failed — is the server running?');
+      toastError('Save failed — is the server running?');
     }
   }
 
@@ -876,7 +878,7 @@
 
     const view = filtered(comments);
     if (!view.length) {
-      listEl.innerHTML = `<div class="kbf-empty">${I.empty}<p>${comments.length ? 'Nothing in this filter.' : 'No comments yet.<br>Turn on comment mode and click anything on the page.'}</p></div>`;
+      listEl.innerHTML = `<div class="kbf-empty">${I.empty}<p>${comments.length ? 'Nothing in this filter.' : 'No comments yet.<br>Turn on comment mode and click anything on the page.<br><span class="kbf-empty-kbd">Press <kbd>C</kbd> to toggle comment mode.</span>'}</p></div>`;
       return;
     }
 
@@ -942,7 +944,6 @@
             ` : (thread.length ? `<button class="kbf-thread-toggle" data-act="thread">${I.comment}<span>${thread.length} repl${thread.length === 1 ? 'y' : 'ies'}</span></button>` : '')}
             <div class="kbf-card-foot">
               <span class="kbf-time">${timeAgo(c.createdAt)}</span>
-              <button class="kbf-mini" data-act="thread" title="Conversation">${I.comment}</button>
               <button class="kbf-mini" data-act="jump" title="Go to element">${I.jump}</button>
               <button class="kbf-mini" data-act="edit" title="Edit">${I.edit}</button>
               <button class="kbf-mini kbf-mini--ok ${st === 'resolved' ? 'is-done' : ''}" data-act="resolve" title="${st === 'resolved' ? 'Reopen' : 'Resolve'}">${I.check}</button>
@@ -1093,7 +1094,7 @@
       refresh();
       toast(status === 'resolved' ? 'Marked resolved' : status === 'open' ? 'Reopened'
         : status === 'approved' ? 'Approved — your agent can implement it' : 'Rejected');
-    } catch (e) { toast('Update failed'); }
+    } catch (e) { toastError('Update failed'); }
   }
   async function sendReply(id) {
     const text = (replyDrafts[id] || '').trim();
@@ -1109,26 +1110,51 @@
       expandedId = id;
       refresh();
       toast('Reply sent');
-    } catch (e) { toast('Reply failed'); }
+    } catch (e) { toastError('Reply failed'); }
   }
 
-  async function deleteComment(id) {
-    try {
-      await fetch(API + '/comments/' + id, { method: 'DELETE' });
-      comments = comments.filter((c) => c.id !== id);
-      refresh();
-      toast('Comment deleted');
-    } catch (e) { toast('Delete failed'); }
+  function deleteComment(id) {
+    const idx = comments.findIndex((c) => c.id === id);
+    if (idx < 0) return;
+    const removed = comments[idx];
+    // Optimistic: drop locally now, defer the server delete so Undo can cancel it.
+    comments.splice(idx, 1);
+    if (expandedId === id) expandedId = null;
+    refresh();
+    const timer = setTimeout(async () => {
+      try { await fetch(API + '/comments/' + id, { method: 'DELETE' }); }
+      catch (e) {
+        // Server delete failed — restore so we don't silently lose data.
+        if (!comments.some((c) => c.id === id)) { comments.splice(Math.min(idx, comments.length), 0, removed); refresh(); }
+        toastError('Delete failed');
+      }
+    }, 5000);
+    toast('Comment deleted', { actionLabel: 'Undo', duration: 5000, onAction: () => {
+      clearTimeout(timer);
+      if (!comments.some((c) => c.id === id)) { comments.splice(Math.min(idx, comments.length), 0, removed); refresh(); }
+    } });
   }
 
   // ---------- toast ----------
-  function toast(msg) {
+  // opts: { error?:bool, actionLabel?:string, onAction?:fn, duration?:ms }
+  function toast(msg, opts = {}) {
     const t = document.createElement('div');
-    t.className = 'kbf-toast';
-    t.innerHTML = I.check + '<span>' + escapeHtml(msg) + '</span>';
+    t.className = 'kbf-toast' + (opts.error ? ' kbf-toast--error' : '');
+    t.innerHTML = (opts.error ? I.alert : I.check) + '<span>' + escapeHtml(msg) + '</span>';
+    let dismissed = false;
+    const remove = () => { if (dismissed) return; dismissed = true; t.classList.add('is-out'); setTimeout(() => t.remove(), 220); };
+    if (opts.actionLabel) {
+      const a = document.createElement('button');
+      a.className = 'kbf-toast-action';
+      a.textContent = opts.actionLabel;
+      a.addEventListener('click', () => { if (opts.onAction) opts.onAction(); remove(); });
+      t.appendChild(a);
+    }
     toastsEl.appendChild(t);
-    setTimeout(() => { t.classList.add('is-out'); setTimeout(() => t.remove(), 220); }, 2200);
+    setTimeout(remove, opts.duration || 2200);
+    return t;
   }
+  function toastError(msg) { return toast(msg, { error: true }); }
 
   // ---------- misc ----------
   function escapeHtml(s) {
@@ -1146,7 +1172,7 @@
   }
 
   function updateCount() {
-    const open = comments.filter((c) => c.status !== 'resolved').length;
+    const open = comments.filter(isOpenC).length;
     countEl.textContent = open ? String(open) : '';
     if (readyEl) {
       readyEl.textContent = !comments.length ? 'No comments yet'
@@ -1223,7 +1249,7 @@
       try {
         const r = await fetch(API + '/md-export', { method: 'POST' }).then((x) => x.json());
         toast(`Stamped ${r.stamped} marker${r.stamped === 1 ? '' : 's'} into ${r.files} file${r.files === 1 ? '' : 's'}` + (r.notFound ? ` (${r.notFound} appended at end)` : ''));
-      } catch (e) { toast('Stamp failed'); }
+      } catch (e) { toastError('Stamp failed'); }
     });
   }
 

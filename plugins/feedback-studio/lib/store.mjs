@@ -190,6 +190,7 @@ export async function exportMarkdown(dir, comments) {
   }
   const open = comments.filter((c) => c.status !== 'resolved').length;
   let md = `# Feedback export\n\n`;
+  md += `_Generated from \`.feedback/comments.json\` (the source of truth). Read-only, human-glance mirror: do not edit or act off this file, act off \`comments.json\` (or the MCP tools)._\n\n`;
   md += `_Generated ${new Date().toISOString()} — ${comments.length} comment(s): ${open} open, ${comments.length - open} resolved._\n\n`;
   md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin.\n>\n> Comments are a two-way conversation. Some are authored \`by user\`, some \`by agent\` (a proposal/annotation you or another skill left on a component). Each can have a reply thread (lines marked \`↳\`). Statuses: \`open\` (needs work/decision), \`approved\` (the user said go ahead — implement it), \`rejected\` (do not), \`resolved\` (done). Implement approved items, reply to ask questions, and set the status as you go.\n\n`;
   for (const page of [...byPage.keys()].sort()) {
@@ -204,6 +205,7 @@ export async function exportMarkdown(dir, comments) {
       const st = c.status && c.status !== 'open' ? ` · ${c.status}` : '';
       const box = (c.status === 'resolved' || c.status === 'rejected') ? '[x]' : '[ ]';
       md += `- ${box} **#${i}** ${code(type)} — on a ${kind} · by ${who}${st}\n`;
+      if (c.id) md += `  - id: ${code(c.id)}\n`;
       if (c.sourceFile) md += `  - file: ${code(c.sourceFile)}\n`;
       const quote = collapse(c.anchor?.snippet || c.anchor?.rangeText || '');
       if (quote) md += `  - anchor text: "${quote.slice(0, 200).replace(/"/g, '”')}"\n`;

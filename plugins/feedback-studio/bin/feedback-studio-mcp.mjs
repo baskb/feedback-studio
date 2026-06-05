@@ -12,7 +12,7 @@
 // Transport: newline-delimited JSON-RPC 2.0 over stdin/stdout (MCP stdio).
 // All diagnostics go to stderr; stdout carries protocol messages only.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -138,7 +138,11 @@ async function callTool(name, rawArgs) {
     if (status === 'actionable') list = list.filter(isOpen);
     else if (status !== 'all') list = list.filter((c) => c.status === status);
     if (args.page) list = list.filter((c) => c.page === args.page);
-    return { count: list.length, comments: list.map(summarize) };
+    const out = { count: list.length, comments: list.map(summarize) };
+    if (!existsSync(path.join(FEEDBACK_DIR, 'comments.json'))) {
+      out.note = `no comments.json found at ${FEEDBACK_DIR} — is FEEDBACK_DIR / the working directory correct?`;
+    }
+    return out;
   }
   if (name === 'get_comment') {
     const c = (await readComments(FEEDBACK_DIR)).find((x) => x.id === args.id);

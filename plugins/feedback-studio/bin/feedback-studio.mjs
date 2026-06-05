@@ -730,8 +730,8 @@ async function exportMarkers() {
       const snip = mdNorm(c.anchor && (c.anchor.snippet || c.anchor.rangeText)).slice(0, 40).toLowerCase();
       let idx = -1;
       if (snip) idx = lines.findIndex((l) => !l.trimStart().startsWith('<!--') && mdNorm(l).toLowerCase().includes(snip));
-      if (idx < 0) { lines.push(marker); notFound++; }
-      else { lines[idx] = lines[idx].replace(/\s+$/, '') + ' ' + marker; }
+      if (idx < 0) { notFound++; continue; } // refuse to guess: leave it alone, don't append at EOF
+      lines[idx] = lines[idx].replace(/\s+$/, '') + ' ' + marker;
       stamped++; changed = true;
     }
     if (changed) {

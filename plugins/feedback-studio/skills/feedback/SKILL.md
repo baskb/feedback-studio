@@ -52,11 +52,11 @@ needed for HTTP). There are two things you do: **start a review session** and
 ## Review a Markdown file (research docs, not a website)
 
 Use this when the deliverable is one or more `.md` files (e.g. a research report) and
-the user wants to comment on it the same way — on headings, paragraphs, list items,
+the user wants to comment on it the same way, on headings, paragraphs, list items,
 tables, anything. The tool renders the Markdown to a clean page with the overlay on top.
 
 - **One file:** `node "${CLAUDE_PLUGIN_ROOT}/bin/feedback-studio.mjs" --md path/to/report.md`
-- **A folder of docs:** `--md path/to/research/` — the home page lists every `.md`; each
+- **A folder of docs:** `--md path/to/research/`: the home page lists every `.md`; each
   opens as its own reviewable page, and comments are grouped per file in the panel.
 - Add `--https` for phone-with-voice, `--port <n>` as usual. Run in the background and
   open the printed URL. The renderer (`marked`) is fetched once on first use.
@@ -67,7 +67,7 @@ In Markdown mode the comment **types** become document verbs: `comment` (a note)
 
 When you later **process** these comments, each one carries the **source `.md` file**
 (`sourceFile` / the `file:` line in FEEDBACK.md) plus the quoted text. Open that file,
-grep for the quoted text, and edit it there — the rendered HTML is throwaway; the `.md`
+grep for the quoted text, and edit it there. The rendered HTML is throwaway; the `.md`
 is the artifact.
 
 ### Inline @FB markers (portable, in-document feedback)
@@ -92,21 +92,25 @@ richer source when it's available; the markers are the portable fallback.
 
 ## Process comments
 
-1. Read `.feedback/comments.json` (source of truth) — or `.feedback/FEEDBACK.md`
-   for a readable grouped view. Each comment has: `page` (path), `type`
-   (`fix`/`change`/`improve`), `anchor` (a css `selector` + `attrSelector` + `xpath`
-   + a quoted `snippet`/`rangeText` + `tag`), the `text`, `autonomy`, and `status`.
+1. Read `.feedback/comments.json` (or use the MCP tools). This is the SOLE actionable
+   source of truth: act off it, never off `.feedback/FEEDBACK.md`, which is a generated,
+   read-only human-readable mirror that can be stale. Each comment has: `page` (path),
+   `type` (`fix`/`change`/`improve`), `anchor` (a css `selector` + `attrSelector` +
+   `xpath` + a quoted `snippet`/`rangeText` + `tag`), the `text`, `autonomy`, and `status`.
 2. Work through every comment whose `status` is `open`, grouped by page. For each:
    - **Locate the element with confidence.** Resolve the anchor in the source using
      the snippet text first (grep the rendered words), cross-checked against the
      selector/attr/xpath. **If you cannot confidently identify the one element the
      comment refers to, do NOT edit a guess.** Leave it open, and tell the user it
-     needs a re-pin. Editing the wrong node is the worst outcome — silence beats a
-     confident wrong edit.
+     needs a re-pin. Editing the wrong node is the worst outcome: silence beats a
+     confident wrong edit. **This applies to Markdown source matching too, not just
+     the web DOM:** if you cannot find the quoted text in the `.md` source with
+     confidence, leave the comment open and ask for a re-pin rather than editing a
+     line you guessed at.
    - **Act according to the `type`:**
-     - `fix` — reproduce the problem, then patch it. Lowest latitude, highest certainty.
-     - `change` — apply near-verbatim to the anchored element/text. Do not redesign around it.
-     - `improve` — rewrite or redesign the anchored thing with judgement, keeping the project's voice.
+     - `fix`: reproduce the problem, then patch it. Lowest latitude, highest certainty.
+     - `change`: apply near-verbatim to the anchored element/text. Do not redesign around it.
+     - `improve`: rewrite or redesign the anchored thing with judgement, keeping the project's voice.
    - If the comment text is vague (spoken comments can be garbled), propose a concrete
      interpretation rather than guessing silently; for `improve`, offer options.
    - Keep the project's own conventions and voice (read any CLAUDE.md / style rules).
@@ -128,7 +132,7 @@ user to review, reply to, and approve. Use this to point at exact elements inste
 of describing them in prose.
 
 - **Anchor loosely.** You don't have a DOM, so anchor by either a CSS `selector`
-  or a `snippet` of the element's exact visible text — the overlay's resolver finds
+  or a `snippet` of the element's exact visible text: the overlay's resolver finds
   the element and drops a pin. Provide whichever you're sure of (text is often safest).
 - **Create a comment** (server running):
   ```bash
@@ -139,7 +143,7 @@ of describing them in prose.
          "text":"This CTA competes with the secondary button. Consider one primary action."}'
   ```
   Or, if the server isn't running, append the same object (with an `id`, `status:"open"`,
-  `thread:[]`, timestamps) to `.feedback/comments.json` directly — the file-watch pushes
+  `thread:[]`, timestamps) to `.feedback/comments.json` directly. The file-watch pushes
   it live to any open overlay.
 - **Reply in a thread:** `POST /__feedback/api/comments/<id>/reply` with
   `{"author":"agent","authorName":"...","text":"..."}`.

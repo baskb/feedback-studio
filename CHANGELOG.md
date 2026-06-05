@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-05
+
 ### Added
 - npm packaging: `npx feedback-studio …` (no clone/install needed), a global install, and a
   `feedback-studio-mcp` bin for the MCP server. The package declares zero runtime dependencies.
@@ -67,3 +69,6 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - MCP `initialize` negotiates the protocol version against a supported list
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
+
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.1.0

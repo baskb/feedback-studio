@@ -28,13 +28,14 @@ plus a self-contained Node server that does the serving and injection.
   `/feedback` command so handing the batch to your agent is a single paste.
 - **Works on your phone**: `--tunnel` opens a real-certificate HTTPS URL (no browser warning,
   mic works, on *any* network); or stay on your Wi-Fi with `--host 0.0.0.0` plus `--https`. By
-  default the server binds to loopback only, so the comment API isn't reachable from the network.
+  default the server only listens on your own machine, so the comment API isn't reachable from
+  the network.
 
 It works with any framework: serve a static build (auto-detected) or proxy a Vite, Next, or Astro
-dev server with live reload, and it reviews Markdown files too (see below). On touch, walk the DOM
-with ▲/▼ to pick the right element. The UI mounts in a shadow root, so it never touches your site's
-DOM or styles. Every anchor re-resolves with a confidence score and refuses to guess when it can't;
-the numbers are in [HARNESS.md](HARNESS.md).
+dev server with live reload, and it reviews Markdown files too (see below). On touch, step up
+through the nested elements with ▲/▼ to pick the right one. The UI lives in an isolated layer of its
+own, so it never touches your site's markup or styles. Every anchor re-resolves with a confidence
+score and refuses to guess when it can't; the numbers are in [HARNESS.md](HARNESS.md).
 
 ## Install (Claude Code)
 
@@ -137,10 +138,10 @@ Details:
   confidently, it **leaves that comment alone** rather than guessing (the toast
   reports how many couldn't be placed, so you can re-pin them).
 - It saves a **`.bak`** copy of each file before changing it.
-- It's **idempotent**: markers already present are skipped, so you can re-stamp safely.
+- It's **safe to re-run**: markers already present are skipped, so you can re-stamp safely.
 
 **Why use it:** the markers are invisible when the Markdown renders, but they're
-**greppable and travel with the file**, through git, a PR, or to a different
+**searchable and travel with the file**, through git, a PR, or to a different
 agent/tool that doesn't read your `.feedback/` folder. It's the portable,
 hand-it-off path; `comments.json` stays the fuller record. Because it edits your
 real source files, it's a deliberate action (hence the `.bak` backups).
@@ -151,21 +152,21 @@ real source files, it's a deliberate action (hence the `.bak` backups).
   helper is fetched once, no account needed) and prints a public `https://…trycloudflare.com`
   URL with a *real* certificate: no warning, the mic works, and it reaches your phone on any
   network, not just the same Wi-Fi. The URL is public while the server runs; stop the server
-  (Ctrl+C) to close it. **Tradeoff:** this is the one mode that leaves your machine. To make
-  the public link work, your page and comments are routed through Cloudflare's edge (nothing is
-  stored there, but the session is no longer local-only/no-egress, and anyone with the link can
-  view and comment). Treat the URL like a secret, prefer the LAN paths (or staying local) for
+  (Ctrl+C) to close it. **Tradeoff:** this is the one mode that sends data off your machine. To
+  make the public link work, your page and comments pass through Cloudflare's servers (nothing is
+  stored there, but the session is no longer purely local, and anyone with the link can view and
+  comment). Treat the URL like a secret, prefer the LAN paths (or staying local) for
   sensitive content, and note that quick tunnels are for ad-hoc review, not a stable/production URL.
-- **Voice** needs a Chromium browser and a secure context. `localhost` counts as secure, and
-  so does the `--tunnel` URL; a phone over plain `http://<lan-ip>` does not, so use `--tunnel`
-  (or `--https`) for phone voice. English is the default; the one-tap language menu also covers
+- **Voice** needs a Chromium browser (Chrome or Edge) over a secure connection. `localhost`
+  counts as secure, and so does the `--tunnel` URL; a phone over plain `http://<lan-ip>` does
+  not, so use `--tunnel` (or `--https`) for phone voice. English is the default; the one-tap language menu also covers
   Spanish, Mandarin, Hindi, Arabic, Portuguese, French, German, Japanese, Korean, Russian,
   Italian, Dutch, Turkish, Polish, Indonesian, and more (18 in all). The interface stays English.
 - **`--https` (LAN alternative to a tunnel)** uses a self-signed certificate: the phone warns
-  once ("not private"): tap **Advanced → Proceed**. After that the origin is a secure context
+  once ("not private"): tap **Advanced → Proceed**. After that the connection counts as secure
   and the mic works. `--tunnel` avoids this step entirely.
-- **Phone can't connect on the LAN?** Start the server with `--host 0.0.0.0` (it binds to
-  loopback by default). Both devices must share the network, and you may need to allow Node
+- **Phone can't connect on the LAN?** Start the server with `--host 0.0.0.0` (by default it only
+  listens on your own machine). Both devices must share the network, and you may need to allow Node
   through the firewall on Private networks. (`--tunnel` sidesteps all of this.)
 - **Static vs proxy**: static mode needs a rebuild to see content changes; proxy mode
   reflects live edits and forwards dynamic routes to the dev server.

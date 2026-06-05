@@ -10,9 +10,9 @@ bar for contributions is "keep it simple and keep the invariants intact."
   `--https` / `--md` lazily install at runtime (`selfsigned`, `marked`).
 - There is **no build step** and no transpiler. The overlay ships as the
   hand-written `public/overlay.js`.
-- The three processes — `bin/feedback-studio.mjs` (HTTP), `public/overlay.js`
-  (browser), `bin/feedback-studio-mcp.mjs` (MCP) — coordinate through one file,
-  `.feedback/comments.json`. The schema and all reads/writes live in
+- The three processes coordinate through one file, `.feedback/comments.json`: the
+  HTTP server (`bin/feedback-studio.mjs`), the browser overlay (`public/overlay.js`),
+  and the MCP server (`bin/feedback-studio-mcp.mjs`). The schema and all reads/writes live in
   `lib/store.mjs`; both servers import it so they produce identical objects.
 
 ## The load-bearing invariant
@@ -69,11 +69,11 @@ CI runs the unit + smoke tests and the syntax/manifest checks on every push and 
 - Match the surrounding style (no formatter is enforced; just don't reformat
   unrelated lines).
 - If you change the comment schema or the `type` set, update **`lib/store.mjs`**
-  (the single source of truth) — the test suite asserts the overlay's type set
+  (the single source of truth). The test suite asserts the overlay's type set
   matches it, so update `public/overlay.js` too.
 - Make sure `node --test` and both smoke scripts pass.
 
 ## Reporting bugs / ideas
 
 Open an issue using the templates. For anything security-related, see
-[SECURITY.md](SECURITY.md) — please don't file a public issue for vulnerabilities.
+[SECURITY.md](SECURITY.md). Please don't file a public issue for vulnerabilities.

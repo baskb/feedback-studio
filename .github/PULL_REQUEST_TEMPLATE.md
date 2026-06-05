@@ -11,4 +11,4 @@
 - [ ] If the comment schema or `type` set changed, `lib/store.mjs` is the source
       of truth and `public/overlay.js` was updated to match
 - [ ] If anchoring/resolution changed, the load-bearing invariant still holds
-      (no confident wrong resolves) — see `HARNESS.md`
+      (no confident wrong resolves). See `HARNESS.md`

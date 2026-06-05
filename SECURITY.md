@@ -4,9 +4,9 @@
 
 Feedback Studio is a **local developer tool**. It serves your own site (or your
 own Markdown) on your own machine and injects a commenting overlay. By default the
-server binds to **loopback only** (`127.0.0.1`), so the comment API — which can
-write to `.feedback/` and, in Markdown mode, stamp markers into your source files
-— is not reachable from the network.
+server only listens on your own machine (`127.0.0.1`), so the comment API (which can
+write to `.feedback/` and, in Markdown mode, stamp markers into your source files)
+is not reachable from the network.
 
 You opt into wider exposure with `--host 0.0.0.0` (e.g. to comment from your
 phone). When you do:
@@ -21,10 +21,10 @@ phone). When you do:
 When you use `--tunnel`:
 
 - This is the **one mode that sends data off your machine.** To create the public
-  `trycloudflare.com` link, your page content and comments are routed through
-  Cloudflare's edge. Nothing is stored there, but the session is no longer
-  local-only / no-egress.
-- The URL is **public and unauthenticated** while the server runs — anyone who has
+  `trycloudflare.com` link, your page content and comments pass through
+  Cloudflare's servers. Nothing is stored there, but the session is no longer
+  purely local.
+- The URL is **public and unauthenticated** while the server runs: anyone who has
   it can view *and* comment / edit / resolve. Treat the link like a password, share
   it only with people you trust, and stop the server to revoke it.
 - Cloudflare quick tunnels are for **ad-hoc review, not a stable or production URL**,

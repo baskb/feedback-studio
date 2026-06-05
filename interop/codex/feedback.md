@@ -22,11 +22,11 @@ Prefer the MCP tools if the `feedback-studio` MCP server is configured
 `.feedback/comments.json` / `.feedback/FEEDBACK.md` directly.
 
 For each open comment:
-- Locate the target with confidence using the anchor's quoted text (grep the
+- Locate the target with confidence using the anchor's quoted text (search the
   source) cross-checked with the selector. If you cannot identify it confidently,
-  do NOT edit a guess — leave it open and say it needs a re-pin.
-- Act per the comment `type`: web — `fix` (repair), `change` (apply verbatim),
-  `improve` (rewrite with judgement); markdown — `comment`/`rephrase`/`expand`/
+  do NOT edit a guess. Leave it open and say it needs a re-pin.
+- Act per the comment `type`: web: `fix` (repair), `change` (apply verbatim),
+  `improve` (rewrite with judgement); markdown: `comment`/`rephrase`/`expand`/
   `delete`/`question`. For markdown, edit the `sourceFile`, not the rendered HTML.
 - Present changes as a diff for the user. After applying, set the comment's status
   to `resolved` (via `set_status` or by editing comments.json). Honour `approved`

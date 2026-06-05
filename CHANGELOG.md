@@ -12,8 +12,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - npm packaging: `npx feedback-studio …` (no clone/install needed), a global install, and a
   `feedback-studio-mcp` bin for the MCP server. The package declares zero runtime dependencies.
 - `--tunnel`: opens a public HTTPS URL via a Cloudflare quick tunnel (lazily fetches
-  the `cloudflared` helper, no account needed). Phone review with a real certificate —
-  no browser warning, the mic works, on any network. Nothing is exposed on the LAN.
+  the `cloudflared` helper, no account needed). Phone review with a real certificate:
+  no browser warning, the mic works, on any network. Nothing is exposed on the local network.
 - Shared data store (`lib/store.mjs`) imported by both the HTTP and MCP servers:
   one comment factory, one set of type constants, one I/O path.
 - Atomic, cross-process-locked writes to `comments.json` (temp file + `rename`,
@@ -23,8 +23,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Same-origin guard on all mutating API routes (blocks cross-site writes).
 - The live-update stream (what flips pins green without a refresh) auto-reconnects with
   backoff and resyncs after a dropped connection.
-- `MutationObserver` so pins re-resolve (and the overlay re-attaches) when a
-  proxied SPA swaps the DOM.
+- When a proxied single-page app rebuilds the page, the overlay re-resolves its
+  pins and re-attaches itself.
 - Test suite (`node --test`) plus live HTTP and MCP smoke scripts; CI workflow.
 - `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, this changelog, and issue/PR templates.
 - Live-update streams: a stalled browser is given a grace window then dropped, so it can't make updates pile up in memory.

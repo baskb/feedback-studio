@@ -1,7 +1,7 @@
 {
   "name": "feedback-studio",
   "version": "0.1.0",
-  "description": "Local visual feedback overlay for a site you're building or a Markdown file — click or select anything, leave typed or spoken feedback, and let your coding agent process it. Zero-dependency Node + MCP server; also a Claude Code plugin.",
+  "description": "Local visual feedback overlay for a site you're building or a Markdown file: click or select anything, leave typed or spoken feedback, and let your coding agent process it. Zero-dependency Node + MCP server; also a Claude Code plugin.",
   "keywords": [
     "feedback",
     "review",
@@ -43,6 +43,10 @@
   ],
   "scripts": {
     "test": "node --test plugins/feedback-studio/test/store.test.mjs",
-    "smoke": "node plugins/feedback-studio/test/smoke.mjs && node plugins/feedback-studio/test/mcp-smoke.mjs"
+    "smoke": "node plugins/feedback-studio/test/smoke.mjs && node plugins/feedback-studio/test/mcp-smoke.mjs",
+    "version": "node scripts/release-sync.mjs && git add -A",
+    "release:patch": "npm version patch -m \"release v%s\" && git push --follow-tags",
+    "release:minor": "npm version minor -m \"release v%s\" && git push --follow-tags",
+    "release:major": "npm version major -m \"release v%s\" && git push --follow-tags"
   }
 }

@@ -73,6 +73,27 @@ CI runs the unit + smoke tests and the syntax/manifest checks on every push and 
   matches it, so update `public/overlay.js` too.
 - Make sure `node --test` and both smoke scripts pass.
 
+## Releasing (maintainer)
+
+One command keeps GitHub and npm in sync. From a clean `main`:
+
+```bash
+npm run release:patch    # or release:minor / release:major
+```
+
+That bumps the version in all three manifests (`package.json`, the plugin manifest, the
+marketplace entry), dates the `CHANGELOG.md` `[Unreleased]` section, commits, tags `vX.Y.Z`,
+and pushes. Pushing the tag triggers `.github/workflows/release.yml`, which runs the tests,
+publishes to npm, and creates the GitHub Release. The tag and the published version are
+checked to match, so the two channels can't drift.
+
+**One-time setup:** add an npm automation token as the repo secret `NPM_TOKEN` (npmjs.com ->
+Access Tokens -> Generate -> Automation; then the GitHub repo -> Settings -> Secrets and
+variables -> Actions -> New repository secret named `NPM_TOKEN`).
+
+Plugin/marketplace users get changes as soon as they land on `main` (via `/plugin marketplace
+update`); npm users get them on the next published version.
+
 ## Reporting bugs / ideas
 
 Open an issue using the templates. For anything security-related, see

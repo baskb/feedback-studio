@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Release automation: a single `npm run release:patch` (or `release:minor` / `release:major`)
+  bumps every manifest in sync, dates the changelog, tags, and pushes; the tag triggers a
+  GitHub workflow that publishes to npm and cuts the GitHub Release, so the two channels stay
+  in lockstep (the tag and the published version are checked to match).
+
 ### Changed
 - Slimmed the `feedback` skill instructions by about half (~2,580 to ~1,270 tokens loaded
   per invocation) by deduplicating the tool path and tightening prose, without dropping the

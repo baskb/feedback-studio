@@ -6,6 +6,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Slimmed the `feedback` skill instructions by about half (~2,580 to ~1,270 tokens loaded
+  per invocation) by deduplicating the tool path and tightening prose, without dropping the
+  process steps or the refuse-to-guess invariant.
+
+### Documentation
+- Made it explicit that the MCP server ships with the plugin but is **not auto-activated**
+  in Claude Code: the skill reads the comment files directly, so no always-on MCP server
+  loads tool definitions into every turn (keeps token use low). Activate it per agent only
+  where needed (README "Use with other agents", INTEROP.md).
+
 ## [0.1.0] - 2026-06-05
 
 ### Added

@@ -97,11 +97,16 @@ right one. The mic dictates.
 ## Use with other agents (Codex, Cursor, ChatGPT)
 
 The capture side is agent-agnostic and the data is plain files, so any agent can
-consume it. There's an **MCP server** (`bin/feedback-studio-mcp.mjs`, tools:
-`list_comments` / `get_comment` / `add_comment` / `reply` / `set_status`) that
-plugs into Codex CLI, Cursor, Windsurf, Cline, and Claude Code through one
-integration. ChatGPT (cloud) needs a tunnel. Full setup, including Codex
-`AGENTS.md` and a `/prompts:feedback` command, is in [INTEROP.md](INTEROP.md).
+consume them. There's an **MCP server** (`bin/feedback-studio-mcp.mjs`, tools:
+`list_comments` / `get_comment` / `add_comment` / `reply` / `set_status`) for
+Codex CLI, Cursor, Windsurf, and Cline.
+
+It **ships with the plugin but is not activated by default in Claude Code.** The
+skill already reads the comment files directly, so there's no always-on MCP server
+loading tool definitions into every turn, which keeps token use low. You wire the
+MCP server only into the agents that actually need it (it's a separate process you
+point them at). ChatGPT (cloud) needs a tunnel. Full setup, including the Codex
+`AGENTS.md`, is in [INTEROP.md](INTEROP.md).
 
 ## Where comments live
 

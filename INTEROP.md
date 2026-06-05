@@ -39,6 +39,11 @@ review server *is* running, writes show up live in the open overlay.
 Tools: `list_comments`, `get_comment`, `add_comment` (agents pin their own
 comments), `reply`, `set_status`.
 
+**It ships with the plugin but is not auto-activated.** A running MCP server keeps
+its tool definitions in the agent's context every turn, so Feedback Studio does not
+start one for you: you opt in per agent with the config below. In Claude Code the
+plugin's skill already reads the files, so you usually don't need the MCP server there.
+
 ### Codex CLI
 
 `~/.codex/config.toml` (or project `.codex/config.toml`):
@@ -57,7 +62,11 @@ or: `codex mcp add feedback-studio -- node /ABS/PATH/.../feedback-studio-mcp.mjs
 
 Same stdio server, in each tool's MCP config (`command: node`, `args: [<abs path>]`).
 
-### Claude Code (in addition to the plugin)
+### Claude Code (optional; the plugin's skill already covers this)
+
+You normally don't need the MCP server in Claude Code: the installed plugin's skill
+reads `.feedback/comments.json` directly, and not running an extra MCP server keeps
+token use low. Add it only if you specifically want the MCP tools as callable tools:
 
 ```json
 // .mcp.json

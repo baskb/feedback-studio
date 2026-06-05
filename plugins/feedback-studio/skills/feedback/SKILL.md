@@ -1,7 +1,7 @@
 ---
 name: feedback
-description: Visual feedback overlay on a local site or Markdown file. The user clicks or selects anything and leaves a typed or spoken comment; later you process those comments. Use for "review the site", "leave feedback", "process the feedback".
-when_to_use: User wants to visually review a local website or Markdown, or to process the collected comments.
+description: Visual feedback overlay for a local website or Markdown file. The user clicks or selects anything and leaves a typed or spoken comment (even from their phone); you later process those comments, and you can also pin your OWN review comments to elements for the user to approve. Use to review a site or `.md`, start it phone/mobile-ready, process the feedback, or leave AI review comments on a page.
+when_to_use: Use when the user wants to visually review or comment on a local website or a Markdown file (optionally from their phone, by voice); OR to process the comments they collected and apply them; OR when you (or another skill, e.g. a design/copy/accessibility reviewer) should leave review comments pinned to specific elements for the user to approve. Trigger phrases include "review/open my site", "give feedback on this .md", "start it mobile-ready", "process the feedback", and "leave review comments on this page".
 argument-hint: [start | process | --dir <path> | --proxy <url> | --md <file> | --https | --tunnel]
 user-invocable: true
 allowed-tools: Bash Read Edit Write Glob Grep

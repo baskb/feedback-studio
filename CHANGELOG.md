@@ -16,6 +16,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in Claude Code: the skill reads the comment files directly, so no always-on MCP server
   loads tool definitions into every turn (keeps token use low). Activate it per agent only
   where needed (README "Use with other agents", INTEROP.md).
+- Added a **Recipes** section to the README (phone/voice review, Markdown feedback, dev-server
+  review, processing comments, sharing a link, and AI-reviewer comments), and enriched the
+  skill's `description`/`when_to_use` so Claude recognises those scenarios and activates on them.
 
 ## [0.1.0] - 2026-06-05
 

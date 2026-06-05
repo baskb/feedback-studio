@@ -80,6 +80,12 @@ Your agent works through each comment, shows you the diffs, and the pins flip gr
 Say *"start Feedback Studio and give me a shareable link"*, or run `npx feedback-studio --dir dist --tunnel`.
 They open the link in any browser and comment on the page; it all lands in your repo. (The link is public while the server runs; stop it to close it.)
 
+**Have an AI reviewer leave comments for *you*.**
+Say *"have a frontend reviewer leave comments on my site"* (or a copy, marketing, or accessibility pass).
+The agent pins its **own** notes to specific elements, and you reply, approve, or reject each one before
+anything changes. It's a two-way conversation, not a one-way to-do list, and it's the inverse of leaving
+your own comments: here the AI points at the exact thing it means instead of describing it in prose.
+
 ## Use the server directly (without Claude Code)
 
 It's a zero-dependency Node script, usable by anyone. Quickest is `npx` (no clone, no install):

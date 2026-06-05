@@ -21,12 +21,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   agent can write concurrently without losing data or reading a half-written file.
 - `--host <addr>` flag (defaults to `127.0.0.1`; use `0.0.0.0` for phone/LAN).
 - Same-origin guard on all mutating API routes (blocks cross-site writes).
-- SSE auto-reconnect with backoff and resync in the overlay.
+- The live-update stream (what flips pins green without a refresh) auto-reconnects with
+  backoff and resyncs after a dropped connection.
 - `MutationObserver` so pins re-resolve (and the overlay re-attaches) when a
   proxied SPA swaps the DOM.
 - Test suite (`node --test`) plus live HTTP and MCP smoke scripts; CI workflow.
 - `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, this changelog, and issue/PR templates.
-- SSE backpressure handling: a stalled client is given a drain window then dropped, so it can't make broadcasts buffer unboundedly.
+- Live-update streams: a stalled browser is given a grace window then dropped, so it can't make updates pile up in memory.
 - Comment pins are slightly translucent (snap to full opacity on hover/keyboard focus/active), so the text underneath a pin stays readable.
 
 ### Changed

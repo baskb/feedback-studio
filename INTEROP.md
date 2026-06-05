@@ -67,13 +67,14 @@ Same stdio server, in each tool's MCP config (`command: node`, `args: [<abs path
 ## Level 2 — ChatGPT (cloud)
 
 ChatGPT's Developer Mode is a full MCP client, but it **only connects to remote
-MCP servers over HTTPS — not local stdio**. So:
+MCP servers over HTTPS — not local stdio**. Feedback Studio's MCP server is local
+stdio by design (your comments never leave your machine), so the supported path for
+ChatGPT is **Level 0**: paste `FEEDBACK.md` into the chat and let it work from there.
 
-1. Expose the server over HTTPS with a tunnel (Secure MCP Tunnel / ngrok / Cloudflare).
-2. Run an HTTP (Streamable-HTTP) MCP transport behind it with a bearer token. *(Not built yet — the stdio server above covers every local agent; the HTTP transport + auth is the remaining piece for ChatGPT-cloud, tracked as a follow-up.)*
-3. In ChatGPT: Settings → Apps → Advanced → Developer mode → Create app → point at `https://<tunnel>/mcp`.
-
-For now, the practical ChatGPT path is Level 0 (paste `FEEDBACK.md`).
+If you specifically want a live MCP connection in ChatGPT, front the data with a
+remote HTTPS MCP endpoint (a Streamable-HTTP bridge behind a tunnel, with auth) and
+point ChatGPT at `https://<your-endpoint>/mcp` via Settings → Apps → Advanced →
+Developer mode. That remote bridge sits outside the tool's local-only scope.
 
 ## Codex prompt + AGENTS.md
 

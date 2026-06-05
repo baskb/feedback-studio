@@ -55,6 +55,31 @@ The skill picks how to serve your site (static build or dev-server proxy), opens
 and tells you how to comment. When you're done, it reads `.feedback/comments.json` and
 applies the feedback.
 
+## Recipes
+
+The most common ways people use it. In **Claude Code**, just ask in plain English (the
+`/feedback-studio:feedback` skill figures out the flags); **standalone**, run the `npx` line.
+
+**Review your site from your phone, by voice.**
+Say *"start Feedback Studio, mobile-ready"*, or run `npx feedback-studio --dir dist --tunnel`.
+You get a real-HTTPS link to open on your phone; tap any element and speak your note.
+
+**Give feedback on a Markdown file** (a draft, a research report, a plan).
+Say *"review report.md with Feedback Studio"*, or run `npx feedback-studio --md report.md`.
+The doc renders as a clean page, and you comment on any heading, paragraph, list, or table.
+
+**Review your running dev server** (Vite, Next, Astro), with live reload.
+Say *"open my dev site to review"*, or run `npx feedback-studio --proxy http://localhost:5173`.
+Click around and comment as you go; your edits keep hot-reloading underneath.
+
+**Hand the comments to your agent.**
+Say *"process the feedback"*, or run `/feedback-studio:feedback process` in Claude Code.
+Your agent works through each comment, shows you the diffs, and the pins flip green as it resolves them.
+
+**Share a link with a teammate or client.**
+Say *"start Feedback Studio and give me a shareable link"*, or run `npx feedback-studio --dir dist --tunnel`.
+They open the link in any browser and comment on the page; it all lands in your repo. (The link is public while the server runs; stop it to close it.)
+
 ## Use the server directly (without Claude Code)
 
 It's a zero-dependency Node script, usable by anyone. Quickest is `npx` (no clone, no install):

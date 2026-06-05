@@ -1,10 +1,10 @@
 # Feedback Studio
 
 A local visual feedback overlay for a website **you're building**, or any **Markdown
-file**. Point it at your static build or your local dev server (it doesn't comment on
-public sites you browse, there's no extension), or at a `.md` file. Turn on comment
-mode, then **click or tap any element** (or select any text) on any page (or any
-heading, paragraph, or table in a rendered `.md`) and leave a comment, **typed or
+file**. Point it at your static build, your local dev server, or a `.md` file. (There's
+no browser extension, so it never touches public sites you browse.) Turn on comment
+mode, then **click or tap any element**, or select any text, on the page (or any
+heading, paragraph, or table in a rendered `.md`), and leave a comment, **typed or
 spoken**. Comments persist to `.feedback/comments.json` (plus a readable `FEEDBACK.md`)
 so your coding agent can process them on your signal.
 
@@ -23,18 +23,18 @@ plus a self-contained Node server that does the serving and injection.
   threaded conversation tied to the element, so the context lives on the thing you're discussing.
 - **Voice-to-text in 18 languages** (English default): dictate feedback and pick your language
   from a one-tap menu. The interface is English.
-- **Live status**: when the agent resolves a comment, its pin flips green in your open
-  browser instantly (file-watch, then SSE), and a "N ready for your agent" badge plus a
-  copy-`/feedback` button keep the loop one paste away.
+- **Live status**: when your agent resolves a comment, its pin turns green in your browser
+  live, no refresh. A badge counts how many are ready, and a one-tap button copies the
+  `/feedback` command so handing the batch to your agent is a single paste.
 - **Works on your phone**: `--tunnel` opens a real-certificate HTTPS URL (no browser warning,
   mic works, on *any* network); or stay on your Wi-Fi with `--host 0.0.0.0` plus `--https`. By
   default the server binds to loopback only, so the comment API isn't reachable from the network.
 
-It also serves any framework (static build auto-detected, or proxy a Vite/Next/Astro dev server
-with live reload), reviews Markdown files with a **Stamp .md** hand-off button, walks the DOM with
-▲/▼ for touch picking, mounts its UI in a shadow root so it never touches your site, and re-resolves
-every anchor with a confidence score (refusing to guess when it can't). See [HARNESS.md](HARNESS.md)
-for the anchor numbers.
+It works with any framework: serve a static build (auto-detected) or proxy a Vite, Next, or Astro
+dev server with live reload, and it reviews Markdown files too (see below). On touch, walk the DOM
+with ▲/▼ to pick the right element. The UI mounts in a shadow root, so it never touches your site's
+DOM or styles. Every anchor re-resolves with a confidence score and refuses to guess when it can't;
+the numbers are in [HARNESS.md](HARNESS.md).
 
 ## Install (Claude Code)
 

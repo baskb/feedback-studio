@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-05
+
 ### Added
 - Release automation: a single `npm run release:patch` (or `release:minor` / `release:major`)
   bumps every manifest in sync, dates the changelog, tags, and pushes; the tag triggers a
@@ -91,5 +93,6 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/baskb/feedback-studio/releases/tag/v0.1.1
 [0.1.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.1.0

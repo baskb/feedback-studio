@@ -24,7 +24,7 @@ Run the server in the **background**, then open the URL it prints.
 - **Dev server already running** (live reload): `node "$FBS" --proxy http://localhost:<devport>`
 - **Static build** (auto-detects `dist/ build/ out/ _site/ public/ .output/public/`): `node "$FBS"` (or `--dir <folder>`). Build first if needed (check `package.json`).
 - **Markdown** (a `.md` file, or a folder of them): `node "$FBS" --md <file|dir>`.
-- **Phone with voice:** add `--tunnel` (real-cert public URL, easiest) or `--https` (self-signed LAN). Plain http is fine for laptop, or for typing on a phone.
+- **Phone with voice:** add `--tunnel` (real-cert public URL, easiest) or `--https --host 0.0.0.0` (self-signed, same Wi-Fi; without `--host` the phone can't reach it). Plain http is fine for laptop, or for typing on a phone.
 
 Open it: `start <url>` (Windows) / `open <url>` (macOS) / `xdg-open <url>` (Linux). Tell the
 user: press **C** or hit **Comment** (bottom-right), click an element (on a phone, tap then
@@ -66,11 +66,13 @@ DOM needed). With the server running:
 
 ```
 POST /__feedback/api/comments
-{"page":"/","author":"agent","authorName":"<your role>","type":"comment",
+{"page":"/","author":"agent","authorName":"<your role>","type":"improve",
  "anchor":{"snippet":"<exact visible text of the element>"},"text":"..."}
 ```
 
-Add `"sourceFile":"<file.md>"` in Markdown mode. Reply with `POST /__feedback/api/comments/<id>/reply`.
+On a web page use a web type (`fix` / `change` / `improve`); `comment` is a Markdown
+type and would be coerced to `change`. Add `"sourceFile":"<file.md>"` in Markdown mode,
+where `"type":"comment"` is correct. Reply with `POST /__feedback/api/comments/<id>/reply`.
 Leave proposals `open` so they surface as "to review"; a clear `authorName` labels the pin.
 
 ## Notes

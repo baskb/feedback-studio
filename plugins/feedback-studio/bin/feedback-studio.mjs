@@ -31,6 +31,7 @@ import {
   ALLOWED_TYPES, STATUSES, AUTONOMY,
   readComments, writeComments, mutate, makeComment, makeReply, exportMarkdown,
 } from '../lib/store.mjs';
+import { exportMarkers as stampMarkers } from '../lib/markers.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -83,7 +84,11 @@ if (MD_MODE) {
   try {
     if (statSync(p).isDirectory()) MD_ROOT = p;
     else { MD_ROOT = path.dirname(p); MD_SINGLE = p; }
-  } catch (e) { MD_ROOT = path.resolve(process.cwd()); }
+  } catch (e) {
+    // A typo'd path must not silently fall back to reviewing the whole cwd.
+    console.error(`\n  --md path not found: ${p}\n`);
+    process.exit(1);
+  }
 }
 
 const CWD = process.cwd();
@@ -192,7 +197,9 @@ function readBody(req) {
       if (size > BODY_LIMIT) {
         const e = new Error('request body too large');
         e.statusCode = 413;
-        req.destroy(); // stop buffering attacker-controlled data
+        // Pause (don't destroy) so the 413 response can still be written; Node
+        // closes the connection after responding to a partially-read request.
+        req.pause();
         reject(e);
         return;
       }
@@ -222,6 +229,8 @@ function safeJoin(root, urlPath) {
   return within(root, target) ? target : null;
 }
 async function resolveStaticFile(urlPath) {
+  // Mixes await stat() with existsSync on purpose: the fallbacks are quick
+  // boolean probes on a local dir; nothing mutates between them.
   let target = safeJoin(STATIC_DIR, urlPath);
   if (!target) return null;
   try {
@@ -236,7 +245,9 @@ async function resolveStaticFile(urlPath) {
 
 // Reject cross-site browser writes: a page on another origin can fire a fetch at
 // us, but its Origin header won't match our Host. Same-origin (the overlay) and
-// non-browser clients (no Origin header) are allowed.
+// non-browser clients (no Origin header) are allowed. Omitting Origin to bypass
+// this requires a non-browser client, i.e. code already running on this machine
+// (or with LAN access when explicitly exposed) — outside the threat this guards.
 function crossSite(req) {
   const o = req.headers.origin;
   if (!o) return false;
@@ -317,7 +328,7 @@ async function handleApi(req, res, url) {
       return sendJSON(res, 200, { ok: true });
     }
     if (resource === 'md-export' && req.method === 'POST') {
-      return sendJSON(res, 200, { ok: true, ...(await exportMarkers()) });
+      return sendJSON(res, 200, { ok: true, ...(await stampMarkers(DATA_DIR, CWD)) });
     }
     return sendJSON(res, 404, { error: 'unknown endpoint' });
   } catch (err) {
@@ -364,7 +375,11 @@ function proxyRequest(req, res) {
       const chunks = [];
       pres.on('data', (c) => chunks.push(c));
       pres.on('end', () => {
-        // Route absolute upstream-origin URLs back through us, then inject the overlay.
+        // Route absolute upstream-origin URLs back through us, then inject the
+        // overlay. Known trade-off: this replaces the origin EVERYWHERE in the
+        // HTML, including inside inline <script> strings — an app that builds
+        // URLs from a hardcoded absolute origin will see them relativised. In
+        // practice dev servers emit relative URLs, so this stays the simple way.
         let html = Buffer.concat(chunks).toString('utf-8').split(PROXY).join('');
         html = injectHtml(html);
         const headers = { ...pres.headers };
@@ -393,6 +408,7 @@ function proxyRequest(req, res) {
 // Pass HMR / live-reload websockets straight through to the upstream dev server.
 function proxyUpgrade(req, clientSocket, head) {
   const onReady = (upstream) => {
+    upstream.setTimeout(0); // connected: HMR sockets legitimately idle for minutes
     upstream.write(`${req.method} ${req.url} HTTP/1.1\r\n`);
     for (let i = 0; i < req.rawHeaders.length; i += 2) upstream.write(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`);
     upstream.write('\r\n');
@@ -406,6 +422,7 @@ function proxyUpgrade(req, clientSocket, head) {
   } else {
     upstream = net.connect(PROXY_PORT, PROXY_URL.hostname, () => onReady(upstream));
   }
+  // Connect-phase timeout only; cleared in onReady so idle websockets survive.
   upstream.setTimeout(10000, () => upstream.destroy());
   upstream.on('error', () => clientSocket.destroy());
   clientSocket.on('error', () => upstream.destroy());
@@ -695,53 +712,8 @@ async function serveMd(req, res, url) {
   return sendHtml(res, await renderMd(file));
 }
 
-// Stamp comments into their source .md as inline <!-- @FB ... --> markers,
-// the portable+greppable convention from the original review tool. Each type
-// maps to a verb; the marker lands on the source line holding the quoted text.
-const mdNorm = (s) => (s || '').replace(/\s+/g, ' ').trim();
-function fbMarker(c) {
-  const t = mdNorm(c.text).replace(/--+>/g, '--&gt;').replace(/--/g, '–');
-  switch (c.type) {
-    case 'delete': return `<!-- @FB-DELETE${t ? ': ' + t : ''} -->`;
-    case 'expand': return `<!-- @FB-EXPAND${t ? ': ' + t : ''} -->`;
-    case 'question': return `<!-- @FB-Q${t ? ': ' + t : ''} -->`;
-    case 'rephrase': return `<!-- @FB: rephrase as "${t.replace(/"/g, '\\"')}" -->`;
-    default: return `<!-- @FB${t ? ': ' + t : ''} -->`; // comment + any web type
-  }
-}
-async function exportMarkers() {
-  const comments = await readComments(DATA_DIR);
-  const byFile = new Map();
-  for (const c of comments) {
-    if (!c.sourceFile || c.status === 'resolved') continue;
-    if (!byFile.has(c.sourceFile)) byFile.set(c.sourceFile, []);
-    byFile.get(c.sourceFile).push(c);
-  }
-  let files = 0, stamped = 0, notFound = 0;
-  for (const [rel, list] of byFile) {
-    const file = path.normalize(path.join(CWD, rel));
-    if (!within(CWD, file) || !existsSync(file)) continue;
-    let text = await readFile(file, 'utf-8');
-    const lines = text.split('\n');
-    let changed = false;
-    for (const c of list) {
-      const marker = fbMarker(c);
-      if (text.includes(marker) || lines.some((l) => l.includes(marker))) continue; // idempotent
-      const snip = mdNorm(c.anchor && (c.anchor.snippet || c.anchor.rangeText)).slice(0, 40).toLowerCase();
-      let idx = -1;
-      if (snip) idx = lines.findIndex((l) => !l.trimStart().startsWith('<!--') && mdNorm(l).toLowerCase().includes(snip));
-      if (idx < 0) { notFound++; continue; } // refuse to guess: leave it alone, don't append at EOF
-      lines[idx] = lines[idx].replace(/\s+$/, '') + ' ' + marker;
-      stamped++; changed = true;
-    }
-    if (changed) {
-      await writeFile(file + '.bak', text);
-      await writeFile(file, lines.join('\n'));
-      files++;
-    }
-  }
-  return { files, stamped, notFound };
-}
+// Markdown marker stamping lives in lib/markers.mjs (unit-tested there:
+// refuse-to-guess on zero/ambiguous matches, skip resolved+rejected, idempotent).
 
 // ---------- request handler ----------
 async function handler(req, res) {

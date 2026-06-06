@@ -26,7 +26,7 @@ Then: *"read `.feedback/FEEDBACK.md` and apply the open comments; mark each reso
 > **Editing `comments.json` directly:** prefer the MCP tools (Level 1) for writes;
 > they're atomic and locked, so they're safe even while the overlay is open. If you
 > *do* hand-edit the file, do it when nothing else is writing (the overlay/server
-> and the MCP server each write it), and keep it valid JSON. A malformed file is
+> and the MCP server each write it), and keep it valid JSON. A malformed or wrong-shaped file is
 > refused (an error), never silently treated as empty, so a bad edit can't wipe
 > your comments, but it will block writes until you fix it.
 

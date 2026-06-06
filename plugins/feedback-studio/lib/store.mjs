@@ -123,7 +123,14 @@ export async function readComments(dir) {
     err.code = 'ECORRUPT';
     throw err;
   }
-  return Array.isArray(parsed && parsed.comments) ? parsed.comments : [];
+  // Valid JSON but the wrong shape (a hand-edit gone wrong) is just as corrupt:
+  // treating it as empty would let the next write clobber the file with [].
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.comments)) {
+    const err = new Error('comments.json parses but has no "comments" array — refusing to treat it as empty');
+    err.code = 'ECORRUPT';
+    throw err;
+  }
+  return parsed.comments;
 }
 
 export async function writeComments(dir, comments, opts = {}) {

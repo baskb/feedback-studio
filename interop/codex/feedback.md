@@ -14,7 +14,7 @@ Run the server in the background and tell the user the URL it prints:
 - Website build: `node <FBS>/bin/feedback-studio.mjs --dir dist`
 - Dev server (live reload): `node <FBS>/bin/feedback-studio.mjs --proxy http://localhost:5173`
 - Markdown file/folder: `node <FBS>/bin/feedback-studio.mjs --md report.md`
-Add `--https` for phone + voice. (`<FBS>` = the feedback-studio plugin path.)
+For phone + voice over the LAN add `--https --host 0.0.0.0`; or use `--tunnel`, which needs no extra flag. (`<FBS>` = the feedback-studio plugin path.)
 
 ## If asked to PROCESS comments
 Prefer the MCP tools if the `feedback-studio` MCP server is configured

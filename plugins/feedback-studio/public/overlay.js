@@ -36,7 +36,10 @@
   let targetEls = []; // rainbow highlight boxes over the element/text being commented on
   let expandedId = null; // which comment's conversation thread is open in the panel
   let focusReplyNext = false; // focus the reply box on the next render (after an explicit expand)
-  const replyDrafts = {}; // id -> in-progress reply text, preserved across re-renders
+  // id -> in-progress reply text, preserved across re-renders. Entries are only
+  // removed on a successful send; a draft for a deleted comment is harmless
+  // (ids are UUIDs, never reused) and the map clears on page reload.
+  const replyDrafts = {};
   const isOpenC = (c) => c.status !== 'resolved' && c.status !== 'rejected';
   let recognizing = false;
   let recognition = null;
@@ -667,30 +670,42 @@
     setTimeout(() => ta.focus(), 30);
   }
 
+  // fetch + JSON with the error contract enforced: a non-2xx response throws
+  // (with the server's error message) instead of being mistaken for data —
+  // otherwise an { error } body would be pushed into `comments` as undefined.
+  // A network failure (server gone) throws a TypeError from fetch itself.
+  async function api(path, opts) {
+    let res;
+    try { res = await fetch(API + path, opts); }
+    catch (e) { const err = new Error('is the server running?'); err.network = true; throw err; }
+    let data = null;
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) throw new Error((data && data.error) || ('server error ' + res.status));
+    return data;
+  }
+
   async function doSave(opts, text) {
     if (!text) return;
     try {
       if (opts.kind === 'edit') {
-        const res = await fetch(API + '/comments/' + opts.comment.id, {
+        const data = await api('/comments/' + opts.comment.id, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, type: ctype }),
         });
-        const data = await res.json();
         const i = comments.findIndex((c) => c.id === data.comment.id);
         if (i >= 0) comments[i] = data.comment;
         toast('Comment updated');
       } else {
-        const res = await fetch(API + '/comments', {
+        const data = await api('/comments', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ page: PAGE, pageTitle: document.title, url: location.href, anchor: opts.anchor, text, type: ctype, sourceFile: window.__kbfSource || '' }),
         });
-        const data = await res.json();
         comments.push(data.comment);
         toast('Comment saved');
       }
       closeComposer();
       refresh();
     } catch (e) {
-      toastError('Save failed — is the server running?');
+      toastError('Save failed — ' + e.message);
     }
   }
 
@@ -811,7 +826,7 @@
       const r = p.el.getBoundingClientRect();
       p.pinEl.style.left = r.left + 'px';
       p.pinEl.style.top = r.top + 'px';
-      const off = r.bottom < 0 || r.top > window.innerHeight;
+      const off = r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth;
       p.pinEl.style.display = off ? 'none' : 'flex';
     }
   }
@@ -1085,32 +1100,30 @@
   }
   async function setStatus(c, status) {
     try {
-      const res = await fetch(API + '/comments/' + c.id, {
+      const data = await api('/comments/' + c.id, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }),
       });
-      const data = await res.json();
       const i = comments.findIndex((x) => x.id === c.id);
       if (i >= 0) comments[i] = data.comment;
       refresh();
       toast(status === 'resolved' ? 'Marked resolved' : status === 'open' ? 'Reopened'
         : status === 'approved' ? 'Approved — your agent can implement it' : 'Rejected');
-    } catch (e) { toastError('Update failed'); }
+    } catch (e) { toastError('Update failed — ' + e.message); }
   }
   async function sendReply(id) {
     const text = (replyDrafts[id] || '').trim();
     if (!text) return;
     try {
-      const res = await fetch(API + '/comments/' + id + '/reply', {
+      const data = await api('/comments/' + id + '/reply', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ author: 'user', text }),
       });
-      const data = await res.json();
       const i = comments.findIndex((c) => c.id === id);
       if (i >= 0) comments[i] = data.comment;
       delete replyDrafts[id];
       expandedId = id;
       refresh();
       toast('Reply sent');
-    } catch (e) { toastError('Reply failed'); }
+    } catch (e) { toastError('Reply failed — ' + e.message); }
   }
 
   function deleteComment(id) {
@@ -1122,11 +1135,15 @@
     if (expandedId === id) expandedId = null;
     refresh();
     const timer = setTimeout(async () => {
-      try { await fetch(API + '/comments/' + id, { method: 'DELETE' }); }
+      try { await api('/comments/' + id, { method: 'DELETE' }); }
       catch (e) {
         // Server delete failed — restore so we don't silently lose data.
-        if (!comments.some((c) => c.id === id)) { comments.splice(Math.min(idx, comments.length), 0, removed); refresh(); }
-        toastError('Delete failed');
+        // (A 404 means it's already gone server-side; restoring would resurrect
+        // a phantom, so only restore on other failures.)
+        if (!/not found/i.test(e.message) && !comments.some((c) => c.id === id)) {
+          comments.splice(Math.min(idx, comments.length), 0, removed); refresh();
+          toastError('Delete failed — ' + e.message);
+        }
       }
     }, 5000);
     toast('Comment deleted', { actionLabel: 'Undo', duration: 5000, onAction: () => {
@@ -1239,17 +1256,20 @@
   $('kbf-panel-close').addEventListener('click', () => setPanel(false));
   root.querySelectorAll('.kbf-filter').forEach((b) => b.addEventListener('click', () => setFilter(b.dataset.filter)));
   $('kbf-copyfb').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText('/feedback'); toast('Copied "/feedback" — paste it into your agent'); }
-    catch (e) { toast('Run /feedback in Claude Code to process these'); }
+    // The full skill invocation — a bare "/feedback" doesn't resolve in Claude Code.
+    const cmd = '/feedback-studio:feedback process';
+    try { await navigator.clipboard.writeText(cmd); toast('Copied "' + cmd + '" — paste it into your agent'); }
+    catch (e) { toast('Run "' + cmd + '" in Claude Code to process these'); }
   });
   if (MODE === 'md') {
     const stampBtn = $('kbf-stamp');
     stampBtn.style.display = '';
     stampBtn.addEventListener('click', async () => {
       try {
-        const r = await fetch(API + '/md-export', { method: 'POST' }).then((x) => x.json());
-        toast(`Stamped ${r.stamped} marker${r.stamped === 1 ? '' : 's'} into ${r.files} file${r.files === 1 ? '' : 's'}` + (r.notFound ? ` (${r.notFound} appended at end)` : ''));
-      } catch (e) { toastError('Stamp failed'); }
+        const r = await api('/md-export', { method: 'POST' });
+        toast(`Stamped ${r.stamped} marker${r.stamped === 1 ? '' : 's'} into ${r.files} file${r.files === 1 ? '' : 's'}`
+          + (r.notFound ? ` (${r.notFound} skipped — no unique matching line; re-pin those)` : ''));
+      } catch (e) { toastError('Stamp failed — ' + e.message); }
     });
   }
 
@@ -1267,10 +1287,14 @@
   // ---------- boot ----------
   async function load() {
     try {
-      const res = await fetch(API + '/comments');
-      const data = await res.json();
+      const data = await api('/comments');
       comments = data.comments || [];
-    } catch (e) { comments = []; }
+    } catch (e) {
+      comments = [];
+      // A server-side error (e.g. a corrupt comments.json) must not look like
+      // "no comments yet" — say so. A plain network failure stays quiet.
+      if (!e.network) toastError('Could not load comments — ' + e.message);
+    }
     setMode(mode);
     refresh();
     if (panelOpen) { panel.classList.add('is-open'); renderPanel(); }

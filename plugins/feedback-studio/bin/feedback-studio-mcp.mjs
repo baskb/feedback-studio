@@ -87,6 +87,8 @@ const TOOLS = [
         },
         authorName: { type: 'string', description: 'Who is speaking, e.g. "frontend-skill". Defaults to "agent".' },
         sourceFile: { type: 'string', description: 'For markdown review: the .md file path this refers to.' },
+        pageTitle: { type: 'string', description: 'The page\'s title, shown in the panel\'s page grouping.' },
+        url: { type: 'string', description: 'Full URL of the page (incl. query/hash) so "Go to element" can navigate to it exactly.' },
       },
     },
   },
@@ -153,6 +155,8 @@ async function callTool(name, rawArgs) {
     const c = await mutate(FEEDBACK_DIR, (list) => {
       const comment = makeComment({
         page: args.page,
+        pageTitle: args.pageTitle,
+        url: args.url,
         text: args.text,
         type: args.type,
         sourceFile: args.sourceFile,

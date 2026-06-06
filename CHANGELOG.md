@@ -6,6 +6,40 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- A `comments.json` that parses as JSON but has the wrong shape (e.g. a hand-edit
+  that lost the `comments` array) now throws `ECORRUPT` instead of being treated
+  as empty — closing the path where the next write could clobber the file with `[]`.
+- The overlay now checks every API response before using it: a server error
+  (e.g. corrupt data file) surfaces as an error toast with the server's message
+  instead of being mistaken for data and corrupting the in-browser list.
+- "Stamp .md" now requires the quoted text to match exactly **one** source line;
+  zero or several matches mean the comment is skipped and stays open for a re-pin
+  (it could previously stamp the first of several matching lines). Rejected
+  comments are no longer stamped (rejected means do-not-implement). The stamping
+  logic moved to `lib/markers.mjs` and is covered by unit tests.
+- Proxied HMR/live-reload websockets no longer drop after 10 seconds of idle;
+  the timeout now only guards the connect phase.
+- A typo'd `--md` path exits with a clear error instead of silently serving an
+  index of the whole working directory.
+- The "Copy /feedback" button now copies the full `/feedback-studio:feedback process`
+  command (a bare `/feedback` doesn't resolve in Claude Code).
+- Oversized request bodies now reliably get their `413` response (the socket was
+  destroyed before the response could be written).
+- Pins for elements scrolled out of view horizontally are now hidden, matching
+  the vertical behaviour.
+- MCP `add_comment` accepts optional `pageTitle` and `url`, so agent-authored
+  comments group and navigate properly in the overlay panel.
+
+### Documentation
+- LAN phone-voice examples now include the required `--host 0.0.0.0`
+  (README, skill, interop guides) — `--https` alone binds to localhost only.
+- The share-a-link recipe states plainly that the tunnel URL is public and
+  writable while the server runs, and that stopping the server revokes it.
+- "18 languages" corrected to "18 locales"; CONTRIBUTING now lists all three
+  lazily-fetched helpers (`selfsigned`, `marked`, `cloudflared`); the skill's
+  agent-comment example uses a valid web type.
+
 ## [0.1.1] - 2026-06-05
 
 ### Added

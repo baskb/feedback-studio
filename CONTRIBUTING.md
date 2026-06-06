@@ -6,8 +6,9 @@ bar for contributions is "keep it simple and keep the invariants intact."
 ## Project shape
 
 - **Runtime HTTP is zero-dependency.** Don't add npm dependencies to the server,
-  the overlay, or the MCP server. The only deps allowed are the two helpers that
-  `--https` / `--md` lazily install at runtime (`selfsigned`, `marked`).
+  the overlay, or the MCP server. The only deps allowed are the three helpers
+  fetched lazily at runtime: the two npm packages `--https` / `--md` install
+  (`selfsigned`, `marked`), plus the `cloudflared` binary that `--tunnel` downloads.
 - There is **no build step** and no transpiler. The overlay ships as the
   hand-written `public/overlay.js`.
 - The three processes coordinate through one file, `.feedback/comments.json`: the

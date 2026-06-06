@@ -63,6 +63,17 @@ test('readComments: missing file is empty, corrupt file throws (never silently e
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('readComments: valid JSON with the wrong shape also throws ECORRUPT', async () => {
+  // Treating a wrong-shaped file as empty would let the next write clobber it.
+  const dir = freshDir();
+  try {
+    for (const body of ['{"comments": {}}', '"a string"', '[]', '{"version":1}']) {
+      writeFileSync(path.join(dir, 'comments.json'), body);
+      await assert.rejects(() => readComments(dir), (e) => e.code === 'ECORRUPT', 'should reject: ' + body);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('writeComments is atomic and round-trips', async () => {
   const dir = freshDir();
   try {

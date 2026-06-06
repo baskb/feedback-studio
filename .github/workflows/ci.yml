@@ -21,6 +21,7 @@ jobs:
       - name: Syntax check
         run: |
           node --check plugins/feedback-studio/lib/store.mjs
+          node --check plugins/feedback-studio/lib/markers.mjs
           node --check plugins/feedback-studio/bin/feedback-studio.mjs
           node --check plugins/feedback-studio/bin/feedback-studio-mcp.mjs
           node --check plugins/feedback-studio/public/overlay.js
@@ -31,7 +32,7 @@ jobs:
           node -e "JSON.parse(require('fs').readFileSync('plugins/feedback-studio/.claude-plugin/plugin.json','utf8'))"
 
       - name: Unit tests
-        run: node --test plugins/feedback-studio/test/store.test.mjs
+        run: node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs
 
       - name: HTTP smoke test
         run: node plugins/feedback-studio/test/smoke.mjs

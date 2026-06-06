@@ -21,7 +21,7 @@ plus a self-contained Node server that does the serving and injection.
 - **Two-way conversation**: agents and other skills can leave their *own* comments pinned
   to a component (anchored by selector or visible text). You reply, approve, or reject in a
   threaded conversation tied to the element, so the context lives on the thing you're discussing.
-- **Voice-to-text in 18 languages** (English default): dictate feedback and pick your language
+- **Voice dictation in 18 locales** (English default): dictate feedback and pick your locale
   from a one-tap menu. The interface is English.
 - **Live status**: when your agent resolves a comment, its pin turns green in your browser
   live, no refresh. A badge counts how many are ready, and a one-tap button copies the
@@ -78,7 +78,10 @@ Your agent works through each comment, shows you the diffs, and the pins flip gr
 
 **Share a link with a teammate or client.**
 Say *"start Feedback Studio and give me a shareable link"*, or run `npx feedback-studio --dir dist --tunnel`.
-They open the link in any browser and comment on the page; it all lands in your repo. (The link is public while the server runs; stop it to close it.)
+They open the link in any browser and comment on the page; it all lands in your repo.
+The link is public while the server runs: anyone who has it can view *and* write comments,
+and those comments feed an agent that edits your files. Share it only with people you trust;
+stopping the server revokes it.
 
 **Have an AI reviewer leave comments for *you*.**
 Say *"have a frontend reviewer leave comments on my site"* (or a copy, marketing, or accessibility pass).
@@ -95,7 +98,7 @@ npx feedback-studio --dir dist                      # serve a static build
 npx feedback-studio --proxy http://localhost:5173   # proxy a running dev server
 npx feedback-studio --md report.md                  # review one Markdown file
 npx feedback-studio --md report.md --tunnel         # review on your phone, real HTTPS, no cert warning
-npx feedback-studio --md research/ --https          # a folder of docs, phone voice over the LAN
+npx feedback-studio --md research/ --https --host 0.0.0.0  # a folder of docs, phone voice over the LAN
 ```
 
 Or install it globally (`npm i -g feedback-studio`, then `feedback-studio --dir dist`), or run it from a clone:
@@ -170,9 +173,9 @@ commented on. The marker depends on the comment type:
 
 Details:
 
-- It matches your pinned snippet to find the right line; if it can't locate one
-  confidently, it **leaves that comment alone** rather than guessing (the toast
-  reports how many couldn't be placed, so you can re-pin them).
+- The marker lands on the single line containing the quoted text. If zero or several
+  lines match, the comment is **skipped and stays open** for a re-pin rather than guessing
+  (the toast reports how many couldn't be placed, so you can re-pin them).
 - It saves a **`.bak`** copy of each file before changing it.
 - It's **safe to re-run**: markers already present are skipped, so you can re-stamp safely.
 
@@ -197,7 +200,7 @@ real source files, it's a deliberate action (hence the `.bak` backups).
   counts as secure, and so does the `--tunnel` URL; a phone over plain `http://<lan-ip>` does
   not, so use `--tunnel` (or `--https`) for phone voice. English is the default; the one-tap language menu also covers
   Spanish, Mandarin, Hindi, Arabic, Portuguese, French, German, Japanese, Korean, Russian,
-  Italian, Dutch, Turkish, Polish, Indonesian, and more (18 in all). The interface stays English.
+  Italian, Dutch, Turkish, Polish, Indonesian, and more (18 locales in all). The interface stays English.
 - **`--https` (LAN alternative to a tunnel)** uses a self-signed certificate: the phone warns
   once ("not private"): tap **Advanced → Proceed**. After that the connection counts as secure
   and the mic works. `--tunnel` avoids this step entirely.

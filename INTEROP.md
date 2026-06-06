@@ -1,15 +1,15 @@
-# Using Feedback Studio with other agents (Codex, Cursor, ChatGPT, …)
+# Using Feedback Studio with other agents (Codex, Cursor, ChatGPT, ...)
 
-Feedback Studio is agent-agnostic by design. The **tool** (the review server,
-overlay, voice, markdown rendering) has nothing Claude-specific in it, and the
-**data** is plain files:
+Feedback Studio is agent-agnostic by design. The review server, overlay, voice
+dictation, and Markdown rendering do not depend on Claude Code. The data is plain
+files:
 
 - `.feedback/comments.json`: structured source of truth (page, anchor, type, author, status, thread).
-- `.feedback/FEEDBACK.md`: a readable digest grouped by page.
-- inline `<!-- @FB ... -->` markers (markdown mode, after "Stamp .md").
+- `.feedback/FEEDBACK.md`: readable digest grouped by page.
+- inline `<!-- @FB ... -->` markers in Markdown mode, after **Stamp .md**.
 
-So the only thing that differs per agent is **how the agent reads/acts on the
-feedback**. There are three levels, cheapest first.
+What changes by agent is how it reads and acts on the feedback. Use the lightest
+level that fits.
 
 ## Level 0: any agent, zero setup
 
@@ -21,28 +21,31 @@ node /path/to/feedback-studio/plugins/feedback-studio/bin/feedback-studio.mjs --
 # or --proxy http://localhost:5173   or   --md report.md
 ```
 
-Then: *"read `.feedback/FEEDBACK.md` and apply the open comments; mark each resolved in `.feedback/comments.json` when done."* That already works in Codex, Cursor, Cline, Windsurf, or ChatGPT (paste the file).
+Then tell the agent: *"Read `.feedback/FEEDBACK.md` and apply the open comments;
+mark each resolved in `.feedback/comments.json` when done."* That works in Codex,
+Cursor, Cline, Windsurf, or ChatGPT if you paste the file.
 
-> **Editing `comments.json` directly:** prefer the MCP tools (Level 1) for writes;
-> they're atomic and locked, so they're safe even while the overlay is open. If you
-> *do* hand-edit the file, do it when nothing else is writing (the overlay/server
-> and the MCP server each write it), and keep it valid JSON. A malformed or wrong-shaped file is
-> refused (an error), never silently treated as empty, so a bad edit can't wipe
-> your comments, but it will block writes until you fix it.
+> **Editing `comments.json` directly:** prefer the MCP tools in Level 1 for
+> writes. They are atomic and locked, so they are safe while the overlay is open.
+> If you hand-edit the file, do it when nothing else is writing, and keep it valid
+> JSON. A malformed or wrong-shaped file is refused, never silently treated as
+> empty, so a bad edit cannot wipe your comments, but it will block writes until
+> you fix it.
 
 ## Level 1: the MCP server (recommended; one integration, every agent)
 
 `bin/feedback-studio-mcp.mjs` is an MCP **stdio** server over the project's
-`.feedback/comments.json`. It needs no other process running, and when the
-review server *is* running, writes show up live in the open overlay.
+`.feedback/comments.json`. It does not need the review server to be running. If
+the review server is running, MCP writes appear live in the open overlay.
 
 Tools: `list_comments`, `get_comment`, `add_comment` (agents pin their own
 comments), `reply`, `set_status`.
 
 **It ships with the plugin but is not auto-activated.** A running MCP server keeps
-its tool definitions in the agent's context every turn, so Feedback Studio does not
-start one for you: you opt in per agent with the config below. In Claude Code the
-plugin's skill already reads the files, so you usually don't need the MCP server there.
+its tool definitions in the agent's context every turn, so Feedback Studio does
+not start one for you. Opt in per agent with the config below. In Claude Code,
+the plugin's skill already reads the files, so you usually do not need the MCP
+server there.
 
 ### Codex CLI
 
@@ -60,13 +63,17 @@ or: `codex mcp add feedback-studio -- node /ABS/PATH/.../feedback-studio-mcp.mjs
 
 ### Cursor / Windsurf / Cline
 
-Same stdio server, in each tool's MCP config (`command: node`, `args: [<abs path>]`).
+Use the same stdio server in each tool's MCP config:
+
+```json
+{ "command": "node", "args": ["/ABS/PATH/.../feedback-studio-mcp.mjs"] }
+```
 
 ### Claude Code (optional; the plugin's skill already covers this)
 
-You normally don't need the MCP server in Claude Code: the installed plugin's skill
-reads `.feedback/comments.json` directly, and not running an extra MCP server keeps
-token use low. Add it only if you specifically want the MCP tools as callable tools:
+You normally do not need the MCP server in Claude Code. The installed plugin's
+skill reads `.feedback/comments.json` directly, and skipping the extra MCP server
+keeps token use low. Add it only if you specifically want these tools callable:
 
 ```json
 // .mcp.json
@@ -75,23 +82,28 @@ token use low. Add it only if you specifically want the MCP tools as callable to
 
 ## Level 2: ChatGPT (cloud)
 
-ChatGPT's Developer Mode is a full MCP client, but it **only connects to remote
-MCP servers over HTTPS, not local stdio**. Feedback Studio's MCP server is local
-stdio by design (your comments never leave your machine), so the supported path for
-ChatGPT is **Level 0**: paste `FEEDBACK.md` into the chat and let it work from there.
+ChatGPT Developer Mode can connect to remote MCP servers over SSE or Streamable
+HTTP. Feedback Studio's MCP server is local stdio by design, so the practical
+ChatGPT path is **Level 0**: paste `FEEDBACK.md` into the chat and let it work
+from there.
 
-If you specifically want a live MCP connection in ChatGPT, front the data with a
-remote HTTPS MCP endpoint (a Streamable-HTTP bridge behind a tunnel, with auth) and
-point ChatGPT at `https://<your-endpoint>/mcp` via Settings → Apps → Advanced →
-Developer mode. That remote bridge sits outside the tool's local-only scope.
+If you specifically want a live MCP connection in ChatGPT, put a remote HTTPS MCP
+endpoint in front of the data, for example a Streamable-HTTP bridge behind a
+tunnel, with auth. Then point ChatGPT at `https://<your-endpoint>/mcp` via
+Settings -> Apps -> Advanced -> Developer mode. That bridge sits outside
+Feedback Studio's local-only scope.
 
 ## Codex prompt + AGENTS.md
 
-`interop/codex/feedback.md` → drop in `~/.codex/prompts/` to get a `/prompts:feedback` command.
-`interop/AGENTS.md` → paste into a project's `AGENTS.md` so Codex knows the workflow without being told each time.
+`interop/codex/feedback.md` -> drop in `~/.codex/prompts/` to get a
+`/prompts:feedback` command.
+
+`interop/AGENTS.md` -> paste into a project's `AGENTS.md` so Codex knows the
+workflow without being told each time.
 
 ## Why this is enough
 
-The capture side (overlay, voice, anchors, markdown) is identical for everyone.
-The consume side is MCP (every local agent) or the open files (literally anyone).
-Only ChatGPT-cloud needs extra plumbing, because it can't reach your machine.
+The capture side is the same for everyone: overlay, voice, anchors, and Markdown
+review. The consume side is either MCP for local agents, or open files for any
+agent. ChatGPT cloud needs extra plumbing only because it cannot use a local
+stdio server directly.

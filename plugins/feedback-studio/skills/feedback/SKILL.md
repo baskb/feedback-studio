@@ -44,7 +44,12 @@ Processing from markers: `grep -n "@FB"`, edit each line, then delete the marker
 1. Read `.feedback/comments.json` (the SOLE source of truth; `FEEDBACK.md` is a generated,
    possibly-stale mirror, never act off it). Each comment has `page`, `type`, `anchor`
    (selector / attr / xpath / quoted `snippet` / `tag`), `text`, `autonomy`, `status`.
-2. For each `open` comment, grouped by page:
+2. **Put the batch on your task list** (TaskCreate / TodoWrite, whichever you have; skip if
+   there's only one comment): one task per open comment, subject `<page>: <short summary>`.
+   Mark it in_progress when you start that comment and completed the moment you set the
+   comment resolved, so the user watches the list tick down as the pins turn green. A comment
+   that needs a re-pin keeps its task open.
+3. For each `open` comment, grouped by page:
    - **Locate it with confidence** using the quoted snippet first, cross-checked with the
      selector. **If you cannot identify the exact element (or, in Markdown, the exact source
      line), do NOT edit a guess.** Leave it open and say it needs a re-pin. A confident wrong
@@ -53,11 +58,11 @@ Processing from markers: `grep -n "@FB"`, edit each line, then delete the marker
      redesign; `improve` = rewrite with judgement in the project's voice. If a (spoken) comment
      is vague, propose a concrete interpretation; for `improve`, offer options. Keep the
      project's conventions (read any CLAUDE.md).
-3. Present changes as **diffs grouped by page**. Honour `autonomy`: `review` (default) = show
+4. Present changes as **diffs grouped by page**. Honour `autonomy`: `review` (default) = show
    first; `auto` = apply directly. Mark each resolved when applied (the pin flips green live):
    PATCH `/__feedback/api/comments/<id>` with `{"status":"resolved"}` if the server is running,
    else set `"status":"resolved"` in the file.
-4. Summarise by page, and list anything left open (low-confidence anchors, decisions needed).
+5. Summarise by page, and list anything left open (low-confidence anchors, decisions needed).
 
 ## Author your own comments (optional)
 

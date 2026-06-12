@@ -24,8 +24,11 @@ starts the overlay and later works through the saved comments.
 Then, in any project:
 
 ```
+/feedback-studio:demo                   # try it on a bundled sample page — no site needed
 /feedback-studio:feedback start         # launch the overlay on this project's site
 /feedback-studio:feedback process       # work through the collected comments
+/feedback-studio:verify                 # prove each processed comment landed on the right element
+/feedback-studio:report                 # write a shareable digest of the round (.feedback/REPORT.md)
 ```
 
 The 30-second path: install the plugin, run `start` in a project, open the URL it
@@ -36,6 +39,7 @@ The skill chooses static serving or a dev-server proxy, reads
 No Claude Code required:
 
 ```bash
+npx feedback-studio --demo                          # instant playground, zero setup
 npx feedback-studio --dir dist
 npx feedback-studio --proxy http://localhost:5173
 npx feedback-studio --md report.md
@@ -46,6 +50,13 @@ npx feedback-studio --md report.md
 Common ways to use it. In **Claude Code**, ask in plain English and the
 `/feedback-studio:feedback` skill picks the flags. **Standalone**, run the `npx`
 line.
+
+**Try it in 30 seconds, no site needed.**
+Say *"show me the Feedback Studio demo"*, or run `npx feedback-studio --demo`.
+A sample landing page opens (a throwaway copy in a temp dir) with three comments
+pre-pinned — one typo to fix, one button label to change, one headline to improve —
+and a couple more flaws hidden for you to find. Process them and watch the pins
+turn green; your own project is never touched.
 
 **Review your site from your phone, by voice.**
 Say *"start Feedback Studio, mobile-ready"*, or run `npx feedback-studio --dir dist --tunnel`.
@@ -127,6 +138,7 @@ node plugins/feedback-studio/bin/feedback-studio.mjs --proxy http://localhost:51
 
 | Flag | Meaning |
 |---|---|
+| `--demo` | Serve the bundled sample page from a throwaway temp copy, pre-seeded with example comments. The fastest first run; never touches your project. |
 | `--dir <path>` | Serve a static build directory. |
 | `--proxy <url>` | Proxy a running dev server and inject the overlay (live reload). |
 | `--md <file\|dir>` | Render a Markdown file or folder to reviewable pages. Fetches a small renderer once. |

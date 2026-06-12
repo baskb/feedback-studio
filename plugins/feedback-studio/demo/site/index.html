@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roastly — fresh coffee, every week</title>
+<style>
+  /* The demo page is deliberately imperfect: a few flaws are pre-commented
+     (see the pins), a few are left for you to find and pin yourself. */
+  :root {
+    --ink: #2b2118; --paper: #faf6f1; --accent: #c2571b; --accent-dark: #9c4513;
+    --muted: #8a7a6d; --card: #ffffff; --line: #e8ded3;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: Georgia, 'Times New Roman', serif; background: var(--paper); color: var(--ink); line-height: 1.6; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+  header.nav { border-bottom: 1px solid var(--line); background: var(--card); }
+  header.nav .wrap { display: flex; align-items: center; justify-content: space-between; padding-top: 18px; padding-bottom: 18px; }
+  .brand { font-size: 22px; font-weight: bold; letter-spacing: -0.5px; }
+  .brand em { color: var(--accent); font-style: normal; }
+  nav.links a { color: var(--muted); text-decoration: none; margin-left: 22px; font-family: Verdana, sans-serif; font-size: 13px; }
+  nav.links a:hover { color: var(--accent); }
+
+  section.hero { text-align: center; padding: 84px 0 64px; }
+  section.hero h1 { font-size: 44px; line-height: 1.15; max-width: 640px; margin: 0 auto 18px; }
+  section.hero p.sub { color: var(--muted); max-width: 520px; margin: 0 auto 32px; font-size: 18px; }
+  a.cta { display: inline-block; background: var(--accent); color: #fff; text-decoration: none;
+          padding: 14px 34px; border-radius: 6px; font-family: Verdana, sans-serif; font-size: 15px; }
+  a.cta:hover { background: var(--accent-dark); }
+
+  section.features { padding: 24px 0 56px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 26px; }
+  .card h3 { font-size: 19px; margin-bottom: 10px; }
+  .card p { color: var(--muted); font-size: 15px; }
+
+  section.plans { padding: 16px 0 72px; text-align: center; }
+  section.plans h2 { font-size: 30px; margin-bottom: 28px; }
+  .plan { text-align: left; position: relative; }
+  .plan .price { font-size: 34px; margin: 10px 0 2px; }
+  .plan .per { color: var(--muted); font-size: 13px; font-family: Verdana, sans-serif; }
+  .plan ul { margin: 16px 0 0 18px; color: var(--muted); font-size: 14px; }
+  .plan.featured { border-color: var(--accent); }
+  .plan.featured::after { content: "Most popular"; position: absolute; top: -11px; right: 14px;
+    background: var(--accent); color: #fff; font-family: Verdana, sans-serif; font-size: 11px;
+    padding: 2px 10px; border-radius: 99px; }
+
+  footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted);
+           font-family: Verdana, sans-serif; font-size: 12px; }
+</style>
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap">
+      <div class="brand">Roast<em>ly</em></div>
+      <nav class="links">
+        <a href="#features">Why Roastly</a>
+        <a href="#plans">Plans</a>
+        <a href="#contact">Contact</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" id="hero">
+      <div class="wrap">
+        <h1 id="hero-title">Welcome to our website</h1>
+        <p class="sub" id="hero-sub">Roastly is a coffee subscription. We roast coffee and then we send the coffee to you in the mail on a weekly basis.</p>
+        <a class="cta" id="cta-button" href="#plans">Submit</a>
+      </div>
+    </section>
+
+    <section class="features" id="features">
+      <div class="wrap">
+        <div class="grid">
+          <div class="card">
+            <h3 id="feature-fresh-title">Freshly roasted beens</h3>
+            <p>Roasted to order in small batches, never warehoused. Your bag ships within 24 hours of leaving the roaster.</p>
+          </div>
+          <div class="card">
+            <h3 id="feature-weekly-title">Delivered weekly</h3>
+            <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore.</p>
+          </div>
+          <div class="card">
+            <h3 id="feature-cancel-title">Cancel anytime</h3>
+            <p>Pause, skip a week, or cancel in two clicks. No phone calls, no retention scripts, no hard feelings.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="plans" id="plans">
+      <div class="wrap">
+        <h2 id="plans-title">Pick your pace</h2>
+        <div class="grid">
+          <div class="card plan" id="plan-casual">
+            <h3>Casual</h3>
+            <div class="price">€9</div>
+            <div class="per">per month · 1 bag</div>
+            <ul><li>One single-origin bag</li><li>Roaster's pick</li><li>Free shipping</li></ul>
+          </div>
+          <div class="card plan featured" id="plan-regular">
+            <h3>Regular</h3>
+            <div class="price">€16</div>
+            <div class="per">per month · 2 bags</div>
+            <ul><li>Two bags, your grind</li><li>Swap origins anytime</li><li>Free shipping</li></ul>
+          </div>
+          <div class="card plan" id="plan-obsessed">
+            <h3>Obsessed</h3>
+            <div class="price">€29</div>
+            <div class="per">per month · 4 bags</div>
+            <ul><li>Four bags, rare lots</li><li>Early access drops</li><li>Free shipping</li></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer id="contact">
+    <div class="wrap">
+      <p>© 2024 Roastly BV · Amsterdam · hello@roastly.example</p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`--demo` / `/feedback-studio:demo`** — an instant playground: serves a bundled
+  sample landing page from a throwaway temp copy, pre-seeded with one comment per
+  web type (`fix` / `change` / `improve`) and a couple of flaws left to find.
+  Processing the demo edits the copy, never your project. Works standalone too:
+  `npx feedback-studio --demo`.
+- **`/feedback-studio:verify`** — closes the loop after processing: re-checks each
+  resolved comment against the served page (or the Markdown source), records a
+  verdict reply on the comment's thread, and **reopens** any comment whose change
+  can't be confirmed instead of leaving a false "resolved".
+- **`/feedback-studio:report`** — writes `.feedback/REPORT.md`, a shareable digest
+  of the round (what was asked, what changed with `file:line`, what was refused or
+  left open and why), paste-ready for a PR description or team channel.
+
 ## [0.1.5] - 2026-06-12
 
 ### Security

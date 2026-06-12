@@ -23,7 +23,7 @@ import tls from 'node:tls';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
-import { readFile, writeFile, mkdir, stat, readdir, chmod, unlink } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, stat, readdir, chmod, unlink, mkdtemp, cp } from 'node:fs/promises';
 import { existsSync, readFileSync, statSync, watch, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -75,6 +75,14 @@ const PROXY = PROXY_URL ? PROXY_URL.origin : null;
 const PROXY_AGENT = PROXY_URL && PROXY_URL.protocol === 'https:' ? https : http;
 const PROXY_PORT = PROXY_URL ? Number(PROXY_URL.port || (PROXY_URL.protocol === 'https:' ? 443 : 80)) : 0;
 
+// Demo mode: serve a bundled sample page (copied to a throwaway temp dir, so
+// processing the seeded comments edits the copy, never the user's project).
+const DEMO = !!args.demo;
+if (DEMO && (args.proxy || args.md || args.dir)) {
+  console.error('\n  --demo serves the bundled sample site; it cannot be combined with --dir, --proxy or --md.\n');
+  process.exit(1);
+}
+
 // Markdown review mode: --md <file.md> or --md <dir-of-md>.
 const MD_MODE = !!args.md;
 let MD_ROOT = null; // directory that md paths are resolved under
@@ -92,9 +100,11 @@ if (MD_MODE) {
 }
 
 const CWD = process.cwd();
-const DATA_DIR = path.join(CWD, '.feedback');
-const DATA_FILE = path.join(DATA_DIR, 'comments.json');
-const CERT_DIR = path.join(DATA_DIR, '.cert');
+// `let`, not `const`: --demo repoints all of these at a throwaway temp dir
+// (setupDemo, before the server starts) so the demo never touches the project.
+let DATA_DIR = path.join(CWD, '.feedback');
+let DATA_FILE = path.join(DATA_DIR, 'comments.json');
+let CERT_DIR = path.join(DATA_DIR, '.cert');
 const GLOBAL_DATA = process.env.CLAUDE_PLUGIN_DATA || path.join(os.homedir(), '.feedback-studio');
 
 // Static build directories we auto-detect when neither --dir nor --proxy given.
@@ -108,7 +118,7 @@ function resolveStaticDir() {
   }
   return null;
 }
-const STATIC_DIR = PROXY || MD_MODE ? null : resolveStaticDir();
+let STATIC_DIR = DEMO ? null : (PROXY || MD_MODE ? null : resolveStaticDir());
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -823,7 +833,8 @@ async function handler(req, res) {
 
 // ---------- banner ----------
 function banner(scheme, ips, publicUrl) {
-  const src = MD_MODE ? `reviewing markdown: ${path.relative(CWD, MD_SINGLE || MD_ROOT) || '.'}`
+  const src = DEMO ? `demo site (throwaway copy: ${STATIC_DIR})`
+    : MD_MODE ? `reviewing markdown: ${path.relative(CWD, MD_SINGLE || MD_ROOT) || '.'}`
     : PROXY ? `proxying ${PROXY}`
     : `serving ${path.relative(CWD, STATIC_DIR) || '.'}/`;
   const tag = publicUrl ? '  (secure tunnel — voice works anywhere)' : USE_HTTPS ? '  (HTTPS — voice works on phones)' : '';
@@ -839,7 +850,12 @@ function banner(scheme, ips, publicUrl) {
   } else if (ips.length) {
     console.log(`  Phone/LAN        ->  off by default. Re-run with --tunnel (recommended) or --host 0.0.0.0.`);
   }
-  console.log(`  Comments         ->  .feedback/comments.json  (+ FEEDBACK.md)`);
+  console.log(`  Comments         ->  ${DEMO ? DATA_FILE : '.feedback/comments.json'}  (+ FEEDBACK.md)`);
+  if (DEMO) {
+    console.log(`\n  3 comments are pre-seeded (one fix, one change, one improve) — and the page`);
+    console.log(`  hides a couple more flaws to find. Press C, click anything, leave a comment;`);
+    console.log(`  then let your agent process ${path.join(DATA_DIR, 'comments.json')}.`);
+  }
   if (publicUrl) {
     console.log(`\n  The tunnel URL is public while the server runs — anyone with the link can`);
     console.log(`  view and comment. Ctrl+C closes it.`);
@@ -853,8 +869,29 @@ function banner(scheme, ips, publicUrl) {
   console.log(`  Ctrl+C to stop.\n`);
 }
 
+// ---------- demo mode ----------
+// Copy the bundled sample site into a temp dir, seed it with example comments
+// (one per web type: fix / change / improve), and serve THAT. Everything —
+// the page, .feedback/, any edits an agent makes while processing — lives in
+// the throwaway copy, so the demo is safe to run inside any project.
+async function setupDemo() {
+  const src = path.join(__dirname, '..', 'demo');
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'feedback-studio-demo-'));
+  await cp(path.join(src, 'site'), tmp, { recursive: true });
+  const seed = JSON.parse(await readFile(path.join(src, 'seed-comments.json'), 'utf-8'));
+  const now = new Date().toISOString();
+  for (const c of seed) { c.createdAt = now; c.updatedAt = now; }
+  STATIC_DIR = tmp;
+  DATA_DIR = path.join(tmp, '.feedback');
+  DATA_FILE = path.join(DATA_DIR, 'comments.json');
+  CERT_DIR = path.join(DATA_DIR, '.cert');
+  await writeComments(DATA_DIR, seed); // also generates the FEEDBACK.md mirror
+  return tmp;
+}
+
 // ---------- main ----------
 async function main() {
+  if (DEMO) await setupDemo();
   if (!PROXY && !MD_MODE && !STATIC_DIR) {
     console.error(`\n  No build directory found. Tried: ${AUTODETECT.join(', ')}.`);
     console.error(`  Build your site first, then pass --dir <folder>, or proxy a dev server with --proxy <url>.`);

@@ -2,7 +2,7 @@
 // surface (injection, API, CSRF guard, path-traversal guard). Not part of the
 // unit suite — run manually: node test/smoke.mjs
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
@@ -87,6 +87,25 @@ try {
   // the same-origin comment should have persisted
   const after = await (await fetch(ORIGIN + '/__feedback/api/comments')).json();
   check('comment persisted', after.comments.length === 1 && after.comments[0].text === 'same-origin works');
+
+  // --demo: serves the bundled sample site from a temp copy, seeded with one
+  // comment per web type — and must not create .feedback/ in the cwd it ran from.
+  const DEMO_PORT = PORT + 1;
+  const demoCwd = path.join(root, 'democwd');
+  mkdirSync(demoCwd);
+  const demoSrv = spawn(process.execPath, [bin, '--demo', '--port', String(DEMO_PORT), '--no-open'], { stdio: 'ignore', cwd: demoCwd });
+  try {
+    await sleep(700);
+    const demoHome = await fetch(`http://127.0.0.1:${DEMO_PORT}/`);
+    const demoBody = await demoHome.text();
+    check('demo serves sample page', demoHome.status === 200 && demoBody.includes('Roastly'));
+    const seeded = await (await fetch(`http://127.0.0.1:${DEMO_PORT}/__feedback/api/comments`)).json();
+    const types = seeded.comments.map((c) => c.type).sort().join(',');
+    check('demo seeds fix+change+improve', seeded.comments.length === 3 && types === 'change,fix,improve');
+    check('demo keeps cwd clean', !existsSync(path.join(demoCwd, '.feedback')));
+  } finally {
+    demoSrv.kill();
+  }
 } catch (e) {
   console.log('FAIL  exception:', e.message);
   failures++;

@@ -1,15 +1,22 @@
 # feedback-studio (plugin)
 
-This is the Claude Code plugin package for Feedback Studio. It provides the
-`/feedback-studio:feedback` skill and the self-contained Node server that the
-skill starts.
+This is the Claude Code plugin package for Feedback Studio. It provides four
+skills — `/feedback-studio:feedback` (start a session / process comments),
+`:demo` (instant playground), `:verify` (prove processed comments landed), and
+`:report` (shareable round digest) — plus the self-contained Node server they
+drive.
 
 ```
 plugins/feedback-studio/
 ├── .claude-plugin/plugin.json    # plugin manifest
-├── skills/feedback/SKILL.md      # how Claude starts sessions and processes comments
-├── bin/feedback-studio.mjs       # local server: static, proxy, markdown, optional HTTPS
+├── skills/
+│   ├── feedback/SKILL.md         # how Claude starts sessions and processes comments
+│   ├── demo/SKILL.md             # the bundled sample-page playground
+│   ├── verify/SKILL.md           # post-processing verification (reopens unconfirmed edits)
+│   └── report/SKILL.md           # .feedback/REPORT.md digest of a round
+├── bin/feedback-studio.mjs       # local server: static, proxy, markdown, demo, optional HTTPS
 ├── bin/feedback-studio-mcp.mjs   # optional MCP stdio server for other agents
+├── demo/                         # sample site + seed comments for --demo
 ├── lib/
 │   ├── store.mjs                 # shared data layer: schema, atomic + locked I/O
 │   └── markers.mjs               # Markdown @FB marker stamping (unique-match, refuse-to-guess)

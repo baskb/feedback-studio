@@ -1,0 +1,80 @@
+[
+  {
+    "id": "c_demo_typo",
+    "schemaVersion": 3,
+    "page": "/",
+    "pageTitle": "Roastly — fresh coffee, every week",
+    "url": "",
+    "sourceFile": "",
+    "anchor": {
+      "type": "element",
+      "selector": "#features div.card:nth-of-type(1) > h3",
+      "attrSelector": "#feature-fresh-title",
+      "xpath": "//*[@id=\"feature-fresh-title\"]",
+      "tag": "h3",
+      "id": "feature-fresh-title",
+      "snippet": "Freshly roasted beens"
+    },
+    "type": "fix",
+    "text": "Typo in this heading: \"beens\" should be \"beans\".",
+    "author": "user",
+    "authorName": "Demo",
+    "thread": [],
+    "autonomy": "review",
+    "status": "open",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "id": "c_demo_button",
+    "schemaVersion": 3,
+    "page": "/",
+    "pageTitle": "Roastly — fresh coffee, every week",
+    "url": "",
+    "sourceFile": "",
+    "anchor": {
+      "type": "element",
+      "selector": "#hero a.cta",
+      "attrSelector": "#cta-button",
+      "xpath": "//*[@id=\"cta-button\"]",
+      "tag": "a",
+      "id": "cta-button",
+      "snippet": "Submit"
+    },
+    "type": "change",
+    "text": "Change this button text to \"Start my subscription\".",
+    "author": "user",
+    "authorName": "Demo",
+    "thread": [],
+    "autonomy": "review",
+    "status": "open",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z"
+  },
+  {
+    "id": "c_demo_headline",
+    "schemaVersion": 3,
+    "page": "/",
+    "pageTitle": "Roastly — fresh coffee, every week",
+    "url": "",
+    "sourceFile": "",
+    "anchor": {
+      "type": "element",
+      "selector": "#hero h1",
+      "attrSelector": "#hero-title",
+      "xpath": "//*[@id=\"hero-title\"]",
+      "tag": "h1",
+      "id": "hero-title",
+      "snippet": "Welcome to our website"
+    },
+    "type": "improve",
+    "text": "This headline says nothing. Rewrite it so a first-time visitor instantly gets what Roastly is and why it's different — keep it under eight words or so.",
+    "author": "user",
+    "authorName": "Demo",
+    "thread": [],
+    "autonomy": "review",
+    "status": "open",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-01T00:00:00.000Z"
+  }
+]

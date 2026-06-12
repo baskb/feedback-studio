@@ -10,7 +10,7 @@
     {
       "name": "feedback-studio",
       "source": "./plugins/feedback-studio",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "description": "Click or tap any element on any local page and leave typed or spoken feedback; comments persist to .feedback/ for an agent to process. Static build or dev-server proxy; phone review by voice over a Cloudflare tunnel (--tunnel) or self-signed HTTPS.",
       "category": "productivity",
       "keywords": [

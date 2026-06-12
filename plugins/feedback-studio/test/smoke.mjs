@@ -4,8 +4,21 @@
 import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// Send a raw HTTP request so we can set a Host header fetch() won't let us forge
+// (used to exercise the DNS-rebinding guard). Resolves with the status line.
+function rawRequest(port, lines) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(port, '127.0.0.1', () => sock.write(lines.join('\r\n')));
+    let buf = '';
+    sock.on('data', (d) => { buf += d.toString(); if (buf.includes('\r\n')) { sock.destroy(); resolve(buf.split('\r\n')[0]); } });
+    sock.on('error', reject);
+    sock.setTimeout(3000, () => { sock.destroy(); reject(new Error('raw request timeout')); });
+  });
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = mkdtempSync(path.join(tmpdir(), 'fbs-smoke-'));
@@ -50,6 +63,19 @@ try {
     method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN }, body: '{ not json',
   });
   check('malformed JSON => 400', bad.status === 400);
+
+  // DNS-rebinding guard: a forged Host the server doesn't recognise is refused
+  // on a mutating request, even with no Origin header (so the cross-site check
+  // alone would let it through). The loopback-Host accept path is already proven
+  // by the same-origin fetch above (fetch sets Host: 127.0.0.1), so this only
+  // asserts the negative — and a 403 writes nothing, leaving persistence intact.
+  const rebindBody = JSON.stringify({ page: '/', text: 'rebinding' });
+  const rebind = await rawRequest(PORT, [
+    'POST /__feedback/api/comments HTTP/1.1', 'Host: evil.example',
+    'Content-Type: application/json', `Content-Length: ${Buffer.byteLength(rebindBody)}`,
+    'Connection: close', '', rebindBody,
+  ]);
+  check('forged Host blocked (403)', rebind.includes('403'));
 
   const trav = await fetch(ORIGIN + '/%2e%2e/%2e%2e/secret.txt');
   const travBody = await trav.text();

@@ -28,8 +28,16 @@ jobs:
           echo "package.json=$PKG  tag=$TAG"
           test "$PKG" = "$TAG"
 
-      - name: Test
-        run: node --test plugins/feedback-studio/test/store.test.mjs
+      # Gate the publish on the SAME suite CI runs, so a release can't ship a
+      # regression that the per-PR checks would have caught.
+      - name: Unit tests
+        run: node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs
+
+      - name: HTTP smoke test
+        run: node plugins/feedback-studio/test/smoke.mjs
+
+      - name: MCP smoke test
+        run: node plugins/feedback-studio/test/mcp-smoke.mjs
 
       - name: Publish to npm
         run: npm publish

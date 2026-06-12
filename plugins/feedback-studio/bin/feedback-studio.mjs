@@ -23,7 +23,7 @@ import tls from 'node:tls';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
-import { readFile, writeFile, mkdir, stat, readdir, chmod } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, stat, readdir, chmod, unlink } from 'node:fs/promises';
 import { existsSync, readFileSync, statSync, watch, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -216,7 +216,11 @@ async function readJson(req) {
   catch (e) { const err = new Error('invalid JSON body'); err.statusCode = 400; throw err; }
 }
 
-// A path that stays inside `root` (no traversal, no symlink-style escape via ..).
+// A path that stays inside `root`, by containment (not a string prefix), so `..`
+// can't escape. Note: this checks the path, not the inode — a symlink inside
+// `root` pointing outside it is not followed-up on here. That's acceptable for a
+// local tool serving your own build dir; it is not hardened against a malicious
+// symlink planted in the served tree.
 function within(root, target) {
   const rel = path.relative(root, target);
   return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel));
@@ -255,12 +259,36 @@ function crossSite(req) {
   catch (e) { return true; }
 }
 
+// Hostnames the mutating API will answer to. Defends against DNS rebinding: a
+// page on attacker.com can rebind that name to 127.0.0.1, but the victim's
+// browser still sends `Host: attacker.com`, which isn't in this set. Without
+// this, the Origin/Host check above passes (both read attacker.com) and a
+// drive-by page could POST comments an agent later acts on. Populated at
+// startup with the loopback names, the LAN IPs, the bound host, and the tunnel
+// hostname once it's known.
+const ALLOWED_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+function populateAllowedHosts(ips = []) {
+  for (const ip of ips) ALLOWED_HOSTS.add(String(ip).toLowerCase());
+  if (HOST && HOST !== '0.0.0.0' && HOST !== '::') ALLOWED_HOSTS.add(HOST.toLowerCase());
+}
+// A non-browser client (curl, the MCP server, a script) sends no Host or one we
+// don't recognise; those aren't the rebinding threat (they're code already on
+// the machine), so only an unrecognised *browser-style* Host is refused. We key
+// off the presence of a Host header, which every browser sends.
+function hostAllowed(req) {
+  const h = req.headers.host;
+  if (!h) return true;
+  const name = h.replace(/:\d+$/, '').toLowerCase();
+  return ALLOWED_HOSTS.has(name);
+}
+
 // ---------- API ----------
 async function handleApi(req, res, url) {
   const parts = url.pathname.replace(/^\/__feedback\/api\/?/, '').split('/').filter(Boolean);
   const resource = parts[0] || '';
   const mutating = req.method !== 'GET' && req.method !== 'HEAD';
   if (mutating && crossSite(req)) return sendJSON(res, 403, { error: 'cross-site request blocked' });
+  if (mutating && !hostAllowed(req)) return sendJSON(res, 403, { error: 'host not allowed' });
 
   try {
     if (resource === 'comments') {
@@ -520,7 +548,13 @@ function openBrowser(url) {
 // binary is fetched once into ~/.feedback-studio/bin (same lazy pattern as the
 // --https / --md helpers); no Cloudflare account is needed for a quick tunnel.
 function cloudflaredAsset() {
-  const base = 'https://github.com/cloudflare/cloudflared/releases/latest/download/';
+  // Default to the latest release. Set FBS_CLOUDFLARED_VERSION (e.g. "2024.12.2")
+  // to pin a specific tag so the downloaded artifact is deterministic and can be
+  // checksum-verified — see verifyChecksum / FBS_CLOUDFLARED_SHA256 below.
+  const ver = (process.env.FBS_CLOUDFLARED_VERSION || '').trim();
+  const base = ver
+    ? `https://github.com/cloudflare/cloudflared/releases/download/${ver}/`
+    : 'https://github.com/cloudflare/cloudflared/releases/latest/download/';
   const a64 = process.arch === 'arm64' ? 'arm64' : 'amd64';
   if (process.platform === 'win32') return { url: base + `cloudflared-windows-${a64}.exe`, kind: 'exe' };
   if (process.platform === 'darwin') return { url: base + `cloudflared-darwin-${a64}.tgz`, kind: 'tgz' };
@@ -542,6 +576,21 @@ function httpDownload(url, dest) {
     get(url);
   });
 }
+// Verify a downloaded artifact against an expected SHA-256 when the user has
+// pinned one via FBS_CLOUDFLARED_SHA256. cloudflared is a ~50 MB executable we
+// fetch and run, so a pin lets a security-conscious user guarantee they're
+// running exactly the audited binary (publish a hash, set the env, done). No
+// env set = no check (the default keeps the zero-config quick-tunnel working).
+async function verifyChecksum(file, label) {
+  const want = (process.env.FBS_CLOUDFLARED_SHA256 || '').trim().toLowerCase();
+  if (!want) return;
+  const got = crypto.createHash('sha256').update(await readFile(file)).digest('hex');
+  if (got !== want) {
+    await unlink(file).catch(() => {});
+    throw new Error(`${label} failed checksum verification (expected ${want}, got ${got}). Refusing to run it.`);
+  }
+  console.log('  Verified ' + label + ' against FBS_CLOUDFLARED_SHA256.');
+}
 async function ensureCloudflared() {
   // 1) already on PATH?
   try {
@@ -561,10 +610,12 @@ async function ensureCloudflared() {
   if (asset.kind === 'tgz') {
     const tgz = exe + '.tgz';
     await httpDownload(asset.url, tgz);
+    await verifyChecksum(tgz, 'cloudflared archive');
     execSync(`tar -xzf "${tgz}" -C "${binDir}"`); // extracts a `cloudflared` binary
     await chmod(exe, 0o755).catch(() => {});
   } else {
     await httpDownload(asset.url, exe);
+    await verifyChecksum(exe, 'cloudflared binary');
     if (process.platform !== 'win32') await chmod(exe, 0o755).catch(() => {});
   }
   if (!existsSync(exe)) throw new Error('cloudflared did not install correctly');
@@ -662,10 +713,34 @@ function mdDocShell(title, sourceRel, bodyHtml) {
 </body></html>`;
 }
 
+// Strip active content from rendered Markdown. `--md` is often pointed at a file
+// you didn't write (a report someone sent, a doc an agent generated), and the
+// rendered page shares an origin with the comment API — so a <script> in the .md
+// could silently POST comments an agent later implements. This removes the script
+// execution vectors while leaving benign formatting HTML (<details>, <sub>,
+// tables, links) intact. It is a defense-in-depth strip, not a full HTML
+// sanitizer: still only open Markdown you broadly trust. Fenced/inline code is
+// already escaped by `marked` (it renders as &lt;script&gt;), so these patterns
+// only ever match real emitted tags, never quoted code samples.
+function sanitizeRenderedHtml(html) {
+  return String(html)
+    // drop <script>/<style> elements and everything they contain
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    // drop tags that can execute, frame, or redirect the page
+    .replace(/<\/?(iframe|object|embed|base|meta|form|link)\b[^>]*>/gi, '')
+    // strip inline event handlers:  onclick="…"  onerror='…'  onload=foo
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
+    // neutralise javascript:/vbscript: URLs in href/src
+    .replace(/\b(href|src)\s*=\s*"\s*(?:javascript|vbscript):[^"]*"/gi, '$1="#"')
+    .replace(/\b(href|src)\s*=\s*'\s*(?:javascript|vbscript):[^']*'/gi, "$1='#'");
+}
+
 async function renderMd(file) {
   const marked = await ensureMarked();
   const src = await readFile(file, 'utf-8');
-  const body = marked.parse(src, { gfm: true, breaks: false });
+  const body = sanitizeRenderedHtml(marked.parse(src, { gfm: true, breaks: false }));
   return mdDocShell(path.basename(file), path.relative(CWD, file).split(path.sep).join('/'), body);
 }
 
@@ -791,6 +866,7 @@ async function main() {
   if (!existsSync(DATA_FILE)) await writeComments(DATA_DIR, []);
 
   const ips = lanIPs();
+  populateAllowedHosts(ips);
   let server;
   if (USE_HTTPS) server = https.createServer(await getTlsOptions(ips), handler);
   else server = http.createServer(handler);
@@ -826,6 +902,7 @@ async function main() {
         const cf = await ensureCloudflared();
         console.log('  Opening a secure tunnel (real HTTPS, works on any network)...');
         publicUrl = await startTunnel(cf, PORT);
+        try { ALLOWED_HOSTS.add(new URL(publicUrl).hostname.toLowerCase()); } catch (e) {}
       } catch (e) {
         console.error('\n  Tunnel failed: ' + e.message);
         console.error('  Serving locally instead. For phone voice without a tunnel: --https --host 0.0.0.0\n');

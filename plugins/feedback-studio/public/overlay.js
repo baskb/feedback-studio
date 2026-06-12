@@ -76,6 +76,9 @@
 
   // Comment types decide how much latitude the AI agent gets. Websites and
   // documents need different verbs, so the set depends on the mode.
+  // NOTE: this is a mirror of WEB_TYPES/MD_TYPES in lib/store.mjs — the overlay
+  // can't import the server module (it runs in the browser). store.test.mjs
+  // asserts the two stay in sync, so update both if you change the type set.
   const MODE = (typeof window !== 'undefined' && window.__kbfMode) || 'web';
   const TYPE_SETS = {
     web: [
@@ -1046,6 +1049,18 @@
   function panelIsFullScreen() {
     return window.matchMedia ? window.matchMedia('(max-width: 480px)').matches : window.innerWidth <= 480;
   }
+  // A comment's stored `url` comes from the API and could be anything; only ever
+  // navigate to an http(s) target, so a `javascript:`/`data:` url can't turn
+  // "Go to element" into script execution. Anything else falls back to the
+  // same-origin page path.
+  function safeNavUrl(url, fallback) {
+    if (!url) return fallback;
+    try {
+      const u = new URL(url, location.href);
+      if (u.protocol === 'http:' || u.protocol === 'https:') return u.href;
+    } catch (e) {}
+    return fallback;
+  }
   function goToComment(c) {
     const key = normalizePath(c.page);
     if (key === PAGE) {
@@ -1055,7 +1070,7 @@
     } else {
       SS.set('kbf-focus', c.id);
       SS.set('kbf-panel', panelIsFullScreen() ? '0' : '1');
-      location.href = c.url || (location.origin + key);
+      location.href = safeNavUrl(c.url, location.origin + key);
     }
   }
 

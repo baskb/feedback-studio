@@ -1,7 +1,8 @@
 {
   "name": "feedback-studio",
-  "displayName": "Feedback Studio",
-  "description": "Local visual feedback overlay for a site you're building or a Markdown file — click or tap any element (or select text), leave typed or spoken feedback, and let your agent process it.",
+  "metadata": {
+    "description": "Local visual feedback overlay for a site you're building or a Markdown file. Click or tap any element (or select text), leave typed or spoken feedback, and let your agent process it."
+  },
   "owner": {
     "name": "Bastiaan Kortenbout"
   },
@@ -10,7 +11,7 @@
       "name": "feedback-studio",
       "source": "./plugins/feedback-studio",
       "version": "0.1.4",
-      "description": "Click or tap any element on any local page and leave typed or spoken feedback; comments persist to .feedback/ for an agent to process. Static build or dev-server proxy, optional HTTPS for phone voice.",
+      "description": "Click or tap any element on any local page and leave typed or spoken feedback; comments persist to .feedback/ for an agent to process. Static build or dev-server proxy; phone review by voice over a Cloudflare tunnel (--tunnel) or self-signed HTTPS.",
       "category": "productivity",
       "keywords": [
         "feedback",

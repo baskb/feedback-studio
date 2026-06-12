@@ -204,6 +204,11 @@ does not read `.feedback/`. It is the portable handoff path; `comments.json`
 stays the fuller record. Because it edits your real source files, it is a
 deliberate action, with `.bak` backups.
 
+> **Trusted input:** the rendered page shares an origin with the comment API, so
+> Feedback Studio strips active content (scripts, inline handlers, `javascript:`
+> URLs) from rendered Markdown. That is defense in depth, not a full sanitizer —
+> prefer local (loopback) mode when reviewing a `.md` you didn't write.
+
 ## Notes & limits
 
 - **Easiest phone path: `--tunnel`.** It opens a Cloudflare quick tunnel, fetches

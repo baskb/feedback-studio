@@ -6,9 +6,40 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- The mutating API now also validates the `Host` header against an allowlist
+  (loopback, the LAN IPs, the bound host, and the tunnel hostname), closing a
+  DNS-rebinding path where a drive-by page could rebind its name to `127.0.0.1`
+  and POST comments past the existing Origin/Host check.
+- `--md` rendered output is stripped of active content (`<script>`/`<style>`,
+  framing/redirecting tags, inline event handlers, and `javascript:` URLs) so a
+  hostile Markdown file can't run script on the overlay's origin. It is a
+  defense-in-depth strip, not a full sanitizer — still only open `.md` you trust.
+- "Go to element" only navigates to `http(s)` targets, so a comment's stored
+  `url` can't carry a `javascript:` payload.
+- The `cloudflared` download can be pinned and verified: set
+  `FBS_CLOUDFLARED_VERSION` for a deterministic release tag and
+  `FBS_CLOUDFLARED_SHA256` to refuse any binary that doesn't match the hash.
+
+### Changed
+- The release workflow now runs the full test suite (unit + both smoke tests)
+  before publishing, matching the per-PR CI gate, so a release can't ship a
+  regression CI would have caught.
+
 ## [0.1.4] - 2026-06-06
 
+### Added
+- While processing a batch, the skill now mirrors the open comments onto the
+  Claude Code task list — one task per comment, ticked off as each pin turns
+  green — so the run's progress is visible in step with the overlay.
+
 ## [0.1.3] - 2026-06-06
+
+### Documentation
+- Rewrote all eight published docs for clarity (README, plugin README, SKILL,
+  HARNESS, INTEROP, THIRD-PARTY, SECURITY, CONTRIBUTING), with factual
+  corrections: the default branch is `master`, the marker test commands, and the
+  `lib/` entry in the plugin README's tree.
 
 ## [0.1.2] - 2026-06-06
 

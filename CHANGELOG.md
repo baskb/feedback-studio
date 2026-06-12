@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-12
+
 ### Added
 - **`--demo` / `/feedback-studio:demo`** — an instant playground: serves a bundled
   sample landing page from a throwaway temp copy, pre-seeded with one comment per
@@ -180,7 +182,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.2.0
 [0.1.5]: https://github.com/baskb/feedback-studio/releases/tag/v0.1.5
 [0.1.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.1.4
 [0.1.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.1.3

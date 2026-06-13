@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-13
+
 ### Added
 - **Move the Comment button.** Drag the floating button to any corner; it snaps to the
   nearest one and remembers it (per browser). Works on desktop and mobile — handy when it
@@ -211,7 +213,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.0
 [0.2.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.2.0
 [0.1.5]: https://github.com/baskb/feedback-studio/releases/tag/v0.1.5
 [0.1.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.1.4

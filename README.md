@@ -77,9 +77,9 @@ Say *"open my dev site to review"*, or run `npx feedback-studio --proxy http://l
 Comment while your app keeps hot-reloading underneath.
 
 **Hand the comments to your agent.**
-Say *"process the feedback"*, or run `/feedback-studio:feedback process` in Claude Code.
-Your agent works through each comment, shows the diffs, and the pins turn green
-as it resolves them.
+Say **PPF** — *Please Process Feedback* (the plugin's `/feedback-studio:feedback process`
+still works too, and any MCP-connected agent understands it). Your agent works through
+each comment, shows the diffs, and the pins turn green as it resolves them.
 
 **Have an AI reviewer leave comments for *you*.**
 Say *"have a frontend reviewer leave comments on my site"* (or ask for copy,

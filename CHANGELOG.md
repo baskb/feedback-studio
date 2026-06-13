@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- README "Recipes" now leads with **PPF** (the post-0.3.0 docs missed this one spot, which
+  still framed processing as `/feedback-studio:feedback process`).
+
 ## [0.3.0] - 2026-06-13
 
 ### Added

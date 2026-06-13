@@ -5,6 +5,9 @@ node_modules/
 *.bak
 *.tgz
 
+# Demo/marketing screenshots — kept locally, not tracked (image bloat)
+docs/media/demo-mobile/
+
 # Internal cross-session state + strategy — never ship
 PROGRESS.md
 DECISIONS.md

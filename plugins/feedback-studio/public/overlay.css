@@ -151,10 +151,6 @@ button {
   .kbf-fab-wrap { cursor: grab; }
   .kbf-fab-wrap--dragging { cursor: grabbing; }
 }
-@media (prefers-reduced-motion: reduce) {
-  .kbf-fab-wrap--dragging { animation: none; }
-  .kbf-fab-wrap--landing { transition: none; }
-}
 
 .kbf-fab {
   display: inline-flex;
@@ -258,6 +254,10 @@ button {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+  /* Exception: the Comment button's drag wobble + corner snap are a deliberate,
+     user-requested affordance — keep them lively even when motion is reduced. */
+  .kbf-fab-wrap--dragging { animation-duration: 0.42s !important; animation-iteration-count: infinite !important; }
+  .kbf-fab-wrap--landing { transition-duration: 0.19s !important; }
 }
 
 .kbf-tag {

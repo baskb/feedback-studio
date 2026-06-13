@@ -7,6 +7,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- The Comment button's drag wobble + corner snap now play even when the OS "reduce motion"
+  setting is on (a global reduced-motion reset was calming them). Scoped exception for that
+  one deliberate affordance; every other overlay animation still respects reduced-motion.
 - README "Recipes" now leads with **PPF** (the post-0.3.0 docs missed this one spot, which
   still framed processing as `/feedback-studio:feedback process`).
 

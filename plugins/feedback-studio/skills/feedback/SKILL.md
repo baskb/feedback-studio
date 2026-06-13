@@ -19,11 +19,13 @@ and use `"$FBS"` below. Intent: *start / open / review / serve* means start a se
 
 ## Start a session
 
-Run the server in the **background**, then open the URL it prints.
+Run the server in the **background** with `--no-open` (you open the URL yourself in the step
+below; if the server auto-opens a tab too, you get a double-load flash), then open the URL it
+prints.
 
-- **Dev server already running** (live reload): `node "$FBS" --proxy http://localhost:<devport>`
-- **Static build** (auto-detects `dist/ build/ out/ _site/ public/ .output/public/`): `node "$FBS"` (or `--dir <folder>`). Build first if needed (check `package.json`).
-- **Markdown** (a `.md` file, or a folder of them): `node "$FBS" --md <file|dir>`.
+- **Dev server already running** (live reload): `node "$FBS" --proxy http://localhost:<devport> --no-open`
+- **Static build** (auto-detects `dist/ build/ out/ _site/ public/ .output/public/`): `node "$FBS" --no-open` (or `--dir <folder> --no-open`). Build first if needed (check `package.json`).
+- **Markdown** (a `.md` file, or a folder of them): `node "$FBS" --md <file|dir> --no-open`.
 - **Phone with voice:** add `--tunnel` (real-cert public URL, easiest) or `--https --host 0.0.0.0` (self-signed, same Wi-Fi; without `--host` the phone can't reach it). Plain http is fine for laptop, or for typing on a phone.
 
 Open it: `start <url>` (Windows) / `open <url>` (macOS) / `xdg-open <url>` (Linux). Tell the

@@ -11,6 +11,7 @@
 //   --proxy <url>    proxy a running dev server (e.g. http://localhost:5173)
 //   --md <path>      review a Markdown file or a folder of them
 //   --demo           serve the bundled sample page from a throwaway temp copy
+//   --no-seed        with --demo: start with no comments (add your own live)
 //   --port <n>       listen port (default 4444)
 //   --host <addr>    bind address (default 127.0.0.1; use 0.0.0.0 for phone/LAN)
 //   --https          serve over TLS with a self-signed cert (voice on phones)
@@ -859,7 +860,10 @@ function banner(scheme, ips, publicUrl) {
   if (!DEMO) {
     console.log(`  Agent setup      ->  optional: re-run with --seed-agents to teach CLAUDE.md / AGENTS.md the flow.`);
   }
-  if (DEMO) {
+  if (DEMO && args['no-seed']) {
+    console.log(`\n  Starting empty — no comments yet. Press C, click anything, leave a comment;`);
+    console.log(`  then let your agent process ${path.join(DATA_DIR, 'comments.json')}.`);
+  } else if (DEMO) {
     console.log(`\n  3 comments are pre-seeded (one fix, one change, one improve) — and the page`);
     console.log(`  hides a couple more flaws to find. Press C, click anything, leave a comment;`);
     console.log(`  then let your agent process ${path.join(DATA_DIR, 'comments.json')}.`);
@@ -886,13 +890,18 @@ async function setupDemo() {
   const src = path.join(__dirname, '..', 'demo');
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'feedback-studio-demo-'));
   await cp(path.join(src, 'site'), tmp, { recursive: true });
-  const seed = JSON.parse(await readFile(path.join(src, 'seed-comments.json'), 'utf-8'));
-  const now = new Date().toISOString();
-  for (const c of seed) { c.createdAt = now; c.updatedAt = now; }
   STATIC_DIR = tmp;
   DATA_DIR = path.join(tmp, '.feedback');
   DATA_FILE = path.join(DATA_DIR, 'comments.json');
   CERT_DIR = path.join(DATA_DIR, '.cert');
+  // --no-seed serves the sample page with NO comments, for demoing the
+  // "add your own" flow from scratch (e.g. recording a clean walkthrough).
+  let seed = [];
+  if (!args['no-seed']) {
+    seed = JSON.parse(await readFile(path.join(src, 'seed-comments.json'), 'utf-8'));
+    const now = new Date().toISOString();
+    for (const c of seed) { c.createdAt = now; c.updatedAt = now; }
+  }
   await writeComments(DATA_DIR, seed); // also generates the FEEDBACK.md mirror
   return tmp;
 }

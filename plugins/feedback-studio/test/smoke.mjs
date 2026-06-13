@@ -93,10 +93,15 @@ try {
 
   // --demo: serves the bundled sample site from a temp copy, seeded with one
   // comment per web type — and must not create .feedback/ in the cwd it ran from.
+  // --demo --no-seed: same page, but zero comments (add-your-own / recording demos).
   const DEMO_PORT = PORT + 1;
   const demoCwd = path.join(root, 'democwd');
   mkdirSync(demoCwd);
   const demoSrv = spawn(process.execPath, [bin, '--demo', '--port', String(DEMO_PORT), '--no-open'], { stdio: 'ignore', cwd: demoCwd });
+  const EMPTY_PORT = PORT + 2;
+  const emptyCwd = path.join(root, 'emptycwd');
+  mkdirSync(emptyCwd);
+  const emptySrv = spawn(process.execPath, [bin, '--demo', '--no-seed', '--port', String(EMPTY_PORT), '--no-open'], { stdio: 'ignore', cwd: emptyCwd });
   try {
     await sleep(700);
     const demoHome = await fetch(`http://127.0.0.1:${DEMO_PORT}/`);
@@ -106,8 +111,13 @@ try {
     const types = seeded.comments.map((c) => c.type).sort().join(',');
     check('demo seeds fix+change+improve', seeded.comments.length === 3 && types === 'change,fix,improve');
     check('demo keeps cwd clean', !existsSync(path.join(demoCwd, '.feedback')));
+    const emptyHome = await fetch(`http://127.0.0.1:${EMPTY_PORT}/`);
+    check('demo --no-seed serves sample page', emptyHome.status === 200 && (await emptyHome.text()).includes('Roastly'));
+    const empty = await (await fetch(`http://127.0.0.1:${EMPTY_PORT}/__feedback/api/comments`)).json();
+    check('demo --no-seed starts with zero comments', Array.isArray(empty.comments) && empty.comments.length === 0);
   } finally {
     demoSrv.kill();
+    emptySrv.kill();
   }
 } catch (e) {
   console.log('FAIL  exception:', e.message);

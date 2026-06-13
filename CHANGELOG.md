@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`--no-seed`** flag for `feedback-studio --demo`: serve the sample page with no comments, so
+  you add your own (great for a clean walkthrough or recording).
+
+### Changed
+- **`/feedback-studio:demo` now starts empty by default** — you add the comments yourself. Ask
+  for `--seeded` (or "with examples") to load the three worked example comments (one fix /
+  change / improve). The standalone `feedback-studio --demo` CLI still seeds by default; use
+  `--no-seed` there for an empty page.
+
+### Fixed
+- Starting the demo (or a review session) no longer flashes/refreshes the page from a double
+  browser-open: the `demo` and `feedback` skills now launch the server with `--no-open` and open
+  the URL once themselves.
+
 ## [0.3.1] - 2026-06-13
 
 ### Fixed

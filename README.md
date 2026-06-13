@@ -145,6 +145,7 @@ node plugins/feedback-studio/bin/feedback-studio.mjs --proxy http://localhost:51
 | Flag | Meaning |
 |---|---|
 | `--demo` | Serve the bundled sample page from a throwaway temp copy, pre-seeded with example comments. The fastest first run; never touches your project. |
+| `--no-seed` | With `--demo`: serve the sample page with **no** comments, so you add your own live (handy for recordings/walkthroughs). |
 | `--dir <path>` | Serve a static build directory. |
 | `--proxy <url>` | Proxy a running dev server and inject the overlay (live reload). |
 | `--md <file\|dir>` | Render a Markdown file or folder to reviewable pages. Fetches a small renderer once. |

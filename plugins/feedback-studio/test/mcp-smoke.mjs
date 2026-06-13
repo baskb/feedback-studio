@@ -1,6 +1,6 @@
 // Live smoke test for the MCP stdio server. Run: node test/mcp-smoke.mjs
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,6 +52,10 @@ try {
 
   const notFound = await rpc({ jsonrpc: '2.0', id: 8, method: 'frobnicate' });
   check('unknown method => -32601', notFound.error && notFound.error.code === -32601);
+
+  // the MCP server drops the processing guide next to the data on startup, so an
+  // agent driving it without the plugin still has the workflow on hand
+  check('writes HOW-TO-PROCESS.md on startup', existsSync(path.join(dir, 'HOW-TO-PROCESS.md')));
 } catch (e) {
   console.log('FAIL  exception:', e.message); failures++;
 } finally {

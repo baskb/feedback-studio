@@ -10,6 +10,8 @@
   --kbf-muted: #8a8578;
   --kbf-border: #e7e4db;
   --kbf-border-strong: #d8d4c8;
+  --kbf-chip: #1f1e1c;       /* dark "chip" surface (FAB, pins, toast) — always carries light text */
+  --kbf-hover: rgba(31, 30, 28, 0.06);
   --kbf-clay: #d97757;
   --kbf-clay-deep: #c4623f;
   --kbf-clay-tint: #f6e9e2;
@@ -31,6 +33,7 @@
   z-index: 2147483000;
   pointer-events: none;
   font-family: var(--kbf-font);
+  color-scheme: light;
   color: var(--kbf-ink);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -38,6 +41,62 @@
 
 :host * {
   box-sizing: border-box;
+}
+
+/* ---------- dark theme ---------- */
+/* Applied two ways with the same values: automatically when the OS prefers dark (unless
+   the user forced light), and always when the user forced dark via the panel toggle. Only
+   the --kbf-* tokens change; every component already reads them. --kbf-chip stays dark in
+   both themes so the FAB / pins / toast keep their light-on-dark look. */
+@media (prefers-color-scheme: dark) {
+  :host(:not([data-kbf-theme="light"])) {
+    --kbf-paper: #1a1917;
+    --kbf-surface: #242320;
+    --kbf-surface-2: #2e2c28;
+    --kbf-ink: #f3f1ea;
+    --kbf-ink-soft: #c9c4b6;
+    --kbf-muted: #968f7f;
+    --kbf-border: #383530;
+    --kbf-border-strong: #4a463e;
+    --kbf-chip: #38362f;
+    --kbf-hover: rgba(255, 255, 255, 0.09);
+    --kbf-clay: #e08862;
+    --kbf-clay-deep: #c4623f;
+    --kbf-clay-tint: #3a2a22;
+    --kbf-green: #6fae7b;
+    --kbf-amber: #d8a24a;
+    --kbf-agent: #7d93e0;
+    --kbf-agent-deep: #6b82d6;
+    --kbf-agent-tint: #262b3d;
+    --kbf-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+    --kbf-shadow-md: 0 6px 16px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+    --kbf-shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.6), 0 6px 16px rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
+  }
+}
+:host([data-kbf-theme="dark"]) {
+  --kbf-paper: #1a1917;
+  --kbf-surface: #242320;
+  --kbf-surface-2: #2e2c28;
+  --kbf-ink: #f3f1ea;
+  --kbf-ink-soft: #c9c4b6;
+  --kbf-muted: #968f7f;
+  --kbf-border: #383530;
+  --kbf-border-strong: #4a463e;
+  --kbf-chip: #38362f;
+  --kbf-hover: rgba(255, 255, 255, 0.09);
+  --kbf-clay: #e08862;
+  --kbf-clay-deep: #c4623f;
+  --kbf-clay-tint: #3a2a22;
+  --kbf-green: #6fae7b;
+  --kbf-amber: #d8a24a;
+  --kbf-agent: #7d93e0;
+  --kbf-agent-deep: #6b82d6;
+  --kbf-agent-tint: #262b3d;
+  --kbf-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+  --kbf-shadow-md: 0 6px 16px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --kbf-shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.6), 0 6px 16px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
 }
 
 button {
@@ -52,13 +111,49 @@ button {
 
 .kbf-fab-wrap {
   position: fixed;
-  right: 22px;
-  bottom: 22px;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
   gap: 12px;
   pointer-events: auto;
+  touch-action: none; /* dragging the button shouldn't scroll the page (taps still fire) */
+}
+/* The four corners the button can be dragged to (default bottom-right). Each sets all
+   four offsets — auto on the unused sides — so switching corners can't leave a stale one. */
+.kbf-fab-wrap--br { bottom: 22px; right: 22px; top: auto; left: auto; align-items: flex-end; }
+.kbf-fab-wrap--bl { bottom: 22px; left: 22px; top: auto; right: auto; align-items: flex-start; }
+.kbf-fab-wrap--tr { top: 22px; right: 22px; bottom: auto; left: auto; align-items: flex-end; }
+.kbf-fab-wrap--tl { top: 22px; left: 22px; bottom: auto; right: auto; align-items: flex-start; }
+/* Picked up: the cluster lifts a touch and gives a live, springy little wobble so it
+   feels grabbed. Position is driven by inline left/top while dragging; the wobble is a
+   transform, so the two don't fight. */
+.kbf-fab-wrap--dragging {
+  animation: kbf-fab-jiggle 0.42s ease-in-out infinite;
+  will-change: transform;
+}
+.kbf-fab-wrap--dragging .kbf-fab {
+  transition: none;
+  box-shadow: var(--kbf-shadow-lg);
+}
+@keyframes kbf-fab-jiggle {
+  0%   { transform: scale(1.07) rotate(-2.4deg); }
+  25%  { transform: scale(1.07) rotate(1.9deg); }
+  50%  { transform: scale(1.06) rotate(-1.3deg); }
+  75%  { transform: scale(1.07) rotate(2.2deg); }
+  100% { transform: scale(1.07) rotate(-2.4deg); }
+}
+/* Dropped: a FLIP transform springs the button from where it was let go into the snapped
+   corner. Fast and crisp with a tight overshoot — like flicking an app icon into its grid
+   cell on an Android home screen, not a slow float. */
+.kbf-fab-wrap--landing {
+  transition: transform 0.19s cubic-bezier(0.2, 1.45, 0.35, 1);
+}
+@media (pointer: fine) {
+  .kbf-fab-wrap { cursor: grab; }
+  .kbf-fab-wrap--dragging { cursor: grabbing; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kbf-fab-wrap--dragging { animation: none; }
+  .kbf-fab-wrap--landing { transition: none; }
 }
 
 .kbf-fab {
@@ -68,7 +163,7 @@ button {
   height: 48px;
   padding: 0 18px 0 16px;
   border-radius: 999px;
-  background: var(--kbf-ink);
+  background: var(--kbf-chip);
   color: #fdfcf9;
   font-size: 14px;
   font-weight: 560;
@@ -191,7 +286,7 @@ button {
   align-items: center;
   gap: 3px;
   padding: 5px 5px 5px 9px;
-  background: var(--kbf-ink);
+  background: var(--kbf-chip);
   border-radius: 13px;
   box-shadow: var(--kbf-shadow-lg);
   pointer-events: auto;
@@ -285,6 +380,9 @@ button {
   from { opacity: 0; transform: scale(0.96) translateY(-4px); }
   to { opacity: 1; transform: scale(1) translateY(0); }
 }
+/* Desktop only: the header is a drag handle to move the composer off the content. */
+@media (pointer: fine) { .kbf-composer-head { cursor: move; } }
+.kbf-composer--dragging { animation: none; user-select: none; }
 
 .kbf-composer-head {
   display: flex;
@@ -323,7 +421,8 @@ button {
   justify-content: center;
   color: var(--kbf-muted);
 }
-.kbf-x:hover { background: rgba(31, 30, 28, 0.06); color: var(--kbf-ink); }
+.kbf-x:hover { background: var(--kbf-hover); color: var(--kbf-ink); }
+.kbf-panel-actions { display: flex; align-items: center; gap: 4px; }
 .kbf-x svg { width: 14px; height: 14px; }
 
 .kbf-composer-body { padding: 12px; }
@@ -518,7 +617,7 @@ button {
 }
 .kbf-filter:hover { background: var(--kbf-surface); }
 .kbf-filter.is-active {
-  background: var(--kbf-ink);
+  background: var(--kbf-chip);
   border-color: var(--kbf-ink);
   color: #fdfcf9;
 }
@@ -690,7 +789,7 @@ button {
   pointer-events: none;
 }
 .kbf-toast {
-  background: var(--kbf-ink);
+  background: var(--kbf-chip);
   color: #fdfcf9;
   font-size: 13px;
   font-weight: 520;
@@ -755,6 +854,8 @@ button {
   background: var(--kbf-surface-2);
   color: var(--kbf-ink-soft);
 }
+/* Type tag pills. `change`/`comment`/`rephrase` ride the themed tint vars (so they adapt to
+   dark on their own); the rest carry their own hue and need an explicit dark variant below. */
 .kbf-type-fix { background: #fdece5; color: #b04a26; }
 .kbf-type-change { background: var(--kbf-clay-tint); color: var(--kbf-clay-deep); }
 .kbf-type-improve { background: #e9f1ec; color: var(--kbf-green); }
@@ -763,6 +864,19 @@ button {
 .kbf-type-expand { background: #fff2e4; color: #b5701f; }
 .kbf-type-delete { background: #fde4e4; color: #b23b3b; }
 .kbf-type-question { background: #f0eafb; color: #6b4ec2; }
+/* Dark variants for the self-coloured tags (dark tint + a brighter accent for contrast). */
+@media (prefers-color-scheme: dark) {
+  :host(:not([data-kbf-theme="light"])) .kbf-type-fix { background: #38271f; color: #ef9e80; }
+  :host(:not([data-kbf-theme="light"])) .kbf-type-improve { background: #1f2e27; color: #82c995; }
+  :host(:not([data-kbf-theme="light"])) .kbf-type-expand { background: #342a1b; color: #dba85f; }
+  :host(:not([data-kbf-theme="light"])) .kbf-type-delete { background: #38201f; color: #e88585; }
+  :host(:not([data-kbf-theme="light"])) .kbf-type-question { background: #272340; color: #b3a0ea; }
+}
+:host([data-kbf-theme="dark"]) .kbf-type-fix { background: #38271f; color: #ef9e80; }
+:host([data-kbf-theme="dark"]) .kbf-type-improve { background: #1f2e27; color: #82c995; }
+:host([data-kbf-theme="dark"]) .kbf-type-expand { background: #342a1b; color: #dba85f; }
+:host([data-kbf-theme="dark"]) .kbf-type-delete { background: #38201f; color: #e88585; }
+:host([data-kbf-theme="dark"]) .kbf-type-question { background: #272340; color: #b3a0ea; }
 
 /* ---------- conversation: author, status, thread ---------- */
 .kbf-card.is-agent { border-left: 3px solid var(--kbf-agent); }
@@ -889,9 +1003,8 @@ button {
 .kbf-approve:hover { filter: brightness(0.94); }
 .kbf-rejectb:hover { background: var(--kbf-surface-2); color: var(--kbf-ink); }
 
-/* ---------- panel foot: ready + copy ---------- */
+/* ---------- panel foot: ready + process hint ---------- */
 .kbf-readyline { flex: 1; font-size: 12.5px; color: var(--kbf-ink-soft); font-weight: 540; }
-.kbf-copyfb { height: 34px; padding: 0 14px; font-size: 12.5px; }
 
 /* ---------- live resolve animation ---------- */
 .kbf-pin.kbf-just-resolved { animation: kbf-resolve-pop 1s cubic-bezier(0.2, 0.7, 0.3, 1); }
@@ -923,7 +1036,6 @@ button {
 .kbf-fab:active,
 .kbf-fab--mini:active { transform: translateY(1px) scale(0.97); }
 .kbf-btn:active,
-.kbf-copyfb:active,
 .kbf-stamp:active { transform: translateY(1px); }
 .kbf-type:active,
 .kbf-filter:active,
@@ -937,7 +1049,6 @@ button {
 .kbf-fab:focus-visible,
 .kbf-fab--mini:focus-visible,
 .kbf-btn:focus-visible,
-.kbf-copyfb:focus-visible,
 .kbf-stamp:focus-visible,
 .kbf-type:focus-visible,
 .kbf-filter:focus-visible,

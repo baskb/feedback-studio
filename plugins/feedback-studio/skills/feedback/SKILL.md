@@ -41,6 +41,10 @@ Processing from markers: `grep -n "@FB"`, edit each line, then delete the marker
 
 ## Process comments
 
+The user's cue to start is **PPF** — *Please Process Feedback* (or just "process the
+feedback"). When you hear it, run the steps below. (The *please* is on purpose — Feedback
+Studio is polite to its agents. ;-)
+
 1. Read `.feedback/comments.json` (the SOLE source of truth; `FEEDBACK.md` is a generated,
    possibly-stale mirror, never act off it). Each comment has `page`, `type`, `anchor`
    (selector / attr / xpath / quoted `snippet` / `tag`), `text`, `autonomy`, `status`.
@@ -90,3 +94,7 @@ Leave proposals `open` so they surface as "to review"; a clear `authorName` labe
   by default** in Claude Code: reading the comment files is enough, and skipping it keeps token
   use low. It exists for other agents (Codex, Cursor, Windsurf, Cline) via their own MCP config.
   See INTEROP.md.
+- A generated **`.feedback/HOW-TO-PROCESS.md`** mirrors this processing workflow next to the
+  data, for any agent without this plugin. If the user wants their own agent memory to know it,
+  run `node "$FBS" --seed-agents` once to append the short version to their `CLAUDE.md` /
+  `AGENTS.md` (idempotent — safe to re-run).

@@ -1,12 +1,26 @@
-# (snippet) Paste into your project's AGENTS.md
+# (snippet) Paste into your project's AGENTS.md or CLAUDE.md
+
+`feedback-studio --seed-agents` writes the block below into your `CLAUDE.md`
+(Claude Code) and `AGENTS.md` (Codex / Cursor / Cline / Windsurf) automatically,
+guarded by a marker so it is never duplicated. You can also paste it by hand.
 
 ## Feedback Studio
 
-Visual review comments for this project live in `.feedback/comments.json`, with
-a readable `.feedback/FEEDBACK.md`. They come from a local overlay where the
-human clicks or taps an element, or selects Markdown text, and leaves a typed or
+Visual review comments for this project live in `.feedback/comments.json` (readable mirror:
+`.feedback/FEEDBACK.md`; full how-to: `.feedback/HOW-TO-PROCESS.md`). They come from a local
+overlay where a human clicks/taps an element, or selects Markdown text, and leaves a typed or
 spoken note.
 
-- **Launch a review session:** `node <path>/feedback-studio/plugins/feedback-studio/bin/feedback-studio.mjs --dir dist` (or `--proxy <devurl>`, or `--md <file|dir>`; for phone voice over the LAN add `--https --host 0.0.0.0`, or just `--tunnel` which needs no extra flag). Open the printed URL.
-- **Process comments:** use the `feedback-studio` MCP tools (`list_comments`, `get_comment`, `reply`, `set_status`) if configured, else read `.feedback/comments.json`. For each open comment, locate the element by its quoted anchor text, cross-check the selector, and refuse rather than edit the wrong target. Act per its `type`, present a diff, then set status `resolved`. For Markdown comments, edit the `sourceFile`, not the rendered HTML.
-- You can also **leave your own comments** for the human to review or approve: `add_comment` (MCP) with an anchor, either a CSS selector or exact visible text. They appear in the overlay as agent pins.
+When the user says **PPF** (*Please Process Feedback*) — or just "process the feedback":
+
+- **Read** the open comments — use the `feedback-studio` MCP tools (`list_comments`,
+  `get_comment`) if configured, else read `.feedback/comments.json` (the source of truth;
+  never act off `FEEDBACK.md`).
+- **Locate** each comment's target by its quoted anchor text, cross-checked with the selector,
+  and **refuse rather than edit the wrong element.** Act per its `type` (web: `fix` / `change`
+  / `improve`; Markdown: edit the `sourceFile`, not the rendered HTML). Present a diff.
+- **Resolve** when done: `set_status` (MCP), else PATCH `/__feedback/api/comments/<id>`
+  `{"status":"resolved"}`, else edit the JSON. Use `reply` to ask/explain, `add_comment` to
+  leave your own pins for the human to approve.
+
+(The *please* in PPF is deliberate — we're courteous to our coding agents. ;-)

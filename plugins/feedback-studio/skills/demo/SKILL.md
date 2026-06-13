@@ -36,7 +36,8 @@ tell the user, briefly:
 2. Press **C** (or the Comment button), then click any element or select text, to add
    their own; the **mic** dictates. Two more flaws are hidden on the page — try to spot
    and pin them.
-3. When they're ready, say **"process the feedback"**.
+3. When they're ready, the cue is **PPF** — *Please Process Feedback* (or just "process the
+   feedback"). The *please* is intentional: we're nice to our agents. ;-)
 
 ## Process the demo feedback
 
@@ -53,5 +54,5 @@ near-verbatim, the `improve` wants your judgement (propose a headline, offer opt
 ## After the loop
 
 Point the user at the real thing: `/feedback-studio:feedback start` on their own site or
-Markdown file. If they enjoyed the phone flow, mention `--tunnel`. The demo dir is a temp
-folder; the OS cleans it up, nothing to undo.
+Markdown file. If they enjoyed the phone flow, mention `--tunnel`. The demo dir lives in
+the system temp folder — safe to delete, nothing in the project to undo.

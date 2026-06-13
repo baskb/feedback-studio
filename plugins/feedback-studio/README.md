@@ -25,4 +25,8 @@ plugins/feedback-studio/
     └── overlay.css               # Claude-flavoured styling
 ```
 
+Collect comments in the overlay, then tell your agent **PPF** — *Please Process
+Feedback* — and it works through them (plugin skill, or the bundled MCP server for
+other agents). The *please* is intentional; we're courteous to our agents. ;-)
+
 See the [repo README](../../README.md) for install and usage.

@@ -12,6 +12,7 @@ import {
   WEB_TYPES, MD_TYPES, ALLOWED_TYPES, STATUSES,
   makeComment, makeReply, coerceType, sanitizeAnchor,
   readComments, writeComments, mutate, exportMarkdown,
+  exportProcessInstructions, seedAgentsFile, AGENTS_SNIPPET_MARKER,
 } from '../lib/store.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -120,6 +121,38 @@ test('the overlay type set matches the shared constants (no drift)', () => {
   const ids = new Set([...block.matchAll(/id:\s*'([a-z]+)'/g)].map((m) => m[1]));
   for (const t of ALLOWED_TYPES) assert.ok(ids.has(t), 'overlay is missing type "' + t + '"');
   assert.equal(ids.size, ALLOWED_TYPES.length, 'overlay has an extra/unknown type');
+});
+
+test('exportProcessInstructions writes a self-contained, MCP-first guide', async () => {
+  const dir = freshDir();
+  try {
+    await exportProcessInstructions(dir);
+    const md = readFileSync(path.join(dir, 'HOW-TO-PROCESS.md'), 'utf-8');
+    assert.ok(md.includes('comments.json'));        // names the source of truth
+    assert.ok(md.includes('do NOT edit a guess'));  // the load-bearing refuse-to-guess rule
+    assert.ok(md.includes('set_status'));           // MCP-first resolve path
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('seedAgentsFile creates-if-absent, appends, and is idempotent', async () => {
+  const dir = freshDir();
+  try {
+    for (const name of ['CLAUDE.md', 'AGENTS.md']) {
+      const fp = path.join(dir, name);
+      const r1 = await seedAgentsFile(fp);
+      assert.deepEqual(r1, { seeded: true, created: true });
+      const r2 = await seedAgentsFile(fp); // marker present → no-op
+      assert.equal(r2.seeded, false);
+      const body = readFileSync(fp, 'utf-8');
+      assert.equal(body.split(AGENTS_SNIPPET_MARKER).length - 1, 1, name + ': exactly one snippet');
+    }
+    // appends to an existing file without clobbering its content
+    const fp = path.join(dir, 'HAS_CONTENT.md');
+    writeFileSync(fp, '# My project\n\nExisting notes.\n');
+    await seedAgentsFile(fp);
+    const body = readFileSync(fp, 'utf-8');
+    assert.ok(body.includes('Existing notes.') && body.includes('Feedback Studio'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('status + type constant invariants', () => {

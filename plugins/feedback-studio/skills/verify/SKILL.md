@@ -37,7 +37,7 @@ that element's text/existence to change.
      skip this path entirely if they're unavailable): open the page, and for each
      comment check the new state — page text via `get_page_text`/`javascript_tool`
      for wording changes; a screenshot judged against the ask for visual changes
-     (`scroll_to` the element first). `window.__kbfSelfTest()` is a useful secondary
+     (scroll the element into view first). `window.__kbfSelfTest()` is a useful secondary
      signal for elements whose anchors should have survived (a styling-only `improve`).
    - **Without browser tools:** fetch the served HTML (`curl`) and check the new
      wording is present and the old is gone. Purely visual asks ("make this stand

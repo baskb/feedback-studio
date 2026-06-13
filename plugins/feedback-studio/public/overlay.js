@@ -31,6 +31,7 @@
   let mode = SS.get('kbf-mode') === '1';
   let panelOpen = SS.get('kbf-panel') === '1';
   let filter = SS.get('kbf-filter') || 'all';
+  let theme = LS.get('kbf-theme') || 'auto'; // auto (follow OS) | light | dark
   let activeComposer = null; // { kind:'new'|'edit', anchor, rect, comment? }
   let placed = []; // [{ comment, el, pinEl }]
   let targetEls = []; // rainbow highlight boxes over the element/text being commented on
@@ -122,6 +123,9 @@
     reject: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
     empty: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
     alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16.5" x2="12" y2="16.5"/></svg>',
+    sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><line x1="12" y1="2.5" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="21.5"/><line x1="2.5" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="21.5" y2="12"/><line x1="5.3" y1="5.3" x2="7" y2="7"/><line x1="17" y1="17" x2="18.7" y2="18.7"/><line x1="5.3" y1="18.7" x2="7" y2="17"/><line x1="17" y1="7" x2="18.7" y2="5.3"/></svg>',
+    moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
+    themeAuto: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/></svg>',
   };
 
   // ---------- shadow host ----------
@@ -153,7 +157,10 @@
       <div class="kbf-panel-head">
         <div class="kbf-panel-title">
           <h2>Feedback</h2>
-          <button class="kbf-x" id="kbf-panel-close" title="Close" aria-label="Close feedback panel">${I.close}</button>
+          <div class="kbf-panel-actions">
+            <button class="kbf-x" id="kbf-theme-toggle" title="Theme" aria-label="Theme"></button>
+            <button class="kbf-x" id="kbf-panel-close" title="Close" aria-label="Close feedback panel">${I.close}</button>
+          </div>
         </div>
         <div class="kbf-panel-sub" id="kbf-panel-sub"></div>
         <div class="kbf-filters" role="group" aria-label="Filter comments">
@@ -166,8 +173,7 @@
       <div class="kbf-panel-foot">
         <span class="kbf-readyline" id="kbf-ready" title="Saved to .feedback/comments.json + FEEDBACK.md"></span>
         <button class="kbf-btn kbf-btn--ghost kbf-stamp" id="kbf-stamp" title="Write these comments into the .md as @FB markers (portable + greppable)" style="display:none">Stamp .md</button>
-        <button class="kbf-btn kbf-btn--primary kbf-copyfb" id="kbf-copyfb" title="Copy the command, then paste it into Claude Code / your agent">Copy /feedback</button>
-        <span class="kbf-copyfb-caption">Paste into Claude Code / your agent to apply these.</span>
+        <span class="kbf-copyfb-caption" title="Saved to .feedback/ — say this to your coding agent to apply the comments">Tell your agent: <strong>“Please process feedback”</strong> (PPF)</span>
       </div>
     </aside>
 
@@ -628,6 +634,37 @@
       </div>`;
     composerSlot.appendChild(box);
     showTarget();
+
+    // Desktop: drag the composer by its header to move it off the content it comments on.
+    // Touch keeps the auto-position (small screen + on-screen keyboard leave nowhere useful).
+    const head = box.querySelector('.kbf-composer-head');
+    (function makeComposerDraggable() {
+      let s = null;
+      head.addEventListener('pointerdown', (e) => {
+        if (e.pointerType !== 'mouse' || e.button !== 0) return;
+        if (e.target.closest('button, [data-act]')) return; // not when grabbing the close button
+        const r = box.getBoundingClientRect();
+        s = { dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height };
+        box.classList.add('kbf-composer--dragging');
+        try { head.setPointerCapture(e.pointerId); } catch (_) {}
+        e.preventDefault();
+      });
+      head.addEventListener('pointermove', (e) => {
+        if (!s) return;
+        const pad = 12;
+        const left = Math.max(pad, Math.min(e.clientX - s.dx, window.innerWidth - s.w - pad));
+        const top = Math.max(pad, Math.min(e.clientY - s.dy, window.innerHeight - s.h - pad));
+        box.style.left = left + 'px'; box.style.top = top + 'px';
+      });
+      function end(e) {
+        if (!s) return;
+        try { head.releasePointerCapture(e.pointerId); } catch (_) {}
+        box.classList.remove('kbf-composer--dragging');
+        s = null;
+      }
+      head.addEventListener('pointerup', end);
+      head.addEventListener('pointercancel', end);
+    })();
 
     const ta = box.querySelector('.kbf-textarea');
     const micBtn = box.querySelector('[data-act="mic"]');
@@ -1208,7 +1245,7 @@
     countEl.textContent = open ? String(open) : '';
     if (readyEl) {
       readyEl.textContent = !comments.length ? 'No comments yet'
-        : open ? `${open} ready for your agent`
+        : open ? `${open} comment${open === 1 ? '' : 's'} ready for your agent`
         : 'All resolved';
     }
   }
@@ -1266,16 +1303,108 @@
   }
 
   // ---------- wiring ----------
-  modeBtn.addEventListener('click', () => setMode(!mode));
-  $('kbf-toggle-panel').addEventListener('click', () => setPanel(!panelOpen));
+  let justDraggedFab = false; // set true on a FAB drag so the trailing click doesn't toggle
+  modeBtn.addEventListener('click', () => { if (justDraggedFab) return; setMode(!mode); });
+  $('kbf-toggle-panel').addEventListener('click', () => { if (justDraggedFab) return; setPanel(!panelOpen); });
   $('kbf-panel-close').addEventListener('click', () => setPanel(false));
+
+  // ---------- theme (auto / light / dark) ----------
+  // Tokens live on :host; `data-kbf-theme` forces light/dark, absent = follow the OS.
+  const THEME_CYCLE = { auto: 'light', light: 'dark', dark: 'auto' };
+  const THEME_ICON = { auto: I.themeAuto, light: I.sun, dark: I.moon };
+  const themeBtn = $('kbf-theme-toggle');
+  function applyTheme(t) {
+    theme = THEME_CYCLE[t] !== undefined ? t : 'auto';
+    if (theme === 'auto') host.removeAttribute('data-kbf-theme');
+    else host.setAttribute('data-kbf-theme', theme);
+    LS.set('kbf-theme', theme);
+    themeBtn.innerHTML = THEME_ICON[theme];
+    const label = theme === 'auto' ? 'Theme: auto (match system)' : 'Theme: ' + theme;
+    themeBtn.title = label + ' — click to change';
+    themeBtn.setAttribute('aria-label', label);
+  }
+  themeBtn.addEventListener('click', () => applyTheme(THEME_CYCLE[theme]));
+  applyTheme(theme);
+
+  // ---------- FAB: drag to any corner (persisted; works on mouse, touch and pen) ----------
+  // A plain click still toggles comment mode / the panel; only a real drag (> 8px) moves the
+  // cluster, then it snaps to the nearest corner. The 8px threshold separates tap from drag on
+  // touch, and click from drag on desktop — the same idea as the element-pick threshold above.
+  const fabWrap = root.querySelector('.kbf-fab-wrap');
+  const FAB_CORNERS = ['br', 'bl', 'tr', 'tl'];
+  const CORNER_NAME = { br: 'bottom-right', bl: 'bottom-left', tr: 'top-right', tl: 'top-left' };
+  function applyFabCorner(corner) {
+    const c = FAB_CORNERS.includes(corner) ? corner : 'br';
+    FAB_CORNERS.forEach((k) => fabWrap.classList.toggle('kbf-fab-wrap--' + k, k === c));
+  }
+  applyFabCorner(LS.get('kbf-fab-corner') || 'br');
+  (function makeFabDraggable() {
+    let start = null, grab = null, dragging = false;
+    // Cleanup for the springy "landing" animation (FLIP transform on drop).
+    let landTimer = 0, landHandler = null;
+    function settleLanding() {
+      clearTimeout(landTimer); landTimer = 0;
+      if (landHandler) { fabWrap.removeEventListener('transitionend', landHandler); landHandler = null; }
+      fabWrap.classList.remove('kbf-fab-wrap--landing');
+      fabWrap.style.transform = '';
+    }
+    fabWrap.addEventListener('pointerdown', (e) => {
+      if (e.button != null && e.button !== 0) return; // left button / touch / pen only
+      settleLanding(); // cancel any in-flight snap before a fresh grab
+      const r = fabWrap.getBoundingClientRect();
+      start = { x: e.clientX, y: e.clientY };
+      grab = { dx: e.clientX - r.left, dy: e.clientY - r.top, w: r.width, h: r.height };
+      dragging = false;
+    });
+    fabWrap.addEventListener('pointermove', (e) => {
+      if (!start) return;
+      if (!dragging && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 8) {
+        dragging = true;
+        fabWrap.classList.add('kbf-fab-wrap--dragging'); // lifts + starts the wobble
+        try { fabWrap.setPointerCapture(e.pointerId); } catch (_) {}
+      }
+      if (!dragging) return;
+      const pad = 12;
+      const left = Math.max(pad, Math.min(e.clientX - grab.dx, window.innerWidth - grab.w - pad));
+      const top = Math.max(pad, Math.min(e.clientY - grab.dy, window.innerHeight - grab.h - pad));
+      fabWrap.style.left = left + 'px'; fabWrap.style.top = top + 'px';
+      fabWrap.style.right = 'auto'; fabWrap.style.bottom = 'auto';
+    });
+    function endDrag(e) {
+      if (!start) return;
+      try { fabWrap.releasePointerCapture(e.pointerId); } catch (_) {}
+      if (dragging) {
+        // Stop the wobble first, so the drop position is measured without the jiggle transform.
+        fabWrap.classList.remove('kbf-fab-wrap--dragging');
+        const r0 = fabWrap.getBoundingClientRect();
+        const corner = (r0.top + r0.height / 2 < window.innerHeight / 2 ? 't' : 'b')
+          + (r0.left + r0.width / 2 < window.innerWidth / 2 ? 'l' : 'r');
+        fabWrap.style.left = fabWrap.style.top = fabWrap.style.right = fabWrap.style.bottom = '';
+        applyFabCorner(corner);
+        LS.set('kbf-fab-corner', corner);
+        // FLIP: snap the layout to the corner, then spring the button there from the drop
+        // point — the landing transition overshoots slightly for a bouncy feel.
+        const r1 = fabWrap.getBoundingClientRect();
+        const dx = Math.round(r0.left - r1.left), dy = Math.round(r0.top - r1.top);
+        if (dx || dy) {
+          fabWrap.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+          void fabWrap.offsetWidth; // reflow so the next change animates from the drop point
+          fabWrap.classList.add('kbf-fab-wrap--landing');
+          fabWrap.style.transform = 'translate(0px,0px)';
+          landHandler = (ev) => { if (!ev.propertyName || ev.propertyName === 'transform') settleLanding(); };
+          fabWrap.addEventListener('transitionend', landHandler);
+          landTimer = setTimeout(settleLanding, 320); // safety net if transitionend is missed
+        }
+        toast('Comment button moved to ' + CORNER_NAME[corner]);
+        justDraggedFab = true; // swallow the click that fires right after this pointerup
+        setTimeout(() => { justDraggedFab = false; }, 0);
+      }
+      start = grab = null; dragging = false;
+    }
+    fabWrap.addEventListener('pointerup', endDrag);
+    fabWrap.addEventListener('pointercancel', endDrag);
+  })();
   root.querySelectorAll('.kbf-filter').forEach((b) => b.addEventListener('click', () => setFilter(b.dataset.filter)));
-  $('kbf-copyfb').addEventListener('click', async () => {
-    // The full skill invocation — a bare "/feedback" doesn't resolve in Claude Code.
-    const cmd = '/feedback-studio:feedback process';
-    try { await navigator.clipboard.writeText(cmd); toast('Copied "' + cmd + '" — paste it into your agent'); }
-    catch (e) { toast('Run "' + cmd + '" in Claude Code to process these'); }
-  });
   if (MODE === 'md') {
     const stampBtn = $('kbf-stamp');
     stampBtn.style.display = '';

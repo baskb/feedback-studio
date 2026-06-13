@@ -17,7 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   STATUSES, ALLOWED_TYPES, WEB_TYPES, MD_TYPES,
-  readComments, mutate, makeComment, makeReply,
+  readComments, mutate, makeComment, makeReply, exportProcessInstructions,
 } from '../lib/store.mjs';
 
 const FEEDBACK_DIR = process.env.FEEDBACK_DIR
@@ -57,7 +57,7 @@ function summarize(c) {
 const TOOLS = [
   {
     name: 'list_comments',
-    description: 'List feedback comments. Defaults to actionable (open/approved) items. Use status="all" for everything. Optionally filter by page path.',
+    description: 'List feedback comments — your starting point on "PPF" (Please Process Feedback). Defaults to actionable (open/approved) items. Use status="all" for everything. Optionally filter by page path.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -212,6 +212,13 @@ async function handleMessage(msg) {
       protocolVersion,
       capabilities: { tools: {} },
       serverInfo: { name: 'feedback-studio', version: SERVER_VERSION },
+      instructions:
+        'Feedback Studio holds human review comments on a site or Markdown file in .feedback/. '
+        + 'When the user says "PPF" (Please Process Feedback) — or "process the feedback" — call '
+        + 'list_comments, then for each open comment locate its target by the quoted anchor snippet '
+        + '(cross-checked with the selector) and REFUSE rather than edit the wrong element; act per '
+        + 'its type, and set_status resolved when done (reply to ask/explain, add_comment to leave '
+        + 'your own pins). The "please" in PPF is on purpose — we are courteous to our agents. ;-)',
     });
   }
   if (method === 'notifications/initialized' || method === 'initialized') return; // notification
@@ -253,4 +260,7 @@ process.stdin.on('data', (chunk) => {
   }
 });
 process.stdin.on('end', () => { queue.then(() => process.exit(0)); });
+// Drop a self-contained processing guide next to the data, so an agent driving us
+// without the Claude Code plugin (no skill) still has the workflow. Best-effort.
+exportProcessInstructions(FEEDBACK_DIR).catch(() => {});
 process.stderr.write(`feedback-studio MCP server ${SERVER_VERSION} ready (data: ${FEEDBACK_DIR})\n`);

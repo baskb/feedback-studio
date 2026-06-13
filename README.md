@@ -32,9 +32,14 @@ Then, in any project:
 ```
 
 The 30-second path: install the plugin, run `start` in a project, open the URL it
-prints, press **Comment**, and click the page. When you're done, run `process`.
-The skill chooses static serving or a dev-server proxy, reads
-`.feedback/comments.json`, applies the feedback, and shows you the diff.
+prints, press **Comment**, and click the page. When you're done, just tell your agent
+**PPF** — *Please Process Feedback*. The skill chooses static serving or a dev-server
+proxy, reads `.feedback/comments.json`, applies the feedback, and shows you the diff.
+
+> **PPF — "Please Process Feedback"** is the one phrase to remember. Plugin or not
+> (it works with the bundled MCP server too), say it and your agent picks up the
+> comments. And yes, the *please* is on purpose — be nice to your coding agents and
+> they'll be nice to your codebase. ;-)
 
 No Claude Code required:
 
@@ -103,7 +108,8 @@ with people you trust. Stop the server to revoke the link.
 - **Dictate in 18 locales**: English is the default, the voice language is a
   one-tap choice, and the interface stays English.
 - **See progress live**: resolved pins turn green without a refresh. A badge
-  counts the ready comments, and a button copies the `/feedback` command.
+  counts the ready comments, and the panel reminds you to tell your agent to
+  *"Please process feedback (PPF)"*.
 - **Use your phone without exposing the server by default**: local mode binds to
   `127.0.0.1`. For phone review, use `--tunnel` for a real-certificate HTTPS URL
   on any network, or `--https --host 0.0.0.0` on your LAN.
@@ -147,6 +153,11 @@ node plugins/feedback-studio/bin/feedback-studio.mjs --proxy http://localhost:51
 | `--tunnel` | Open a public HTTPS URL through a Cloudflare quick tunnel, with a real cert, so there is no browser warning, the mic works, and it reaches your phone on any network. Fetches the `cloudflared` helper once; no account needed. |
 | `--https` | Serve over TLS with a self-signed cert for phone voice over the LAN. The phone needs a one-time "not private" tap-through. Fetches a small cert helper once. `--tunnel` avoids the warning. |
 | `--no-open` | Don't auto-open the browser. |
+| `--seed-agents` | Append the "how to process the feedback" workflow to this project's `CLAUDE.md` and `AGENTS.md` (idempotent), then exit. So your agent knows the flow without the plugin installed. |
+
+The overlay follows your **OS light/dark theme**; a toggle in the feedback panel header forces
+light or dark. Drag the **Comment button** to any corner (it remembers), and on desktop drag a
+**comment composer** by its header to move it off the content.
 
 > **Requires Node 18+.** Runtime HTTP has zero dependencies; `--https`, `--md`, and
 > `--tunnel` lazily install a single helper (`selfsigned` / `marked` / `cloudflared`)

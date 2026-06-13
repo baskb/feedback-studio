@@ -6,6 +6,35 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Move the Comment button.** Drag the floating button to any corner; it snaps to the
+  nearest one and remembers it (per browser). Works on desktop and mobile — handy when it
+  overlaps your site's own bottom-right widgets.
+- **Drag the comment composer** (desktop) by its header, so it no longer covers the content
+  you're commenting on.
+- **Dark mode.** The overlay follows your OS theme automatically; a toggle in the feedback
+  panel header cycles auto → light → dark and is remembered.
+- **`.feedback/HOW-TO-PROCESS.md`** — a self-contained guide for processing the comments,
+  written next to the data by both the review server and the MCP server (MCP-first, so an
+  agent without the plugin still has the workflow). New **`--seed-agents`** flag appends a
+  short version to your `CLAUDE.md` and `AGENTS.md` (idempotent) so the agent knows the flow
+  every session.
+
+### Changed
+- **"PPF" — *Please Process Feedback*** is now the signature phrase for handing a round
+  to your agent, woven through the overlay panel hint, the skills, the generated
+  `HOW-TO-PROCESS.md` / `--seed-agents` snippet, the MCP server's `initialize` instructions,
+  and the npm / Claude-marketplace descriptions. The panel's old "Copy /feedback" button is
+  gone (it pasted a slash command that didn't resolve for non-plugin users); the footer now
+  reads *Tell your agent: "Please process feedback" (PPF)*. And yes — the *please* is on
+  purpose; we're courteous to our coding agents. ;-)
+
+### Fixed
+- Docs: the server's header flag list now includes `--demo`, `--tunnel` and
+  `--no-open`; the verify skill no longer references a non-existent `scroll_to`
+  tool; the demo skill no longer claims the OS cleans up the temp copy (it
+  doesn't on Windows — the dir is simply safe to delete).
+
 ## [0.2.0] - 2026-06-12
 
 ### Added

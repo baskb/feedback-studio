@@ -88,6 +88,9 @@ try {
   const after = await (await fetch(ORIGIN + '/__feedback/api/comments')).json();
   check('comment persisted', after.comments.length === 1 && after.comments[0].text === 'same-origin works');
 
+  // the agent processing guide is written next to the data on startup
+  check('writes HOW-TO-PROCESS.md', existsSync(path.join(root, '.feedback', 'HOW-TO-PROCESS.md')));
+
   // --demo: serves the bundled sample site from a temp copy, seeded with one
   // comment per web type — and must not create .feedback/ in the cwd it ran from.
   const DEMO_PORT = PORT + 1;

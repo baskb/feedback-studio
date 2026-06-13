@@ -10,9 +10,13 @@
 //   --dir <path>     serve a static build directory (auto-detected if omitted)
 //   --proxy <url>    proxy a running dev server (e.g. http://localhost:5173)
 //   --md <path>      review a Markdown file or a folder of them
+//   --demo           serve the bundled sample page from a throwaway temp copy
 //   --port <n>       listen port (default 4444)
 //   --host <addr>    bind address (default 127.0.0.1; use 0.0.0.0 for phone/LAN)
 //   --https          serve over TLS with a self-signed cert (voice on phones)
+//   --tunnel         public real-cert URL via a Cloudflare quick tunnel
+//   --no-open        don't open the browser automatically
+//   --seed-agents    append the processing workflow to ./CLAUDE.md + ./AGENTS.md, then exit
 //
 // HTTP needs zero dependencies. --https / --md fetch a tiny helper once.
 
@@ -30,6 +34,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   ALLOWED_TYPES, STATUSES, AUTONOMY,
   readComments, writeComments, mutate, makeComment, makeReply, exportMarkdown,
+  exportProcessInstructions, seedAgentsFile,
 } from '../lib/store.mjs';
 import { exportMarkers as stampMarkers } from '../lib/markers.mjs';
 
@@ -850,7 +855,10 @@ function banner(scheme, ips, publicUrl) {
   } else if (ips.length) {
     console.log(`  Phone/LAN        ->  off by default. Re-run with --tunnel (recommended) or --host 0.0.0.0.`);
   }
-  console.log(`  Comments         ->  ${DEMO ? DATA_FILE : '.feedback/comments.json'}  (+ FEEDBACK.md)`);
+  console.log(`  Comments         ->  ${DEMO ? DATA_FILE : '.feedback/comments.json'}  (+ FEEDBACK.md, HOW-TO-PROCESS.md)`);
+  if (!DEMO) {
+    console.log(`  Agent setup      ->  optional: re-run with --seed-agents to teach CLAUDE.md / AGENTS.md the flow.`);
+  }
   if (DEMO) {
     console.log(`\n  3 comments are pre-seeded (one fix, one change, one improve) — and the page`);
     console.log(`  hides a couple more flaws to find. Press C, click anything, leave a comment;`);
@@ -889,8 +897,28 @@ async function setupDemo() {
   return tmp;
 }
 
+// ---------- agent-memory seeding (opt-in: --seed-agents) ----------
+// Append the short processing workflow to the project's CLAUDE.md (Claude Code
+// auto-loads it) and AGENTS.md (Codex/Cursor/Cline/Windsurf), idempotently. This
+// edits user-owned files, so it only runs when explicitly asked, never on startup.
+async function seedAgents() {
+  console.log('');
+  for (const name of ['CLAUDE.md', 'AGENTS.md']) {
+    const fp = path.join(CWD, name);
+    try {
+      const { seeded, created } = await seedAgentsFile(fp);
+      if (!seeded) console.log(`  ${name}  already has the Feedback Studio snippet — left as is.`);
+      else console.log(`  ${name}  ${created ? 'created' : 'updated'} with the processing guide.`);
+    } catch (e) {
+      console.error(`  ${name}  could not be written: ${e.message}`);
+    }
+  }
+  console.log(`\n  Your agent now knows to process .feedback/ comments on "process the feedback" (or PPF).\n`);
+}
+
 // ---------- main ----------
 async function main() {
+  if (args['seed-agents']) { await seedAgents(); return; }
   if (DEMO) await setupDemo();
   if (!PROXY && !MD_MODE && !STATIC_DIR) {
     console.error(`\n  No build directory found. Tried: ${AUTODETECT.join(', ')}.`);
@@ -901,6 +929,9 @@ async function main() {
   }
   await mkdir(DATA_DIR, { recursive: true });
   if (!existsSync(DATA_FILE)) await writeComments(DATA_DIR, []);
+  // Drop the self-contained processing guide next to the data (regenerated each run,
+  // like FEEDBACK.md) so any agent — plugin or not — has the workflow on hand.
+  await exportProcessInstructions(DATA_DIR).catch(() => {});
 
   const ips = lanIPs();
   populateAllowedHosts(ips);

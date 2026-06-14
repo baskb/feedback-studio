@@ -1,5 +1,7 @@
 # Feedback Studio
 
+https://github.com/user-attachments/assets/e76db2d8-4886-4824-93b2-49af158c92b6
+
 A local visual feedback overlay for a website you're building, or for a Markdown
 file you're editing. Point it at a static build, a running dev server, or a `.md`
 file. Then click or tap an element, or select text, and leave a typed or spoken

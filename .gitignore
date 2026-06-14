@@ -5,8 +5,11 @@ node_modules/
 *.bak
 *.tgz
 
-# Demo/marketing screenshots — kept locally, not tracked (image bloat)
+# Demo/marketing media — kept locally or hosted externally, not tracked (bloat)
 docs/media/demo-mobile/
+*.mp4
+*.mov
+*.webm
 
 # Internal cross-session state + strategy — never ship
 PROGRESS.md

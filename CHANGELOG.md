@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The overlay now **defaults to light** (it no longer follows the OS theme by default), and the
+  panel's theme button is a simple **light ↔ dark toggle** (the three-way auto/light/dark cycle
+  was removed).
+
+### Fixed
+- Theme toggle could appear **stuck on dark**: on a machine whose OS prefers dark, the old
+  `auto` state rendered dark, so toggling off `dark` flipped the icon but not the colours (two of
+  the three states looked identical). With `auto` gone, every toggle flips the actual palette.
+
 ## [0.3.2] - 2026-06-13
 
 ### Added

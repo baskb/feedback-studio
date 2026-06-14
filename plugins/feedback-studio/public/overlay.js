@@ -31,7 +31,7 @@
   let mode = SS.get('kbf-mode') === '1';
   let panelOpen = SS.get('kbf-panel') === '1';
   let filter = SS.get('kbf-filter') || 'all';
-  let theme = LS.get('kbf-theme') || 'auto'; // auto (follow OS) | light | dark
+  let theme = LS.get('kbf-theme') === 'dark' ? 'dark' : 'light'; // light (default) | dark; legacy 'auto'/unset -> light
   let activeComposer = null; // { kind:'new'|'edit', anchor, rect, comment? }
   let placed = []; // [{ comment, el, pinEl }]
   let targetEls = []; // rainbow highlight boxes over the element/text being commented on
@@ -1308,19 +1308,20 @@
   $('kbf-toggle-panel').addEventListener('click', () => { if (justDraggedFab) return; setPanel(!panelOpen); });
   $('kbf-panel-close').addEventListener('click', () => setPanel(false));
 
-  // ---------- theme (auto / light / dark) ----------
-  // Tokens live on :host; `data-kbf-theme` forces light/dark, absent = follow the OS.
-  const THEME_CYCLE = { auto: 'light', light: 'dark', dark: 'auto' };
-  const THEME_ICON = { auto: I.themeAuto, light: I.sun, dark: I.moon };
+  // ---------- theme (light / dark) ----------
+  // Light is the default. `data-kbf-theme` is ALWAYS set (light or dark) so a forced light
+  // theme overrides an OS dark preference — the prefers-color-scheme:dark rules are scoped to
+  // :not([data-kbf-theme="light"]), so they only ever apply if the attribute were absent.
+  const THEME_CYCLE = { light: 'dark', dark: 'light' };
+  const THEME_ICON = { light: I.sun, dark: I.moon };
   const themeBtn = $('kbf-theme-toggle');
   function applyTheme(t) {
-    theme = THEME_CYCLE[t] !== undefined ? t : 'auto';
-    if (theme === 'auto') host.removeAttribute('data-kbf-theme');
-    else host.setAttribute('data-kbf-theme', theme);
+    theme = t === 'dark' ? 'dark' : 'light';
+    host.setAttribute('data-kbf-theme', theme);
     LS.set('kbf-theme', theme);
     themeBtn.innerHTML = THEME_ICON[theme];
-    const label = theme === 'auto' ? 'Theme: auto (match system)' : 'Theme: ' + theme;
-    themeBtn.title = label + ' — click to change';
+    const label = 'Theme: ' + theme;
+    themeBtn.title = label + ' — click to switch';
     themeBtn.setAttribute('aria-label', label);
   }
   themeBtn.addEventListener('click', () => applyTheme(THEME_CYCLE[theme]));

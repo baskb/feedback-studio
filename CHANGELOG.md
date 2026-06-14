@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-06-14
+
 ### Changed
 - The overlay now **defaults to light** (it no longer follows the OS theme by default), and the
   panel's theme button is a simple **light ↔ dark toggle** (the three-way auto/light/dark cycle
@@ -249,7 +251,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.3
 [0.3.2]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.2
 [0.3.1]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.1
 [0.3.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.0

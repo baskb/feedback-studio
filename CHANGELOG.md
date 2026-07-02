@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-02
+
 ### Added
 - **Tweak Mode** — a collapsible "Tweak style" section in the composer (web pages,
   element anchors): live knobs for text size, weight, alignment, text/background
@@ -351,7 +353,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.4.0
 [0.3.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.4
 [0.3.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.3
 [0.3.2]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.2

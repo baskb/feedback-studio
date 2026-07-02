@@ -26,7 +26,9 @@ that element's text/existence to change.
 
 1. Read `.feedback/comments.json` (or the dir passed as argument). Collect the
    `resolved` comments — they are the verification targets. Note each one's `page`,
-   `anchor` (snippet = the OLD state), `text`/`thread` (the asked-for NEW state).
+   `anchor` (snippet = the OLD state), `text`/`thread` (the asked-for NEW state), and
+   `shot` if present (`.feedback/shots/<id>.png` — the pin-time BEFORE image; view it
+   to ground what the element looked like when the reviewer pinned it).
 2. **Markdown comments** (`sourceFile` set): verify directly in the source — read the
    file, confirm the requested edit is present at the right spot (`grep -n` the new
    wording; confirm the old wording is gone). No browser needed.

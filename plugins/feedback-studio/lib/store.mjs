@@ -19,7 +19,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 // ---------- schema constants (the contract) ----------
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 export const FILE_VERSION = 1;
 
 // Comment types decide how much latitude the agent gets. Web pages and Markdown
@@ -32,6 +32,16 @@ export const AUTONOMY = ['auto', 'review'];
 
 const ANCHOR_KEYS = ['type', 'selector', 'attrSelector', 'xpath', 'tag', 'id', 'snippet', 'rangeText'];
 const TEXT_MAX = 10000;
+
+// Tweak Mode (web only): properties a comment's `edits[]` may carry. The overlay
+// exposes a subset as live knobs; the whitelist is slightly wider so agents can
+// author edits too. Values are opaque CSS values ("16px", "#0f766e", "16px 24px") —
+// they are DATA for the processing agent, never re-injected as live CSS by us.
+export const TWEAKABLE_PROPS = [
+  'font-size', 'font-weight', 'line-height', 'letter-spacing', 'text-align',
+  'color', 'background-color', 'padding', 'margin', 'border-radius', 'opacity', 'gap',
+];
+const EDITS_MAX = 16;
 
 let _writeSeq = 0;
 
@@ -70,6 +80,42 @@ export function sanitizeAnchor(a) {
 
 const str = (v, n) => String(v == null ? '' : v).slice(0, n);
 
+// Edit-in-place text: the user retyped the element's text directly on the page;
+// {before, after} is the exact wording change. Whitespace is collapsed on both
+// sides (HTML rendering already collapsed it), an unchanged or empty result is
+// no edit at all.
+export function sanitizeTextEdit(t) {
+  if (!t || typeof t !== 'object') return null;
+  const collapse = (v) => str(v, 2000).replace(/\s+/g, ' ').trim();
+  const before = collapse(t.before);
+  const after = collapse(t.after);
+  if (!after || after === before) return null;
+  return { before, after };
+}
+
+// Keep only well-formed {prop, from, to} deltas on whitelisted properties.
+// One entry per property, no unchanged/empty targets, and no characters that
+// could break out of the contexts the values are rendered into (FEEDBACK.md
+// code spans, HTML-escaped panel chips).
+export function sanitizeEdits(edits) {
+  if (!Array.isArray(edits)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const e of edits) {
+    if (!e || typeof e !== 'object') continue;
+    const prop = String(e.prop || '').toLowerCase().trim();
+    if (!TWEAKABLE_PROPS.includes(prop) || seen.has(prop)) continue;
+    const from = str(e.from, 60).trim();
+    const to = str(e.to, 60).trim();
+    if (!to || to === from) continue;
+    if (/[;{}<>`\\]/.test(from + to)) continue;
+    seen.add(prop);
+    out.push({ prop, from, to });
+    if (out.length >= EDITS_MAX) break;
+  }
+  return out;
+}
+
 // The one place a comment object is constructed. Both servers call this so the
 // stored shape (and the default type per mode) is identical regardless of author.
 export function makeComment(input = {}) {
@@ -86,6 +132,11 @@ export function makeComment(input = {}) {
     anchor: sanitizeAnchor(input.anchor),
     type: coerceType(input.type, mode),
     text: str(input.text, TEXT_MAX).trim(),
+    // Tweak Mode deltas are a web concept (live CSS knobs); md comments never carry them.
+    edits: mode === 'web' ? sanitizeEdits(input.edits) : [],
+    // Edit-in-place text works in BOTH modes (in md it's the killer feature:
+    // the agent applies the exact wording to the sourceFile).
+    textEdit: sanitizeTextEdit(input.textEdit),
     author: input.author === 'agent' ? 'agent' : 'user',
     authorName: str(input.authorName, 60),
     thread: [],
@@ -211,7 +262,7 @@ export async function exportMarkdown(dir, comments) {
   let md = `# Feedback export\n\n`;
   md += `_Generated from \`.feedback/comments.json\` (the source of truth). Read-only, human-glance mirror: do not edit or act off this file, act off \`comments.json\` (or the MCP tools)._\n\n`;
   md += `_Generated ${new Date().toISOString()} — ${comments.length} comment(s): ${open} open, ${comments.length - open} resolved._\n\n`;
-  md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin.\n>\n> Comments are a two-way conversation. Some are authored \`by user\`, some \`by agent\` (a proposal/annotation you or another skill left on a component). Each can have a reply thread (lines marked \`↳\`). Statuses: \`open\` (needs work/decision), \`approved\` (the user said go ahead — implement it), \`rejected\` (do not), \`resolved\` (done). Implement approved items, reply to ask questions, and set the status as you go.\n\n`;
+  md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin.\n>\n> \`tweak\` lines are exact CSS deltas the user dialled in live on the element (Tweak Mode). Apply them near-verbatim, translated to the project's styling idiom (stylesheet rule, utility class, or design token) — the target values are not suggestions, the *representation* is yours to choose. \`text edit\` lines are the user retyping the element's text in place: apply the exact after-wording at the anchored location (whitespace-flexible match on the before-text; in Markdown edit the \`sourceFile\`). If the before-text no longer matches, do NOT guess — leave it open for a re-pin.\n>\n> Comments are a two-way conversation. Some are authored \`by user\`, some \`by agent\` (a proposal/annotation you or another skill left on a component). Each can have a reply thread (lines marked \`↳\`). Statuses: \`open\` (needs work/decision), \`approved\` (the user said go ahead — implement it), \`rejected\` (do not), \`resolved\` (done). Implement approved items, reply to ask questions, and set the status as you go.\n\n`;
   for (const page of [...byPage.keys()].sort()) {
     const items = byPage.get(page).slice().sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
     md += `## ${code(page)}${items[0]?.pageTitle ? ` — ${collapse(items[0].pageTitle)}` : ''}\n\n`;
@@ -231,7 +282,16 @@ export async function exportMarkdown(dir, comments) {
       if (c.anchor?.selector) md += `  - css: ${code(c.anchor.selector)}\n`;
       if (c.anchor?.attrSelector) md += `  - attr: ${code(c.anchor.attrSelector)}\n`;
       if (c.anchor?.xpath) md += `  - xpath: ${code(c.anchor.xpath)}\n`;
-      md += `  - ${who}:\n${String(c.text || '').trim().split('\n').map((l) => `    ${l}`).join('\n')}\n`;
+      for (const e of (Array.isArray(c.edits) ? c.edits : [])) {
+        md += `  - tweak: ${code(e.prop)} ${code(e.from || '?')} → ${code(e.to)}\n`;
+      }
+      if (c.textEdit && c.textEdit.after) {
+        md += `  - text edit: "${collapse(c.textEdit.before).replace(/"/g, '”')}" → "${collapse(c.textEdit.after).replace(/"/g, '”')}"\n`;
+      }
+      if (c.shot) md += `  - shot: ${code(c.shot)} (what the reviewer saw at pin time — view it before editing if unsure)\n`;
+      if (c.text || !((Array.isArray(c.edits) && c.edits.length) || (c.textEdit && c.textEdit.after))) {
+        md += `  - ${who}:\n${String(c.text || '').trim().split('\n').map((l) => `    ${l}`).join('\n')}\n`;
+      }
       for (const r of c.thread || []) {
         const rwho = r.author === 'agent' ? `agent${r.authorName ? ' (' + collapse(r.authorName) + ')' : ''}` : 'user';
         md += `  - ↳ ${rwho}:\n${String(r.text || '').trim().split('\n').map((l) => `    ${l}`).join('\n')}\n`;
@@ -275,11 +335,22 @@ also carries a \`sourceFile\`.
 **Locate the target with confidence.** Find the element by its quoted \`snippet\`, cross-checked
 with the \`selector\`. **If you cannot identify the exact element (or, in Markdown, the exact
 source line) with confidence, do NOT edit a guess** — leave the comment open and say it needs a
-re-pin. A confident wrong edit is the worst outcome; silence beats it.
+re-pin. A confident wrong edit is the worst outcome; silence beats it. A comment with a \`shot\`
+field has a pin-time element screenshot at \`.feedback/<shot path>\` — view the image when unsure;
+it is exactly what the reviewer saw, and a mismatch with the element you located means re-pin.
 
 **Act according to \`type\`:**
 - Web — \`fix\`: reproduce the problem, then patch it. \`change\`: apply near-verbatim, no
   redesign. \`improve\`: rewrite/redesign with judgement, in the project's voice.
+- Web comments may carry \`edits\` — exact CSS deltas from the overlay's live Tweak Mode
+  (e.g. \`padding: 16px → 24px\`). The user already previewed these on the element: apply
+  each delta near-verbatim, translated to the project's styling idiom (stylesheet rule,
+  utility class, or design token).
+- A comment may carry \`textEdit\` — \`{before, after}\` from the user retyping the element's
+  text in place. Find \`before\` at the anchored location (match with flexible whitespace;
+  the source may wrap lines or hold inline markup) and apply the exact \`after\` wording,
+  preserving surrounding markup. In Markdown, edit the \`sourceFile\`. If \`before\` no longer
+  matches there, do NOT guess — leave the comment open and ask for a re-pin.
 - Markdown — \`comment\` (address the note), \`rephrase\`, \`expand\`, \`delete\`, \`question\`
   (answer in a reply). Edit the **\`sourceFile\`**, never the throwaway rendered HTML.
 

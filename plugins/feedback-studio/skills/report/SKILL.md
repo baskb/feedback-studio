@@ -50,6 +50,9 @@ Rules:
   not a failure to hide.
 - Quote the user's ask in their words where short enough; paraphrase long voice comments.
 - Include `file:line` references for every edit you can still locate.
+- A comment with a `shot` has a pin-time screenshot at `.feedback/<shot path>`; reference
+  it as a relative Markdown image (`![before](shots/<id>.png)`) under its bullet when the
+  change is visual — the digest then shows reviewers what it looked like before.
 - Omit empty sections. If nothing was processed yet, say the round is uncommitted and
   list the open comments instead.
 - End the file with the attribution footer (one line, exactly):

@@ -1,10 +1,12 @@
 # feedback-studio (plugin)
 
 This is the Claude Code plugin package for Feedback Studio. It provides four
-skills — `/feedback-studio:feedback` (start a session / process comments),
-`:demo` (instant playground), `:verify` (prove processed comments landed), and
-`:report` (shareable round digest) — plus the self-contained Node server they
-drive.
+skills — `/feedback-studio:feedback` (start a session / process comments / watch
+live), `:demo` (instant playground), `:verify` (prove processed comments
+landed), and `:report` (shareable round digest) — plus the self-contained Node
+server they drive (static / proxy / Markdown / demo modes, live style knobs and
+edit-text-in-place, pin-time screenshots, share-role links, optional HTTPS or
+tunnel).
 
 ```
 plugins/feedback-studio/

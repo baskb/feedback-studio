@@ -6,6 +6,68 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Tweak Mode** — a collapsible "Tweak style" section in the composer (web pages,
+  element anchors): live knobs for text size, weight, alignment, text/background
+  color, line height, padding, margin, corners, gap, and opacity. Changes preview
+  live on the element and are saved as exact `edits[]` deltas
+  (`padding: 16px → 24px`) for the agent to translate into the project's styling
+  idiom. Knobs are relevance-gated per element (no text knobs on an image; `gap`
+  only on flex/grid; setting a background reveals Corners), previews always revert
+  on close, and the whole section animates Apple-sheet style.
+- **Edit text on page** — double-click any text element (or use the composer row)
+  and retype it in place; the exact `{before, after}` diff is saved as `textEdit`
+  and applied verbatim by the agent — in `--md` mode, straight into the source
+  `.md`. Enter commits, Esc cancels, click-away commits too; the on-page edit
+  reverts when the composer closes. The panel card shows a strikethrough → new
+  diff.
+- **Watch mode** — say "watch the feedback" and the agent stays live during the
+  review: an agent-presence chip (plus a green dot on the list button) shows
+  online/working states over SSE, questions get answered on their threads within
+  seconds, `auto` comments are applied as they arrive, `review` ones queue for
+  approval. Powered by a new `agent-status` endpoint with heartbeat aging.
+- **Pin-time element screenshots** — saving a comment captures a PNG of the
+  element as the reviewer saw it (after previews revert). Agents view it as
+  ground truth when an anchor is uncertain; verify/report treat it as the BEFORE
+  image; expanded panel cards show a thumbnail. Lazy-vendored `html-to-image`
+  (installs on first capture only), strict upload validation, screenshots are
+  GC'd with their comment, `--no-shots` disables.
+- **Share links with roles** — `--share` mints view / comment / admin capability
+  links (great with `--tunnel`): view is read-only, comment can pin + reply
+  (signed via a "Your name" field), admin manages everything. A link IS its
+  role; keys rotate every start; the whole feedback surface (reads and SSE
+  included) requires a key while the site pages stay public. Your own machine
+  keeps keyless access unless `--share strict`.
+- The server now **warns at startup when `.feedback/` is committable** (git
+  check-ignore), since screenshots raise the stakes of an accidental commit.
+
+### Changed
+- Comment `schemaVersion` bumped to 4: new optional `edits[]`, `textEdit`, and
+  `shot` fields (all backward-compatible; older comments simply lack them).
+- MCP `list_comments` summaries now carry `edits`, `textEdit`, and `shot`, so
+  agents see the load-bearing change data without extra `get_comment` calls.
+- `FEEDBACK.md` renders `tweak:`, `text edit:`, and `shot:` lines; the processing
+  rules (SKILL.md / HOW-TO-PROCESS.md) explain how to apply each near-verbatim,
+  with the refuse-and-re-pin rule extended to all of them.
+- Every capture surface (tweak values, text edits, screenshots) goes through one
+  shared confidence-gated element resolver — data is never read off a
+  low-confidence guessed element.
+
+### Fixed
+- `[hidden]` now always wins inside the overlay (a `display:` on a class could
+  override it and leak hidden UI — the tweak body, count badge, and undo button
+  all did before this).
+- The collapsed Tweak section can no longer show a padding/scrollbar sliver on
+  mobile; number inputs no longer fight mid-keystroke clamping; the composer can
+  no longer grow its Save button off short viewports (internal scrolling).
+- Text-edit commits are never silently lost on click-away, and a live host page
+  mutating the element while the composer is open can no longer be misattributed
+  as the reviewer's edit (the before-snapshot is taken at edit start).
+- Editing a comment after its tweak already landed in source preserves the
+  stored `edits[]` history (per-prop merge instead of wholesale replace).
+- While editing text in place, the pointer shows the text (I-beam) cursor
+  instead of the comment-mode crosshair.
+
 ## [0.3.4] - 2026-07-02
 
 ### Fixed

@@ -49,6 +49,12 @@ function summarize(c) {
     status: c.status,
     autonomy: c.autonomy || 'review', // agents must honour this without an extra get_comment
     text: c.text,
+    // Tweak/text edits are load-bearing (they ARE the requested change) — surface
+    // them in the summary so an agent needn't call get_comment to see them.
+    edits: Array.isArray(c.edits) && c.edits.length ? c.edits : undefined,
+    textEdit: c.textEdit && c.textEdit.after ? c.textEdit : undefined,
+    shot: c.shot || undefined, // pin-time screenshot, relative to .feedback/ — view it when unsure
+
     anchor: { snippet: c.anchor && (c.anchor.snippet || c.anchor.rangeText), selector: c.anchor && c.anchor.selector },
     replies: Array.isArray(c.thread) ? c.thread.length : 0,
   };

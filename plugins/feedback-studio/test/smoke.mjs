@@ -102,6 +102,83 @@ try {
   const after = await (await fetch(ORIGIN + '/__feedback/api/comments')).json();
   check('comment persisted', after.comments.length === 1 && after.comments[0].text === 'same-origin works');
 
+  // Tweak Mode: edits round-trip on POST (sanitized), and PATCH can rewrite them
+  const tw = await fetch(ORIGIN + '/__feedback/api/comments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({
+      page: '/', text: '', anchor: { selector: '#t', snippet: 'Hi' },
+      edits: [{ prop: 'padding', from: '16px', to: '24px' }, { prop: 'position', from: 'static', to: 'fixed' }],
+    }),
+  });
+  const twc = (await tw.json()).comment;
+  check('edits-only comment accepted, whitelist enforced', tw.status === 201
+    && twc.edits.length === 1 && twc.edits[0].prop === 'padding' && twc.edits[0].to === '24px');
+  const twp = await fetch(ORIGIN + '/__feedback/api/comments/' + twc.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ edits: [{ prop: 'color', from: '#111111', to: '#0f766e' }] }),
+  });
+  const twp2 = (await twp.json()).comment;
+  check('PATCH rewrites edits', twp.status === 200 && twp2.edits.length === 1 && twp2.edits[0].prop === 'color');
+  await fetch(ORIGIN + '/__feedback/api/comments/' + twc.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
+
+  // Edit-in-place: textEdit round-trips on POST (collapsed), PATCH null clears it
+  const te = await fetch(ORIGIN + '/__feedback/api/comments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ page: '/', anchor: { snippet: 'Hi' }, textEdit: { before: 'coffee  beens', after: 'coffee beans' } }),
+  });
+  const tec = (await te.json()).comment;
+  check('textEdit-only comment accepted + whitespace collapsed', te.status === 201
+    && tec.textEdit && tec.textEdit.before === 'coffee beens' && tec.textEdit.after === 'coffee beans' && tec.text === '');
+  const tep = await fetch(ORIGIN + '/__feedback/api/comments/' + tec.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ textEdit: null }),
+  });
+  check('PATCH textEdit:null clears it', tep.status === 200 && (await tep.json()).comment.textEdit === null);
+  await fetch(ORIGIN + '/__feedback/api/comments/' + tec.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
+
+  // Shots: PNG upload round-trips, junk is rejected, GC on comment delete
+  const shotOwner = (await (await fetch(ORIGIN + '/__feedback/api/comments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ page: '/', text: 'shot me', anchor: { snippet: 'Hi' } }),
+  })).json()).comment;
+  const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const shotUp = await fetch(ORIGIN + '/__feedback/api/shot/' + shotOwner.id, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ dataUrl: 'data:image/png;base64,' + PNG_1PX }),
+  });
+  const shotC = (await shotUp.json()).comment;
+  const shotGet = await fetch(ORIGIN + '/__feedback/api/shot/' + shotOwner.id);
+  check('shot uploads + comment carries path + served as png', shotUp.status === 200
+    && shotC.shot === 'shots/' + shotOwner.id + '.png'
+    && shotGet.status === 200 && shotGet.headers.get('content-type') === 'image/png');
+  const shotFile = path.join(root, '.feedback', 'shots', shotOwner.id + '.png');
+  check('shot file exists on disk', existsSync(shotFile));
+  const shotBad = await fetch(ORIGIN + '/__feedback/api/shot/' + shotOwner.id, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ dataUrl: 'data:image/png;base64,' + Buffer.from('not a png').toString('base64') }),
+  });
+  const shotEvil = await fetch(ORIGIN + '/__feedback/api/shot/..%2F..%2Fpwn', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ dataUrl: 'data:image/png;base64,' + PNG_1PX }),
+  });
+  check('shot rejects fake PNG + traversal ids', shotBad.status === 400 && shotEvil.status === 400);
+  await fetch(ORIGIN + '/__feedback/api/comments/' + shotOwner.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
+  check('deleting the comment GCs its shot', !existsSync(shotFile));
+
+  // Watch mode: agent presence round-trips and rejects junk states
+  const as1 = await fetch(ORIGIN + '/__feedback/api/agent-status', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ state: 'working', name: 'copy reviewer' }),
+  });
+  const as1b = (await as1.json()).agent;
+  const as2 = (await (await fetch(ORIGIN + '/__feedback/api/agent-status')).json()).agent;
+  check('agent-status round-trips', as1.status === 200 && as1b.state === 'working' && as2.state === 'working' && as2.name === 'copy reviewer');
+  const as3 = await fetch(ORIGIN + '/__feedback/api/agent-status', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ state: 'hacked' }),
+  });
+  check('agent-status coerces junk state to offline', (await as3.json()).agent.state === 'offline');
+
   // the agent processing guide is written next to the data on startup
   check('writes HOW-TO-PROCESS.md', existsSync(path.join(root, '.feedback', 'HOW-TO-PROCESS.md')));
 
@@ -132,6 +209,87 @@ try {
   } finally {
     demoSrv.kill();
     emptySrv.kill();
+  }
+
+  // --share strict: role enforcement end-to-end. Strict mode disables the
+  // localhost bypass, so these loopback requests exercise the real matrix.
+  // Keys are parsed from the banner the server prints — the honest interface.
+  const SH_PORT = PORT + 4;
+  const shSrv = spawn(process.execPath, [bin, '--dir', site, '--share', 'strict', '--port', String(SH_PORT), '--no-open'],
+    { stdio: ['ignore', 'pipe', 'ignore'], cwd: root });
+  try {
+    const keys = await new Promise((resolve, reject) => {
+      let out = '';
+      const t = setTimeout(() => reject(new Error('share banner not printed')), 8000);
+      shSrv.stdout.on('data', (d) => {
+        out += d.toString();
+        const m = /\?key=(sv_[\w-]+)[\s\S]*?\?key=(sc_[\w-]+)[\s\S]*?\?key=(sa_[\w-]+)/.exec(out);
+        if (m) { clearTimeout(t); resolve({ view: m[1], comment: m[2], admin: m[3] }); }
+      });
+    });
+    const SH = `http://127.0.0.1:${SH_PORT}`;
+    const J = { 'Content-Type': 'application/json', Origin: SH };
+    const noKey = await fetch(SH + '/__feedback/api/comments');
+    const badKey = await fetch(SH + '/__feedback/api/comments?key=sv_wrong');
+    check('share: no/invalid key => 401 on reads', noKey.status === 401 && badKey.status === 401);
+    const viewRead = await fetch(SH + `/__feedback/api/comments?key=${keys.view}`);
+    const viewWrite = await fetch(SH + `/__feedback/api/comments?key=${keys.view}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ page: '/', text: 'nope', anchor: { snippet: 'Hi' } }),
+    });
+    check('share: view reads but cannot write', viewRead.status === 200 && viewWrite.status === 403);
+    const cWrite = await fetch(SH + `/__feedback/api/comments?key=${keys.comment}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ page: '/', text: 'from client', authorName: 'Pat', anchor: { snippet: 'Hi' } }),
+    });
+    const cc = (await cWrite.json()).comment;
+    const cReply = await fetch(SH + `/__feedback/api/comments/${cc.id}/reply?key=${keys.comment}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ author: 'user', text: 'ping', authorName: 'Pat' }),
+    });
+    const cPatch = await fetch(SH + `/__feedback/api/comments/${cc.id}?key=${keys.comment}`, {
+      method: 'PATCH', headers: J, body: JSON.stringify({ status: 'resolved' }),
+    });
+    const cDelete = await fetch(SH + `/__feedback/api/comments/${cc.id}?key=${keys.comment}`, { method: 'DELETE', headers: J });
+    check('share: comment adds comments+replies (named) but no status/delete',
+      cWrite.status === 201 && cc.authorName === 'Pat' && cReply.status === 201 && cPatch.status === 403 && cDelete.status === 403);
+    const aPatch = await fetch(SH + `/__feedback/api/comments/${cc.id}?key=${keys.admin}`, {
+      method: 'PATCH', headers: J, body: JSON.stringify({ status: 'resolved' }),
+    });
+    const aDelete = await fetch(SH + `/__feedback/api/comments/${cc.id}?key=${keys.admin}`, { method: 'DELETE', headers: J });
+    check('share: admin manages statuses + deletes', aPatch.status === 200 && aDelete.status === 200);
+    const asDeny = await fetch(SH + `/__feedback/api/agent-status?key=${keys.comment}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ state: 'online' }),
+    });
+    check('share: comment role cannot impersonate the agent', asDeny.status === 403);
+    const page = await fetch(SH + `/?key=${keys.view}`, { redirect: 'manual' });
+    const cookie = page.headers.get('set-cookie') || '';
+    check('share: page key exchanges into an HttpOnly cookie + clean redirect',
+      page.status === 302 && cookie.includes('kbf-key=') && cookie.includes('HttpOnly') && !(page.headers.get('location') || '').includes('key='));
+    const ovl = await (await fetch(SH + '/__feedback/overlay.js', { headers: { Cookie: `kbf-key=${keys.view}` } })).text();
+    check('share: overlay is served role-aware', ovl.startsWith('window.__kbfRole="view";'));
+  } finally {
+    shSrv.kill();
+  }
+
+  // --no-shots: shot uploads refused, and the served overlay carries the flag
+  // so the browser never probes the vendor route.
+  const NS_PORT = PORT + 3;
+  const nsSrv = spawn(process.execPath, [bin, '--dir', site, '--no-shots', '--port', String(NS_PORT), '--no-open'], { stdio: 'ignore', cwd: root });
+  try {
+    await sleep(700);
+    const NS = `http://127.0.0.1:${NS_PORT}`;
+    const nsc = (await (await fetch(NS + '/__feedback/api/comments', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: NS },
+      body: JSON.stringify({ page: '/', text: 'no shots', anchor: { snippet: 'Hi' } }),
+    })).json()).comment;
+    const nsUp = await fetch(NS + '/__feedback/api/shot/' + nsc.id, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: NS },
+      body: JSON.stringify({ dataUrl: 'data:image/png;base64,' + PNG_1PX }),
+    });
+    const nsOverlay = await (await fetch(NS + '/__feedback/overlay.js')).text();
+    const nsVendor = await fetch(NS + '/__feedback/vendor/html-to-image/es/index.js');
+    check('--no-shots refuses uploads + flags the overlay + closes the vendor route',
+      nsUp.status === 404 && nsOverlay.startsWith('window.__kbfShots=false;') && nsVendor.status === 404);
+  } finally {
+    nsSrv.kill();
   }
 } catch (e) {
   console.log('FAIL  exception:', e.message);

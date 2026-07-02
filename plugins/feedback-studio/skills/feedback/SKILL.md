@@ -1,8 +1,8 @@
 ---
 name: feedback
 description: Visual feedback overlay for a local website or Markdown file. The user clicks or selects anything and leaves a typed or spoken comment (even from their phone); you later process those comments, and you can also pin your OWN review comments to elements for the user to approve. Use to review a site or `.md`, start it phone/mobile-ready, process the feedback, or leave AI review comments on a page.
-when_to_use: Use when the user wants to visually review or comment on a local website or a Markdown file (optionally from their phone, by voice); OR to process the comments they collected and apply them; OR when you (or another skill, e.g. a design/copy/accessibility reviewer) should leave review comments pinned to specific elements for the user to approve. Trigger phrases include "review/open my site", "give feedback on this .md", "start it mobile-ready", "process the feedback", and "leave review comments on this page".
-argument-hint: [start | process | --dir <path> | --proxy <url> | --md <file> | --https | --tunnel]
+when_to_use: Use when the user wants to visually review or comment on a local website or a Markdown file (optionally from their phone, by voice); OR to process the comments they collected and apply them; OR to stay live during the review (watch mode - answer question pins in seconds, apply auto comments as they arrive); OR when you (or another skill, e.g. a design/copy/accessibility reviewer) should leave review comments pinned to specific elements for the user to approve. Trigger phrases include "review/open my site", "give feedback on this .md", "start it mobile-ready", "process the feedback", "watch the feedback / go live", and "leave review comments on this page".
+argument-hint: [start | process | watch | --dir <path> | --proxy <url> | --md <file> | --https | --tunnel]
 user-invocable: true
 allowed-tools: Bash Read Edit Write Glob Grep
 ---
@@ -33,6 +33,18 @@ user: press **C** or hit **Comment** (bottom-right), click an element (on a phon
 ▲/▼ to pick), or select text; the **mic** dictates. Comment mode persists across pages.
 Ensure `.feedback/` is gitignored.
 
+**Sharing with a colleague or client:** add `--share` (pairs well with `--tunnel`). The
+server prints three capability links — **view** (read-only pins/panel), **comment** (add
+comments + replies; no resolve/edit/delete — named via a "Your name" field), **admin**
+(everything). A link IS its role: anyone holding it can act while the server runs; keys
+change every start, and this computer keeps keyless full access (use `--share strict` to
+require the admin key locally too — agents calling the API then need `?key=<admin>`).
+Give the user the link matching what the other person should be able to do. Two honest
+caveats to relay: share keys gate the **feedback layer only** — the site pages themselves
+are served to anyone with the URL; and on localhost the key cookie is hostname-scoped
+(browser rule), so other local dev servers technically receive it — keys rotate every
+start, so the exposure window is one session.
+
 ## Markdown mode
 
 Types become document verbs: `comment` / `rephrase` / `expand` / `delete` / `question`
@@ -60,14 +72,31 @@ Studio is polite to its agents. ;-)
      selector. **If you cannot identify the exact element (or, in Markdown, the exact source
      line), do NOT edit a guess.** Leave it open and say it needs a re-pin. A confident wrong
      edit is the worst outcome; silence beats it.
+   - **Use the screenshot when unsure.** A comment with a `shot` field has a pin-time element
+     screenshot at `.feedback/<shot path>` — Read (view) the image; it is exactly what the
+     reviewer saw. Compare it against the element you located before editing; a mismatch
+     means re-pin, not guess.
    - **Act per `type`:** `fix` = reproduce then patch; `change` = apply near-verbatim, no
      redesign; `improve` = rewrite with judgement in the project's voice. If a (spoken) comment
      is vague, propose a concrete interpretation; for `improve`, offer options. Keep the
      project's conventions (read any CLAUDE.md).
+   - **Apply `edits[]` (Tweak Mode) near-verbatim.** Web comments may carry `edits`: exact CSS
+     deltas the user dialled in live on the element (e.g. `{"prop":"padding","from":"16px",
+     "to":"24px"}`). The *target values* are fixed — the user already saw them on screen — but
+     the *representation* is yours: translate each delta to the project's styling idiom
+     (stylesheet rule, utility class, or design token; e.g. `24px` → Tailwind `p-6`). A comment
+     can be edits-only (empty `text`); the edits are then the whole request. The same
+     confidence rule applies: wrong or unsure element ⇒ re-pin, don't guess.
+   - **Apply `textEdit` verbatim.** A comment may carry `textEdit: {before, after}` — the user
+     retyped the element's text in place. Find `before` at the anchored location (match with
+     flexible whitespace; source may wrap lines or contain inline markup) and apply the exact
+     `after` wording, preserving surrounding markup. In Markdown edit the `sourceFile`. If
+     `before` no longer matches there, do NOT guess — leave it open and ask for a re-pin.
 4. Present changes as **diffs grouped by page**. Honour `autonomy`: `review` (default) = show
    first; `auto` = apply directly. Mark each resolved when applied (the pin flips green live):
    PATCH `/__feedback/api/comments/<id>` with `{"status":"resolved"}` if the server is running,
-   else set `"status":"resolved"` in the file.
+   else set `"status":"resolved"` in the file. (If the server runs with `--share strict`, API
+   calls 401/403 without a key — append `?key=<admin key from the startup banner>`.)
 5. **Refresh the page** once the batch is applied so the user sees the *updated* page under its
    now-green pins. The pins flip green live over SSE, but the page content itself does **not**
    reload itself: a static `--dir` needs a rebuild (if applicable) then a hard reload; `--proxy`
@@ -75,6 +104,33 @@ Studio is polite to its agents. ;-)
    if you're driving a browser, reload the tab) — a stale page under green pins looks like the
    edits didn't land.
 6. Summarise by page, and list anything left open (low-confidence anchors, decisions needed).
+
+## Watch mode (live session)
+
+Trigger: "watch the feedback", "go live", "feedback watch". Instead of a batch PPF, you stay
+present while the user reviews — answering questions on pins within seconds and applying
+`auto` comments as they arrive (pins flip green live). Set `S=http://localhost:<port>/__feedback/api`.
+(Under `--share strict`, append `?key=<admin key from the startup banner>` to every call —
+without it the API answers 401/403.)
+
+1. Ensure a session is running (see *Start a session*), then announce yourself:
+   `curl -s -X POST $S/agent-status -H "Content-Type: application/json" -d '{"state":"online","name":"<short role>"}'`
+   The overlay shows an "agent online" chip + a green dot. **Re-post at least every 60s**
+   (any state) — the overlay marks you offline after ~100s of silence. Presence is
+   single-agent (last write wins): don't run two watchers on one session.
+2. Loop until the user says stop (or ~15 min with no activity): `GET $S/comments` every ~5s
+   and diff against what you've seen (new comments, new user replies, status → `approved`).
+3. React per item — post `{"state":"working"}` first, `{"state":"online"}` when done:
+   - **`question` (or any comment asking something):** answer in a thread reply
+     (`POST $S/comments/<id>/reply`). Don't change code for a question.
+   - **`autonomy:"auto"`:** locate with the usual confidence rule — if unsure, reply asking
+     for a re-pin instead of editing — then apply, PATCH `{"status":"resolved"}`, and remind
+     the user to reload if the page won't hot-reload itself.
+   - **`autonomy:"review"`:** reply "Queued — I'll show you this change before applying it."
+     and leave it open (batch it for PPF or an approval).
+   - **status → `approved`:** that IS the go-ahead — implement it now, then resolve.
+4. On exit: `POST $S/agent-status` with `{"state":"offline"}` and summarise the session
+   (what was applied, answered, still open).
 
 ## Author your own comments (optional)
 

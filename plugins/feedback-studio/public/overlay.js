@@ -7,6 +7,14 @@
   if (window.__kbfMounted) return;
   window.__kbfMounted = true;
 
+  // Share role (injected by the server under --share): 'full' when absent.
+  // view = read-only; comment = may add comments/replies (no statuses, edits or
+  // deletes — those are the host team's); none = no valid key, mount nothing.
+  const ROLE = window.__kbfRole || 'full';
+  if (ROLE === 'none') return;
+  const CAN_COMMENT = ROLE !== 'view';
+  const CAN_MANAGE = ROLE === 'full' || ROLE === 'admin';
+
   const API = '/__feedback/api';
   const ROOT = API.replace(/\/api$/, ''); // '/__feedback' — base for /events and /api/*
   const PAGE = normalizePath(location.pathname);
@@ -128,6 +136,11 @@
     sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><line x1="12" y1="2.5" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="21.5"/><line x1="2.5" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="21.5" y2="12"/><line x1="5.3" y1="5.3" x2="7" y2="7"/><line x1="17" y1="17" x2="18.7" y2="18.7"/><line x1="5.3" y1="18.7" x2="7" y2="17"/><line x1="17" y1="7" x2="18.7" y2="5.3"/></svg>',
     moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
     themeAuto: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none"/></svg>',
+    sliders: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
+    undo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>',
+    alignL: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="14" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg>',
+    alignC: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6.5" y1="12" x2="17.5" y2="12"/><line x1="5" y1="18" x2="19" y2="18"/></svg>',
+    alignR: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="6" y1="18" x2="21" y2="18"/></svg>',
   };
 
   // ---------- shadow host ----------
@@ -165,6 +178,7 @@
           </div>
         </div>
         <div class="kbf-panel-sub" id="kbf-panel-sub"></div>
+        <div class="kbf-agent-chip" id="kbf-agent-chip" hidden role="status"><span class="kbf-agent-dot"></span><span id="kbf-agent-text"></span></div>
         <div class="kbf-filters" role="group" aria-label="Filter comments">
           <button class="kbf-filter" data-filter="all" aria-pressed="false">All</button>
           <button class="kbf-filter" data-filter="open" aria-pressed="false">Open</button>
@@ -398,6 +412,7 @@
 
   // ---------- comment mode ----------
   function setMode(on) {
+    if (!CAN_COMMENT) on = false; // view links never enter comment mode
     mode = on;
     SS.set('kbf-mode', on ? '1' : '0');
     modeBtn.classList.toggle('is-active', on);
@@ -477,6 +492,15 @@
     }, 0);
   }, true);
 
+  // Double-click on the commented element = jump straight into editing its text
+  // (the first click of the pair already opened the composer via pointerup).
+  document.addEventListener('dblclick', (e) => {
+    if (!mode || isInUI(e)) return;
+    e.preventDefault();
+    const a = activeComposer;
+    if (a && a.textEditApi && a.el && (a.el === e.target || a.el.contains(e.target))) a.textEditApi.start();
+  }, true);
+
   // ---------- touch element picker ----------
   let pickChain = [];
   let pickIdx = 0;
@@ -535,10 +559,613 @@
     }
   });
 
+  // ---------- tweak mode (live style knobs on the picked element) ----------
+  // Lets the user *show* a style change instead of describing it: steppers and
+  // pickers preview live via ONE overlay-owned <style> tag in the host document
+  // (plus a marker attribute on the element), and Save records exact
+  // {prop, from, to} deltas on the comment for the agent to apply to source.
+  // The preview is temporary by design: everything reverts the moment the
+  // composer closes — the page itself is never durably altered.
+  const TWEAK_ATTR = 'data-kbf-tweak';
+  const TWEAK_STYLE_ID = 'kbf-tweak-style';
+  // The knobs exposed here are a subset of TWEAKABLE_PROPS in lib/store.mjs
+  // (the browser can't import it); the server accepts the wider list.
+  // `when(info)` gates each knob on RELEVANCE for the picked element — a knob
+  // that can't visibly do anything (text size on an image, gap on a non-flex
+  // box) is hidden, not disabled: fewer rows, zero dead controls.
+  const TWEAK_CONTROLS = [
+    { prop: 'font-size', label: 'Text size', kind: 'px', min: 6, max: 300, when: (i) => i.hasText },
+    { prop: 'font-weight', label: 'Weight', kind: 'weight', when: (i) => i.hasText },
+    { prop: 'text-align', label: 'Align', kind: 'align', when: (i) => i.hasText && !i.inline },
+    { prop: 'color', label: 'Text color', kind: 'color', when: (i) => i.hasText },
+    { prop: 'line-height', label: 'Line height', kind: 'px', min: 8, max: 400, when: (i) => i.hasText },
+    { prop: 'background-color', label: 'Background color', kind: 'color' },
+    { prop: 'padding', label: 'Padding', kind: 'px4', min: 0, max: 400 },
+    { prop: 'margin', label: 'Margin', kind: 'px4', min: -200, max: 400 },
+    // corners only make sense once there's something to round (bg / border /
+    // replaced element) — but setting a Background color reveals this row live
+    { prop: 'border-radius', label: 'Corners', kind: 'px4', min: 0, max: 300, when: (i) => i.hasBox },
+    { prop: 'gap', label: 'Gap', kind: 'px', min: 0, max: 200, when: (i) => i.isFlexGrid },
+    { prop: 'opacity', label: 'Opacity', kind: 'pct', min: 0, max: 100, step: 5 },
+  ];
+
+  // Relevance facts about the picked element, computed once per composer.
+  function tweakInfo(el, cs) {
+    const disp = cs.display;
+    const replaced = /^(img|video|canvas|svg|picture|iframe|input|textarea|select|button)$/i.test(el.nodeName);
+    const bg = cs.backgroundColor;
+    return {
+      hasText: !!norm(el.textContent) || /^(input|textarea|select|button)$/i.test(el.nodeName),
+      inline: disp === 'inline',
+      isFlexGrid: /(flex|grid)/.test(disp) && el.children.length > 1,
+      hasBox: replaced || !!cssColorToHex(bg) || isTranslucent(bg) || parseFloat(cs.borderTopWidth) > 0,
+    };
+  }
+
+  function clearTweakPreview() {
+    const s = document.getElementById(TWEAK_STYLE_ID);
+    if (s) s.remove();
+    try { document.querySelectorAll('[' + TWEAK_ATTR + ']').forEach((el) => el.removeAttribute(TWEAK_ATTR)); } catch (e) {}
+  }
+
+  // rgb()/rgba() → #rrggbb (color inputs only speak hex). '' = not representable
+  // as opaque hex: transparent, semi-transparent (alpha must not be silently
+  // flattened away — the raw rgba() is kept as the recorded value), or unknown.
+  function cssColorToHex(v) {
+    v = String(v || '').trim();
+    if (/^#[0-9a-f]{6}$/i.test(v)) return v.toLowerCase();
+    const m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)$/.exec(v);
+    if (!m || (m[4] !== undefined && parseFloat(m[4]) < 1)) return '';
+    const h = (n) => (+n < 256 ? +n : 255).toString(16).padStart(2, '0');
+    return '#' + h(m[1]) + h(m[2]) + h(m[3]);
+  }
+  // alpha strictly between 0 and 1 → a real translucent color (not just "none")
+  function isTranslucent(v) {
+    const m = /^rgba?\([^)]*,\s*([\d.]+)\s*\)$/.exec(String(v || '').trim());
+    if (!m) return false;
+    const a = parseFloat(m[1]);
+    return a > 0 && a < 1;
+  }
+  const fmtPx = (n) => (Math.round(n * 10) / 10) + 'px';
+  // 4 side/corner values → the shortest CSS shorthand ("16px", "16px 24px", …).
+  function shorthand4(t, r, b, l) {
+    if (t === r && r === b && b === l) return t;
+    if (t === b && r === l) return t + ' ' + r;
+    if (r === l) return t + ' ' + r + ' ' + b;
+    return t + ' ' + r + ' ' + b + ' ' + l;
+  }
+
+  // Read the element's current computed values for every knob (the "from" side).
+  function readTweakState(el) {
+    const cs = getComputedStyle(el);
+    const px = (p) => parseFloat(cs.getPropertyValue(p)) || 0;
+    const state = {};
+    for (const ctl of TWEAK_CONTROLS) {
+      if (ctl.kind === 'px') {
+        const raw = cs.getPropertyValue(ctl.prop).trim();
+        let n = parseFloat(raw);
+        if (isNaN(n)) {
+          // line-height "normal" (and friends): show the effective px, but the
+          // recorded "from" stays the honest keyword.
+          n = ctl.prop === 'line-height' ? (px('font-size') || 16) * 1.2 : 0;
+          state[ctl.prop] = { num: Math.round(n * 10) / 10, css: raw || 'normal', mixed: false };
+        } else {
+          state[ctl.prop] = { num: Math.round(n * 10) / 10, css: fmtPx(n), mixed: false };
+        }
+      } else if (ctl.kind === 'pct') {
+        const v = parseFloat(cs.getPropertyValue(ctl.prop));
+        const n = isNaN(v) ? 1 : v;
+        state[ctl.prop] = { num: Math.round(n * 100), css: String(n), mixed: false };
+      } else if (ctl.kind === 'align') {
+        const raw = cs.getPropertyValue('text-align').trim();
+        const phys = { start: 'left', end: 'right', '-webkit-left': 'left', '-webkit-right': 'right', '-webkit-center': 'center' }[raw] || raw;
+        state[ctl.prop] = { val: ['left', 'center', 'right'].includes(phys) ? phys : '', css: raw, mixed: false };
+      } else if (ctl.kind === 'weight') {
+        const w = parseInt(cs.getPropertyValue('font-weight'), 10) || 400;
+        state[ctl.prop] = { num: w, css: String(w), mixed: false };
+      } else if (ctl.kind === 'color') {
+        const raw = cs.getPropertyValue(ctl.prop).trim();
+        const hex = cssColorToHex(raw);
+        const translucent = !hex && isTranslucent(raw);
+        // A translucent "from" is recorded as the honest rgba(), never a flattened hex.
+        state[ctl.prop] = { hex, css: hex || (translucent ? raw : 'transparent'), raw, translucent, mixed: false };
+      } else if (ctl.kind === 'px4') {
+        const sides = ctl.prop === 'border-radius'
+          ? ['border-top-left-radius', 'border-top-right-radius', 'border-bottom-right-radius', 'border-bottom-left-radius']
+          : [ctl.prop + '-top', ctl.prop + '-right', ctl.prop + '-bottom', ctl.prop + '-left'];
+        const v = sides.map((s) => px(s));
+        state[ctl.prop] = {
+          num: Math.round(v[0] * 10) / 10,
+          css: shorthand4(fmtPx(v[0]), fmtPx(v[1]), fmtPx(v[2]), fmtPx(v[3])),
+          mixed: !(v[0] === v[1] && v[1] === v[2] && v[2] === v[3]),
+        };
+      }
+    }
+    return state;
+  }
+
+  function editsSummary(c) {
+    const ed = Array.isArray(c.edits) ? c.edits : [];
+    return ed.map((e) => e.prop + ' ' + (e.from || '?') + ' → ' + e.to).join(', ');
+  }
+
+  // A direct fresh pick (kind 'new') is ground truth. ANY element that came from
+  // re-resolving a stored anchor — including the one editFromCard hands in via
+  // opts.el when reopening an existing comment — must clear the confidence bar
+  // before we read values off it (Tweak knobs, edit-in-place text): capturing
+  // authoritative before/after data off a low-confidence GUESSED element would
+  // hand the agent exactly the "confident wrong edit" the invariant forbids.
+  // One shared, per-composer cache: verified once, trusted for the session.
+  function makeTrustedGetEl(opts) {
+    let trusted = opts.kind !== 'edit';
+    return () => {
+      if (trusted && opts.el && opts.el.isConnected) return opts.el;
+      const { el, confidence } = resolveWithConfidence(opts.anchor);
+      if (!el || confidence === 'low' || confidence === 'none') return null;
+      trusted = true;
+      opts.el = el;
+      return el;
+    };
+  }
+
+  // Build the collapsible "Tweak style" section inside the composer. Returns
+  // { getEdits, count } or null when there is no live element to preview on.
+  function setupTweaks(box, opts, hooks) {
+    const getEl = opts.getTargetEl;
+    const el = getEl();
+    if (!el) return null;
+
+    const base = readTweakState(el); // "from" values, captured once at open
+    const tweaks = new Map();        // prop -> to (css string)
+    const touched = new Set();       // props the USER changed this session (not primed)
+    let dirty = false;               // any user touch at all?
+    let priming = false;             // true while prefilling stored edits (not a user touch)
+
+    const info = tweakInfo(el, getComputedStyle(el));
+    const wrap = document.createElement('div');
+    wrap.className = 'kbf-tweak';
+    wrap.innerHTML = `
+      <button type="button" class="kbf-tweak-toggle" aria-expanded="false">
+        ${I.sliders}<span class="kbf-tweak-title">Tweak style</span>
+        <span class="kbf-tweak-count" hidden></span>
+        <span class="kbf-tweak-chev">${I.down}</span>
+      </button>
+      <div class="kbf-tweak-body">
+        <div class="kbf-tweak-rows">
+        ${TWEAK_CONTROLS.map((ctl) => {
+          const st = base[ctl.prop];
+          const off = ctl.when && !ctl.when(info);
+          let control = '';
+          if (ctl.kind === 'px' || ctl.kind === 'px4' || ctl.kind === 'pct') {
+            const unit = ctl.kind === 'pct' ? '%' : 'px';
+            control = `
+              <span class="kbf-tweak-num">
+                <button type="button" class="kbf-tweak-step" data-step="-1" title="Decrease (Shift: ±10)" aria-label="Decrease ${ctl.label}">−</button>
+                <input class="kbf-tweak-input" type="number" step="1" value="${st.num}" aria-label="${ctl.label} in ${unit === '%' ? 'percent' : 'pixels'}">
+                <span class="kbf-tweak-unit">${unit}</span>
+                <button type="button" class="kbf-tweak-step" data-step="1" title="Increase (Shift: ±10)" aria-label="Increase ${ctl.label}">+</button>
+              </span>`;
+          } else if (ctl.kind === 'weight') {
+            const ws = [100, 200, 300, 400, 500, 600, 700, 800, 900];
+            if (!ws.includes(st.num)) { ws.push(st.num); ws.sort((a, b) => a - b); }
+            control = `<select class="kbf-tweak-select" aria-label="${ctl.label}">${ws.map((w) => `<option value="${w}"${w === st.num ? ' selected' : ''}>${w}</option>`).join('')}</select>`;
+          } else if (ctl.kind === 'align') {
+            control = `
+              <span class="kbf-tweak-alignseg" role="group" aria-label="${ctl.label}">
+                ${['left', 'center', 'right'].map((a) => `<button type="button" class="kbf-tweak-alignbtn${st.val === a ? ' is-active' : ''}" data-align="${a}" title="Align ${a}" aria-label="Align ${a}">${I['align' + a[0].toUpperCase()]}</button>`).join('')}
+              </span>`;
+          } else if (ctl.kind === 'color') {
+            const bg = st.hex || (st.translucent ? st.raw : '');
+            control = `
+              <span class="kbf-tweak-colorwrap${bg ? '' : ' is-none'}" title="${ctl.label}${st.translucent ? ': ' + st.raw : ''}">
+                <span class="kbf-tweak-swatch"${bg ? ` style="background:${bg}"` : ''}></span>
+                <span class="kbf-tweak-hex">${st.hex || (st.translucent ? 'alpha' : 'none')}</span>
+                <input class="kbf-tweak-color" type="color" value="${st.hex || '#888888'}" aria-label="${ctl.label}">
+              </span>`;
+          }
+          return `
+            <div class="kbf-tweak-row${off ? ' kbf-tweak-row--off' : ''}" data-prop="${ctl.prop}" data-kind="${ctl.kind}"${st.mixed ? ` title="Sides differ (${st.css}) — changing sets all sides"` : ''}>
+              <span class="kbf-tweak-label">${ctl.label}${st.mixed ? ' <em class="kbf-tweak-mixed">mixed</em>' : ''}</span>
+              ${control}
+              <button type="button" class="kbf-tweak-undo" title="Reset ${ctl.label}" aria-label="Reset ${ctl.label}">${I.undo}</button>
+            </div>`;
+        }).join('')}
+          <div class="kbf-tweak-foot">
+            <button type="button" class="kbf-tweak-resetall" hidden>Reset all</button>
+          </div>
+        </div>
+      </div>`;
+    const ta = box.querySelector('.kbf-textarea');
+    ta.parentElement.insertBefore(wrap, ta);
+
+    const toggle = wrap.querySelector('.kbf-tweak-toggle');
+    const countBadge = wrap.querySelector('.kbf-tweak-count');
+    const resetAllBtn = wrap.querySelector('.kbf-tweak-resetall');
+
+    function applyPreview() {
+      const target = getEl();
+      if (!tweaks.size || !target) { clearTweakPreview(); schedulePos(); return; }
+      target.setAttribute(TWEAK_ATTR, '1');
+      let s = document.getElementById(TWEAK_STYLE_ID);
+      if (!s) { s = document.createElement('style'); s.id = TWEAK_STYLE_ID; document.head.appendChild(s); }
+      s.textContent = '[' + TWEAK_ATTR + ']{' + [...tweaks].map(([p, v]) => p + ':' + v + ' !important;').join('') + '}';
+      schedulePos(); // padding/margin moved things — track the highlight + pins
+    }
+    function setTweak(prop, toCss) {
+      if (!priming) { dirty = true; touched.add(prop); }
+      if (toCss === base[prop].css) tweaks.delete(prop);
+      else tweaks.set(prop, toCss);
+      const row = wrap.querySelector('.kbf-tweak-row[data-prop="' + prop + '"]');
+      if (row) row.classList.toggle('is-changed', tweaks.has(prop));
+      // giving a bare box a background makes Corners relevant — reveal it live
+      if (prop === 'background-color' && tweaks.has(prop)) {
+        const rr = wrap.querySelector('.kbf-tweak-row[data-prop="border-radius"]');
+        if (rr) rr.classList.remove('kbf-tweak-row--off');
+      }
+      countBadge.hidden = !tweaks.size;
+      countBadge.textContent = String(tweaks.size);
+      resetAllBtn.hidden = !tweaks.size;
+      ta.placeholder = tweaks.size ? 'Optional note — the tweaks above are the change' : PLACEHOLDER;
+      applyPreview();
+      if (hooks.validate) hooks.validate();
+    }
+    const clamp = (ctl, n) => Math.max(ctl.min, Math.min(ctl.max, n));
+    // writeBack=false while the user is mid-keystroke: clamp only the value we
+    // preview/record, NEVER rewrite the field under their cursor (typing "16"
+    // into a min-6 control must not become "6" → "66"). Blur/steppers write back.
+    function commitRow(row, writeBack = true) {
+      const prop = row.dataset.prop;
+      const ctl = TWEAK_CONTROLS.find((c) => c.prop === prop);
+      if (ctl.kind === 'px' || ctl.kind === 'px4' || ctl.kind === 'pct') {
+        const input = row.querySelector('.kbf-tweak-input');
+        let n = parseFloat(input.value);
+        if (isNaN(n)) return;
+        n = clamp(ctl, n);
+        if (writeBack) input.value = n;
+        setTweak(prop, ctl.kind === 'pct' ? String(Math.round(n) / 100) : fmtPx(n));
+      } else if (ctl.kind === 'weight') {
+        setTweak(prop, row.querySelector('.kbf-tweak-select').value);
+      } else if (ctl.kind === 'color') {
+        const hex = row.querySelector('.kbf-tweak-color').value;
+        row.querySelector('.kbf-tweak-swatch').style.background = hex;
+        row.querySelector('.kbf-tweak-hex').textContent = hex;
+        row.querySelector('.kbf-tweak-colorwrap').classList.remove('is-none');
+        setTweak(prop, hex);
+      }
+    }
+    function resetRow(row) {
+      const prop = row.dataset.prop;
+      const st = base[prop];
+      const kind = row.dataset.kind;
+      if (kind === 'px' || kind === 'px4' || kind === 'pct') row.querySelector('.kbf-tweak-input').value = st.num;
+      else if (kind === 'weight') row.querySelector('.kbf-tweak-select').value = String(st.num);
+      else if (kind === 'align') {
+        row.querySelectorAll('.kbf-tweak-alignbtn').forEach((b) => b.classList.toggle('is-active', b.dataset.align === st.val));
+      }
+      else if (kind === 'color') {
+        const bg = st.hex || (st.translucent ? st.raw : '');
+        row.querySelector('.kbf-tweak-color').value = st.hex || '#888888';
+        row.querySelector('.kbf-tweak-swatch').style.background = bg;
+        row.querySelector('.kbf-tweak-hex').textContent = st.hex || (st.translucent ? 'alpha' : 'none');
+        row.querySelector('.kbf-tweak-colorwrap').classList.toggle('is-none', !bg);
+      }
+      setTweak(prop, st.css);
+    }
+
+    // Collapsed by default; expanding animates via grid-template-rows 0fr→1fr
+    // (the CSS owns the motion). Reposition after the height settles.
+    function setOpen(open) {
+      wrap.classList.toggle('is-open', open);
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (hooks.reposition) setTimeout(hooks.reposition, 300);
+    }
+    toggle.addEventListener('click', () => setOpen(!wrap.classList.contains('is-open')));
+    resetAllBtn.addEventListener('click', () => wrap.querySelectorAll('.kbf-tweak-row').forEach(resetRow));
+    wrap.addEventListener('click', (e) => {
+      const undo = e.target.closest('.kbf-tweak-undo');
+      if (undo) { resetRow(undo.closest('.kbf-tweak-row')); return; }
+      const alignBtn = e.target.closest('.kbf-tweak-alignbtn');
+      if (alignBtn) {
+        const row = alignBtn.closest('.kbf-tweak-row');
+        if (alignBtn.classList.contains('is-active')) { resetRow(row); return; } // tap again = back to original
+        row.querySelectorAll('.kbf-tweak-alignbtn').forEach((b) => b.classList.toggle('is-active', b === alignBtn));
+        setTweak(row.dataset.prop, alignBtn.dataset.align);
+        return;
+      }
+      const stepBtn = e.target.closest('.kbf-tweak-step');
+      if (stepBtn && !stepBtn.dataset.held) stepRow(stepBtn, e.shiftKey);
+    });
+    function stepRow(stepBtn, big) {
+      const row = stepBtn.closest('.kbf-tweak-row');
+      const ctl = TWEAK_CONTROLS.find((c) => c.prop === row.dataset.prop);
+      const input = row.querySelector('.kbf-tweak-input');
+      const cur = parseFloat(input.value) || 0;
+      input.value = cur + Number(stepBtn.dataset.step) * (big ? 10 : (ctl.step || 1));
+      commitRow(row);
+    }
+    // Press-and-hold on a stepper repeats (400ms delay, then ~14/s).
+    wrap.addEventListener('pointerdown', (e) => {
+      const stepBtn = e.target.closest('.kbf-tweak-step');
+      if (!stepBtn) return;
+      let fired = false;
+      const t1 = setTimeout(() => {
+        const t2 = setInterval(() => { fired = true; stepRow(stepBtn, e.shiftKey); }, 70);
+        stepBtn._t2 = t2;
+      }, 400);
+      const stop = () => {
+        clearTimeout(t1);
+        if (stepBtn._t2) { clearInterval(stepBtn._t2); stepBtn._t2 = null; }
+        if (fired) stepBtn.dataset.held = '1'; // swallow the trailing click
+        setTimeout(() => delete stepBtn.dataset.held, 0);
+        stepBtn.removeEventListener('pointerup', stop);
+        stepBtn.removeEventListener('pointerleave', stop);
+        stepBtn.removeEventListener('pointercancel', stop);
+      };
+      stepBtn.addEventListener('pointerup', stop);
+      stepBtn.addEventListener('pointerleave', stop);
+      stepBtn.addEventListener('pointercancel', stop);
+    });
+    wrap.addEventListener('input', (e) => {
+      const row = e.target.closest('.kbf-tweak-row');
+      if (!row) return;
+      // number fields: preview without writing back (don't fight the keystroke)
+      if (e.target.classList.contains('kbf-tweak-input')) commitRow(row, false);
+      else if (e.target.classList.contains('kbf-tweak-color')) commitRow(row);
+    });
+    wrap.addEventListener('change', (e) => {
+      const row = e.target.closest('.kbf-tweak-row');
+      if (!row) return;
+      // blur / Enter on a number field: NOW normalise + clamp the field itself
+      if (e.target.classList.contains('kbf-tweak-input') || e.target.classList.contains('kbf-tweak-select')) commitRow(row);
+    });
+
+    // Editing a comment that already carries tweaks: prime the knobs with the
+    // stored target values and preview them straight away. Priming is NOT a user
+    // touch — if the page has since been updated (agent applied the tweak, dev
+    // server reloaded), the stored "to" now equals the live value, the knobs show
+    // no diff, and an untouched Save must NOT wipe the historical edits[].
+    if (opts.kind === 'edit' && Array.isArray(opts.comment?.edits) && opts.comment.edits.length) {
+      priming = true;
+      for (const ed of opts.comment.edits) {
+        const row = wrap.querySelector('.kbf-tweak-row[data-prop="' + ed.prop + '"]');
+        if (!row) continue;
+        row.classList.remove('kbf-tweak-row--off'); // a stored edit makes its row relevant
+        const kind = row.dataset.kind;
+        if (kind === 'px' || kind === 'px4') {
+          const n = parseFloat(ed.to);
+          if (!isNaN(n)) { row.querySelector('.kbf-tweak-input').value = n; commitRow(row); }
+        } else if (kind === 'pct') {
+          const n = parseFloat(ed.to);
+          if (!isNaN(n)) { row.querySelector('.kbf-tweak-input').value = Math.round(n * 100); commitRow(row); }
+        } else if (kind === 'align' && ['left', 'center', 'right'].includes(ed.to)) {
+          row.querySelectorAll('.kbf-tweak-alignbtn').forEach((b) => b.classList.toggle('is-active', b.dataset.align === ed.to));
+          setTweak(ed.prop, ed.to);
+        } else if (kind === 'weight') {
+          const sel = row.querySelector('.kbf-tweak-select');
+          if ([...sel.options].some((o) => o.value === ed.to)) { sel.value = ed.to; commitRow(row); }
+        } else if (kind === 'color' && /^#[0-9a-f]{6}$/i.test(ed.to)) {
+          row.querySelector('.kbf-tweak-color').value = ed.to;
+          commitRow(row);
+        }
+      }
+      priming = false;
+      if (tweaks.size) setOpen(true);
+    }
+
+    return {
+      count: () => tweaks.size,
+      dirty: () => dirty,
+      getEdits: () => [...tweaks].map(([prop, to]) => ({ prop, from: base[prop].css, to })),
+      // Per-prop merge for re-saves of an existing comment: props the user did
+      // NOT touch this session keep their stored (historical) entry — including
+      // ones already applied to source, which show no live diff anymore — while
+      // touched props take the current knob state (an intentional reset back to
+      // base correctly drops that prop). Full replacement would silently erase
+      // applied history the moment any unrelated knob was moved.
+      mergeEdits: (stored) => {
+        const kept = (Array.isArray(stored) ? stored : []).filter((e) => e && !touched.has(e.prop));
+        const mine = [...tweaks].filter(([p]) => touched.has(p)).map(([prop, to]) => ({ prop, from: base[prop].css, to }));
+        return [...kept, ...mine];
+      },
+    };
+  }
+
+  // ---------- edit-in-place text (retype the element's copy on the page) ----------
+  // The user edits the element's text directly (contenteditable, temporary),
+  // and Save records the exact {before, after} wording as `textEdit` — the
+  // agent applies the after-wording to source verbatim. Like Tweak previews,
+  // the on-page edit reverts when the composer closes.
+  let activeTextEditRestore = null; // module-level so closeComposer always restores
+
+  const PHRASING_RE = /^(a|abbr|b|bdi|bdo|br|cite|code|data|dfn|em|i|kbd|mark|q|rp|rt|ruby|s|samp|small|span|strong|sub|sup|time|u|var|wbr)$/i;
+
+  function setupTextEdit(box, opts, hooks) {
+    const getEl = opts.getTargetEl;
+    const el = getEl();
+    if (!el) return null;
+    // Only where retyping is faithful: real text, and only inline (phrasing)
+    // children — retyping a layout container would flatten its structure.
+    if (!norm(el.textContent)) return null;
+    if (![...el.children].every((c) => PHRASING_RE.test(c.nodeName))) return null;
+
+    // The before-snapshot is taken when the user STARTS editing, not when the
+    // composer opens: a live host page (data binding, websocket updates) may
+    // change this element's text while the composer sits open, and that drift
+    // must never be misattributed as the user's deliberate retype — the agent
+    // is told the {before, after} pair is exact.
+    let baseline = null;  // { html, text } as of the first edit-start
+    let editing = false;
+    let dirtyTE = false;  // the user performed (or reverted) an edit this session
+    let prevCursor = '';  // the element's own inline cursor, restored after editing
+
+    const row = document.createElement('div');
+    row.className = 'kbf-editext';
+    row.innerHTML = `
+      <button type="button" class="kbf-editext-btn">${I.edit}<span class="kbf-editext-label">Edit text on page</span></button>
+      <button type="button" class="kbf-editext-undo" title="Restore the original text" aria-label="Restore the original text" hidden>${I.undo}</button>`;
+    const ta = box.querySelector('.kbf-textarea');
+    ta.parentElement.insertBefore(row, ta);
+
+    const btn = row.querySelector('.kbf-editext-btn');
+    const label = row.querySelector('.kbf-editext-label');
+    const undoBtn = row.querySelector('.kbf-editext-undo');
+
+    const changed = () => !!baseline && norm(el.textContent) !== baseline.text;
+    function refreshRow() {
+      row.classList.toggle('is-editing', editing);
+      row.classList.toggle('is-changed', changed());
+      label.textContent = editing ? 'Editing… Enter = done · Esc = cancel'
+        : changed() ? '“' + norm(el.textContent).slice(0, 42) + (norm(el.textContent).length > 42 ? '…' : '') + '”'
+        : 'Edit text on page';
+      undoBtn.hidden = !changed();
+      if (hooks.validate) hooks.validate();
+    }
+    function start() {
+      if (editing) { finish(); return; }
+      if (!getEl() || !el.isConnected) { toastError('The element changed — re-pin to edit its text.'); return; }
+      // First edit of the session snapshots the CURRENT content as "before"
+      // (drift-proof); resuming an in-progress edit keeps the same baseline.
+      if (!baseline || !changed()) baseline = { html: el.innerHTML, text: norm(el.textContent) };
+      editing = true;
+      try { el.contentEditable = 'plaintext-only'; } catch (e) { el.contentEditable = 'true'; }
+      // I-beam over the editable text — comment mode's crosshair (set on <html>)
+      // would otherwise win and nothing signals "you can type here now".
+      prevCursor = el.style.cursor;
+      el.style.cursor = 'text';
+      el.focus();
+      try { // caret to the end of the text
+        const r = document.createRange(); r.selectNodeContents(el); r.collapse(false);
+        const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      } catch (e) {}
+      refreshRow();
+    }
+    function finish() {
+      if (!editing) return;
+      editing = false;
+      el.removeAttribute('contenteditable');
+      el.style.cursor = prevCursor;
+      if (changed()) {
+        dirtyTE = true;
+        // retyped wording is a near-verbatim request by nature
+        if (hooks.suggestType) hooks.suggestType(MODE === 'md' ? 'rephrase' : 'change');
+      }
+      refreshRow();
+    }
+    function revert() {
+      if (baseline && el.innerHTML !== baseline.html) { el.innerHTML = baseline.html; dirtyTE = true; }
+      finish();
+      refreshRow();
+    }
+    const onKey = (e) => {
+      if (!editing) return;
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); finish(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); revert(); }
+    };
+    const onInput = () => { if (editing) refreshRow(); };
+    // Clicking anywhere else blurs the contenteditable — that must COMMIT the
+    // edit exactly like Enter, or a click-away-then-Save silently loses it.
+    const onBlur = () => { if (editing) finish(); };
+    el.addEventListener('keydown', onKey, true);
+    el.addEventListener('input', onInput);
+    el.addEventListener('blur', onBlur);
+
+    btn.addEventListener('click', start);
+    undoBtn.addEventListener('click', revert);
+
+    // Reopening a comment that already carries a text edit: surface it without
+    // re-applying (the page may already contain the new wording).
+    if (opts.kind === 'edit' && opts.comment?.textEdit?.after) {
+      label.textContent = 'Saved: “' + opts.comment.textEdit.after.slice(0, 38) + (opts.comment.textEdit.after.length > 38 ? '…' : '') + '” — click to redo';
+    }
+
+    activeTextEditRestore = () => {
+      el.removeAttribute('contenteditable');
+      if (editing) el.style.cursor = prevCursor; // composer closed mid-edit
+      el.removeEventListener('keydown', onKey, true);
+      el.removeEventListener('input', onInput);
+      el.removeEventListener('blur', onBlur);
+      // Only undo what the USER previewed — never stomp content the host page
+      // itself changed while the composer was open.
+      if (baseline && el.innerHTML !== baseline.html) el.innerHTML = baseline.html;
+    };
+
+    return {
+      start,
+      dirty: () => dirtyTE,
+      changed,
+      getTextEdit: () => (changed() ? { before: baseline.text, after: norm(el.textContent) } : null),
+    };
+  }
+
+  // ---------- element screenshots (pin-time visual ground truth) ----------
+  // Captured AFTER save + preview-revert, so the image shows the page as the
+  // reviewer saw it (not our temporary tweaks). Entirely best-effort: the
+  // library is lazy-vendored by the server; any failure just means no shot.
+  let _hti = null;
+  let _htiLoading = null;
+  function loadHti() {
+    if (window.__kbfShots === false) return Promise.resolve(null); // --no-shots: don't even try
+    if (_hti) return Promise.resolve(_hti);
+    if (_htiLoading) return _htiLoading;
+    _htiLoading = (async () => {
+      for (const entry of ['es/index.js', 'dist/html-to-image.esm.js']) {
+        try { _hti = await import(ROOT + '/vendor/html-to-image/' + entry); break; } catch (e) {}
+      }
+      return _hti; // null = disabled/unavailable; we don't retry per save
+    })();
+    return _htiLoading;
+  }
+  function shotBackground() {
+    for (const el of [document.body, document.documentElement]) {
+      try {
+        const bg = getComputedStyle(el).backgroundColor;
+        if (cssColorToHex(bg) || isTranslucent(bg)) return bg;
+      } catch (e) {}
+    }
+    return '#ffffff';
+  }
+  async function captureShot(commentId, opts) {
+    try {
+      // Same confidence bar as Tweak Mode / edit-in-place: if the clicked node
+      // is gone (SPA re-render between click and save), NEVER screenshot a
+      // low-confidence guess — a wrong image sold as "visual ground truth" is
+      // worse than none. getTargetEl covers element anchors; ranges re-resolve
+      // their container here with the identical gate.
+      let target = null;
+      if (opts.getTargetEl) target = opts.getTargetEl();
+      else if (opts.el && opts.el.isConnected) target = opts.el;
+      else {
+        const { el, confidence } = resolveWithConfidence(opts.anchor);
+        if (el && confidence !== 'low' && confidence !== 'none') target = el;
+      }
+      if (!target) return;
+      const hti = await loadHti();
+      if (!hti || !hti.toPng) return;
+      // tiny targets (an icon, a short link) get their parent for visual context
+      let node = target;
+      const tr = target.getBoundingClientRect();
+      if ((tr.width < 48 || tr.height < 24) && target.parentElement && target.parentElement !== document.body) {
+        node = target.parentElement;
+      }
+      const r = node.getBoundingClientRect();
+      if (!r.width || !r.height || r.width * r.height > 4_000_000) return; // nothing, or absurdly large
+      const dataUrl = await hti.toPng(node, {
+        pixelRatio: Math.min(1.5, Math.max(0.4, 1000 / r.width)), // ~1000px wide max
+        backgroundColor: shotBackground(),
+      });
+      if (!dataUrl || dataUrl.length > 780000) return; // keep under the server's cap
+      await api('/shot/' + commentId, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }),
+      });
+    } catch (e) { /* best-effort by design */ }
+  }
+
   // ---------- composer ----------
   function closeComposer() {
     stopRecognition();
     clearTarget();
+    clearTweakPreview();
+    if (activeTextEditRestore) { try { activeTextEditRestore(); } catch (e) {} activeTextEditRestore = null; }
     activeComposer = null;
     composerSlot.innerHTML = '';
     pickChain = [];
@@ -619,6 +1246,7 @@
         <div class="kbf-types">
           ${TYPES.map((t) => `<button class="kbf-type${t.id === ctype ? ' is-active' : ''}" data-type="${t.id}" title="${escapeHtml(t.hint)}">${t.label}</button>`).join('')}
         </div>
+        ${ROLE === 'comment' ? `<input class="kbf-name-input" maxlength="60" placeholder="Your name (shown with your comment)" value="${escapeHtml(LS.get('kbf-name') || '')}" aria-label="Your name">` : ''}
         <textarea class="kbf-textarea" placeholder="${escapeHtml(PLACEHOLDER)}"></textarea>
         <div class="kbf-rec-hint" role="status" aria-live="polite"><span class="kbf-rec-dot"></span> <span class="kbf-rec-text">Listening…</span></div>
         <div class="kbf-composer-foot">
@@ -639,6 +1267,7 @@
 
     // Desktop: drag the composer by its header to move it off the content it comments on.
     // Touch keeps the auto-position (small screen + on-screen keyboard leave nowhere useful).
+    let userMovedComposer = false; // once dragged, never auto-reposition it again
     const head = box.querySelector('.kbf-composer-head');
     (function makeComposerDraggable() {
       let s = null;
@@ -662,6 +1291,7 @@
         if (!s) return;
         try { head.releasePointerCapture(e.pointerId); } catch (_) {}
         box.classList.remove('kbf-composer--dragging');
+        userMovedComposer = true;
         s = null;
       }
       head.addEventListener('pointerup', end);
@@ -684,15 +1314,44 @@
       }
     }
 
-    function validate() { saveBtn.disabled = !ta.value.trim(); }
+    function validate() {
+      saveBtn.disabled = !ta.value.trim()
+        && !(opts.tweaks && opts.tweaks.count())
+        && !(opts.textEditApi && opts.textEditApi.changed());
+    }
     function autoGrow() { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 240) + 'px'; }
     ta.addEventListener('input', () => { validate(); autoGrow(); });
+
+    // A retyped text / dialled tweak implies a type; honour an explicit choice.
+    let userPickedType = false;
+    opts.suggestType = (t) => {
+      if (userPickedType || !TYPE_IDS.includes(t)) return;
+      ctype = t;
+      box.querySelectorAll('.kbf-type').forEach((b) => b.classList.toggle('is-active', b.dataset.type === ctype));
+    };
+    opts.markTypePicked = () => { userPickedType = true; };
+
+    // Element anchors get the show-don't-tell sections (a text range has no box).
+    if (anchor.type !== 'range') {
+      opts.getTargetEl = makeTrustedGetEl(opts);
+      const hooks = {
+        validate,
+        suggestType: opts.suggestType,
+        reposition: () => { if (!userMovedComposer) positionComposer(box, opts.rect); },
+      };
+      // Edit-in-place text: both modes (in --md it's the headline use).
+      opts.textEditApi = setupTextEdit(box, opts, hooks);
+      // Tweak Mode: web pages only (style deltas mean nothing for a .md).
+      if (MODE === 'web') opts.tweaks = setupTweaks(box, opts, hooks);
+      if (opts.startTextEdit && opts.textEditApi) setTimeout(() => opts.textEditApi.start(), 60);
+    }
 
     box.addEventListener('click', (e) => {
       const typeBtn = e.target.closest('[data-type]');
       if (typeBtn) {
         ctype = typeBtn.dataset.type;
         LS.set('kbf-ctype-' + MODE, ctype);
+        if (opts.markTypePicked) opts.markTypePicked();
         box.querySelectorAll('.kbf-type').forEach((b) => b.classList.toggle('is-active', b.dataset.type === ctype));
         return;
       }
@@ -703,7 +1362,7 @@
     });
     langSel.addEventListener('change', () => setVoiceLang(langSel.value, box, micBtn, hintText));
     ta.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (ta.value.trim()) doSave(opts, ta.value.trim()); }
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (!saveBtn.disabled) doSave(opts, ta.value.trim()); }
     });
 
     positionComposer(box, opts.rect);
@@ -727,25 +1386,45 @@
   }
 
   async function doSave(opts, text) {
-    if (!text) return;
+    const edits = opts.tweaks ? opts.tweaks.getEdits() : [];
+    const textEdit = opts.textEditApi ? opts.textEditApi.getTextEdit() : null;
+    if (!text && !edits.length && !textEdit) return;
+    let savedNew = null;
     try {
       if (opts.kind === 'edit') {
+        const body = { text, type: ctype };
+        // Only rewrite edits when the user actually touched a knob this session,
+        // and then merge per-prop: untouched props keep their stored (possibly
+        // already-applied) history, touched props take the new knob state.
+        if (opts.tweaks && opts.tweaks.dirty()) body.edits = opts.tweaks.mergeEdits(opts.comment.edits);
+        // Same rule for the text edit: only send when this session touched it
+        // (a redo replaces; a revert-to-original clears it via null). changed()
+        // is the belt-and-braces: an in-flight edit not yet committed by
+        // Enter/blur must still reach the save, never be silently dropped.
+        if (opts.textEditApi && (opts.textEditApi.dirty() || opts.textEditApi.changed())) body.textEdit = textEdit;
         const data = await api('/comments/' + opts.comment.id, {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, type: ctype }),
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
         });
         const i = comments.findIndex((c) => c.id === data.comment.id);
         if (i >= 0) comments[i] = data.comment;
         toast('Comment updated');
       } else {
+        // shared "comment" links attach the reviewer's name (persisted locally)
+        const nameEl = composerSlot.querySelector('.kbf-name-input');
+        const authorName = nameEl ? nameEl.value.trim().slice(0, 60) : '';
+        if (nameEl) LS.set('kbf-name', authorName);
         const data = await api('/comments', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ page: PAGE, pageTitle: document.title, url: location.href, anchor: opts.anchor, text, type: ctype, sourceFile: window.__kbfSource || '' }),
+          body: JSON.stringify({ page: PAGE, pageTitle: document.title, url: location.href, anchor: opts.anchor, text, type: ctype, edits, textEdit, authorName, sourceFile: window.__kbfSource || '' }),
         });
         comments.push(data.comment);
-        toast('Comment saved');
+        toast(edits.length || textEdit ? 'Saved — the page reverts; your agent applies it to source' : 'Comment saved');
+        savedNew = data.comment;
       }
       closeComposer();
       refresh();
+      // capture AFTER previews reverted: the shot is the page as reviewed
+      if (savedNew) captureShot(savedNew.id, opts);
     } catch (e) {
       toastError('Save failed — ' + e.message);
     }
@@ -851,10 +1530,11 @@
         + (c.status === 'approved' ? ' is-approved' : '')
         + (c.status === 'rejected' ? ' is-rejected' : '');
       pin.innerHTML = c.author === 'agent' ? I.bot : String(idx + 1);
-      pin.title = (c.author === 'agent' ? '[agent] ' : '') + c.text;
+      const gist = c.text || (c.textEdit && c.textEdit.after ? '“' + c.textEdit.after + '”' : editsSummary(c));
+      pin.title = (c.author === 'agent' ? '[agent] ' : '') + gist;
       pin.setAttribute('role', 'button');
       pin.tabIndex = 0;
-      pin.setAttribute('aria-label', (c.author === 'agent' ? 'Agent comment: ' : 'Comment: ') + norm(c.text).slice(0, 80));
+      pin.setAttribute('aria-label', (c.author === 'agent' ? 'Agent comment: ' : 'Comment: ') + norm(gist).slice(0, 80));
       const activate = () => focusComment(c.id, true);
       pin.addEventListener('click', activate);
       pin.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
@@ -893,8 +1573,14 @@
   let moTimer = 0;
   function startDomObserver() {
     if (typeof MutationObserver === 'undefined') return;
+    // Our own tweak-preview <style> writes (insert/remove in <head>, textContent
+    // swaps on the tag) are not page mutations — ignoring them keeps every knob
+    // change from scheduling a pointless full pin re-resolve.
+    const isTweakNoise = (m) => (m.target && m.target.id === TWEAK_STYLE_ID)
+      || (m.target === document.head
+        && [...m.addedNodes, ...m.removedNodes].every((n) => n && n.id === TWEAK_STYLE_ID));
     const obs = new MutationObserver((muts) => {
-      if (!muts.some((m) => !host.contains(m.target))) return; // all inside our UI
+      if (!muts.some((m) => !host.contains(m.target) && !isTweakNoise(m))) return; // all ours
       if (!host.isConnected) (document.body || document.documentElement).appendChild(host);
       clearTimeout(moTimer);
       moTimer = setTimeout(() => { renderPins(); if (panelOpen) renderPanel(); }, 200);
@@ -967,7 +1653,10 @@
         const st = c.status || 'open';
         const ct = c.type || 'comment';
         const isAgent = c.author === 'agent';
-        const who = isAgent ? (c.authorName || 'agent') : 'you';
+        // Unnamed user comments read "you" ONLY in the single-viewer (full) case;
+        // on shared panels they're the host's — labelling them "you" for every
+        // viewer would misattribute them.
+        const who = isAgent ? (c.authorName || 'agent') : (c.authorName || (ROLE === 'full' ? 'you' : 'host'));
         const thread = Array.isArray(c.thread) ? c.thread : [];
         const expanded = c.id === expandedId;
         const stateClass = [
@@ -983,28 +1672,33 @@
               ${st === 'approved' || st === 'rejected' ? `<span class="kbf-status kbf-status-${st}">${st}</span>` : ''}
               <span class="kbf-card-anchor" title="${escapeHtml(anchorTxt)}">${escapeHtml(anchorTxt)}</span>
             </div>
-            <div class="kbf-card-text">${escapeHtml(c.text)}</div>
+            ${c.text ? `<div class="kbf-card-text">${escapeHtml(c.text)}</div>` : ''}
+            ${c.textEdit && c.textEdit.after ? `<div class="kbf-card-textedit" title="${escapeHtml((c.textEdit.before || '') + ' → ' + c.textEdit.after)}"><del>${escapeHtml(c.textEdit.before || '')}</del><ins>${escapeHtml(c.textEdit.after)}</ins></div>` : ''}
+            ${Array.isArray(c.edits) && c.edits.length ? `<div class="kbf-card-edits">${c.edits.map((ed) => `
+              <span class="kbf-edit-chip" title="${escapeHtml(ed.prop + ': ' + (ed.from || '?') + ' → ' + ed.to)}"><b>${escapeHtml(ed.prop)}</b>${/^#[0-9a-f]{6}$/i.test(ed.to) ? `<i class="kbf-edit-dot" style="background:${escapeHtml(ed.to)}"></i>` : ''}<span>${escapeHtml((ed.from || '?') + ' → ' + ed.to)}</span></span>`).join('')}</div>` : ''}
             ${expanded ? `
+              ${c.shot ? `<img class="kbf-card-shot" data-act="shot" tabindex="0" role="button" src="${API}/shot/${c.id}" alt="Element screenshot at pin time — open full size" title="What this looked like when pinned — click to open" loading="lazy">` : ''}
               ${thread.length ? `<div class="kbf-thread">${thread.map((r) => `
                 <div class="kbf-reply ${r.author === 'agent' ? 'is-agent' : ''}">
-                  <span class="kbf-reply-who">${escapeHtml(r.author === 'agent' ? (r.authorName || 'agent') : 'you')}</span>
+                  <span class="kbf-reply-who">${escapeHtml(r.author === 'agent' ? (r.authorName || 'agent') : (r.authorName || (ROLE === 'full' ? 'you' : 'host')))}</span>
                   <span class="kbf-reply-text">${escapeHtml(r.text)}</span>
                 </div>`).join('')}</div>` : ''}
-              <div class="kbf-replybox">
+              ${CAN_COMMENT ? `<div class="kbf-replybox">
                 <textarea class="kbf-reply-input" placeholder="Reply to this thread…" rows="1"></textarea>
                 <button class="kbf-reply-send" data-act="send" title="Send reply">${I.send}</button>
-              </div>
-              <div class="kbf-approvals">
+              </div>` : ''}
+              ${CAN_MANAGE ? `<div class="kbf-approvals">
                 ${st !== 'approved' ? `<button class="kbf-chip-btn kbf-approve" data-act="approve">${I.check} Approve</button>` : ''}
                 ${st !== 'rejected' ? `<button class="kbf-chip-btn kbf-rejectb" data-act="reject">${I.reject} Reject</button>` : ''}
-              </div>
+              </div>` : ''}
             ` : (thread.length ? `<button class="kbf-thread-toggle" data-act="thread">${I.comment}<span>${thread.length} repl${thread.length === 1 ? 'y' : 'ies'}</span></button>` : '')}
             <div class="kbf-card-foot">
               <span class="kbf-time">${timeAgo(c.createdAt)}</span>
               <button class="kbf-mini" data-act="jump" title="Go to element">${I.jump}</button>
+              ${CAN_MANAGE ? `
               <button class="kbf-mini" data-act="edit" title="Edit">${I.edit}</button>
               <button class="kbf-mini kbf-mini--ok ${st === 'resolved' ? 'is-done' : ''}" data-act="resolve" title="${st === 'resolved' ? 'Reopen' : 'Resolve'}">${I.check}</button>
-              <button class="kbf-mini kbf-mini--danger" data-act="delete" title="Delete">${I.trash}</button>
+              <button class="kbf-mini kbf-mini--danger" data-act="delete" title="Delete">${I.trash}</button>` : ''}
             </div>
           </div>`;
       }
@@ -1059,6 +1753,12 @@
       e.preventDefault();
       const card = e.target.closest('.kbf-card');
       if (card) sendReply(card.dataset.id);
+      return;
+    }
+    if (e.target.dataset && e.target.dataset.act === 'shot' && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      const card = e.target.closest('.kbf-card');
+      if (card) window.open(API + '/shot/' + card.dataset.id, '_blank', 'noopener');
     }
   });
 
@@ -1079,6 +1779,7 @@
     if (act === 'approve') return setStatus(c, 'approved');
     if (act === 'reject') return setStatus(c, 'rejected');
     if (act === 'jump') return goToComment(c);
+    if (act === 'shot') { window.open(API + '/shot/' + c.id, '_blank', 'noopener'); return; }
     // default: click on the card body toggles the conversation thread
     toggleExpand(c);
   });
@@ -1170,7 +1871,8 @@
     if (!text) return;
     try {
       const data = await api('/comments/' + id + '/reply', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ author: 'user', text }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ author: 'user', text, authorName: ROLE === 'comment' ? (LS.get('kbf-name') || '') : '' }),
       });
       const i = comments.findIndex((c) => c.id === id);
       if (i >= 0) comments[i] = data.comment;
@@ -1270,6 +1972,27 @@
     next.filter((c) => normalizePath(c.page) === PAGE && c.status === 'resolved' && prev.get(c.id) && prev.get(c.id) !== 'resolved')
       .forEach((c) => animateResolve(c.id));
   }
+  // Watch-mode presence: show "agent online / working" live (chip in the panel
+  // head + a dot on the list FAB). Presence ages out if heartbeats stop.
+  let presenceTimer = 0;
+  function applyAgentStatus(a) {
+    const st = (a && a.state) || 'offline';
+    const on = st === 'online' || st === 'working';
+    const chip = $('kbf-agent-chip');
+    const txt = $('kbf-agent-text');
+    if (chip) {
+      chip.hidden = !on;
+      chip.classList.toggle('is-working', st === 'working');
+      if (txt) txt.textContent = ((a && a.name) || 'Agent') + (st === 'working' ? ' is working…' : ' is online');
+    }
+    const fw = root.querySelector('.kbf-fab-wrap');
+    if (fw) fw.classList.toggle('kbf-agent-live', on);
+    clearTimeout(presenceTimer);
+    // Generous vs the ≤60s heartbeat cadence, so one late beat (agent busy
+    // mid-apply) doesn't flicker the chip to offline and back.
+    if (on) presenceTimer = setTimeout(() => applyAgentStatus({ state: 'offline' }), 100000);
+  }
+
   let es = null;
   let sseBackoff = 1000;
   function subscribeLive() {
@@ -1279,6 +2002,9 @@
     es.addEventListener('comments', (e) => {
       sseBackoff = 1000;
       try { const d = JSON.parse(e.data); if (d && Array.isArray(d.comments)) applyComments(d.comments); } catch (err) {}
+    });
+    es.addEventListener('agent-status', (e) => {
+      try { const d = JSON.parse(e.data); if (d && d.agent) applyAgentStatus(d.agent); } catch (err) {}
     });
     es.onopen = () => { sseBackoff = 1000; resync(); };
     es.onerror = () => {
@@ -1306,6 +2032,12 @@
   }
 
   // ---------- wiring ----------
+  // Role-appropriate chrome: view links get the pins + panel, not the tools.
+  if (!CAN_COMMENT) modeBtn.style.display = 'none';
+  if (ROLE !== 'full') {
+    const cap = root.querySelector('.kbf-copyfb-caption');
+    if (cap) cap.style.display = 'none'; // "tell your agent PPF" is host guidance
+  }
   let justDraggedFab = false; // set true on a FAB drag so the trailing click doesn't toggle
   modeBtn.addEventListener('click', () => { if (justDraggedFab) return; setMode(!mode); });
   $('kbf-toggle-panel').addEventListener('click', () => { if (justDraggedFab) return; setPanel(!panelOpen); });

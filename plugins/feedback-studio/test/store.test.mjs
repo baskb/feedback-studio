@@ -9,8 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  WEB_TYPES, MD_TYPES, ALLOWED_TYPES, STATUSES,
-  makeComment, makeReply, coerceType, sanitizeAnchor,
+  WEB_TYPES, MD_TYPES, ALLOWED_TYPES, STATUSES, TWEAKABLE_PROPS,
+  makeComment, makeReply, coerceType, sanitizeAnchor, sanitizeEdits, sanitizeTextEdit,
   readComments, writeComments, mutate, exportMarkdown,
   exportProcessInstructions, seedAgentsFile, AGENTS_SNIPPET_MARKER,
 } from '../lib/store.mjs';
@@ -40,7 +40,7 @@ test('coerceType respects the mode', () => {
 
 test('makeComment has a stable, complete schema and unique ids', () => {
   const c = makeComment({ page: '/p', text: '  hi  ', author: 'agent', authorName: 'bot' });
-  assert.equal(c.schemaVersion, 3);
+  assert.equal(c.schemaVersion, 4);
   assert.equal(c.text, 'hi');
   assert.equal(c.author, 'agent');
   assert.equal(c.status, 'open');
@@ -158,4 +158,92 @@ test('seedAgentsFile creates-if-absent, appends, and is idempotent', async () =>
 test('status + type constant invariants', () => {
   assert.deepEqual(ALLOWED_TYPES, [...WEB_TYPES, ...MD_TYPES]);
   assert.deepEqual(STATUSES, ['open', 'approved', 'rejected', 'resolved']);
+});
+
+test('sanitizeEdits: whitelists props, dedupes, drops no-ops and breakout characters', () => {
+  const out = sanitizeEdits([
+    { prop: 'padding', from: '16px', to: '24px' },
+    { prop: 'padding', from: '16px', to: '32px' },          // dupe prop → dropped
+    { prop: 'position', from: 'static', to: 'fixed' },      // not whitelisted
+    { prop: 'color', from: '#111111', to: '#111111' },      // unchanged → dropped
+    { prop: 'margin', from: '0px', to: '8px; } body { x' }, // ';{}' breakout → dropped
+    { prop: 'font-size', to: '18px' },                      // missing from is fine
+    'garbage', null,
+  ]);
+  assert.deepEqual(out, [
+    { prop: 'padding', from: '16px', to: '24px' },
+    { prop: 'font-size', from: '', to: '18px' },
+  ]);
+});
+
+test('sanitizeEdits caps the list and value lengths', () => {
+  const many = TWEAKABLE_PROPS.map((p) => ({ prop: p, from: 'a', to: 'b'.repeat(200) }));
+  const out = sanitizeEdits(many);
+  assert.ok(out.length <= 16);
+  for (const e of out) assert.ok(e.to.length <= 60);
+});
+
+test('makeComment: edits kept on web comments, stripped in md mode', () => {
+  const edits = [{ prop: 'padding', from: '16px', to: '24px' }];
+  assert.deepEqual(makeComment({ text: 'x', edits }).edits, edits);
+  assert.deepEqual(makeComment({ text: 'x', edits, sourceFile: 'doc.md' }).edits, []);
+  // edits-only comments (no text) are legal — the deltas ARE the request
+  assert.equal(makeComment({ edits }).text, '');
+});
+
+test('exportMarkdown renders tweak lines for edits', async () => {
+  const dir = freshDir();
+  try {
+    await exportMarkdown(dir, [makeComment({ edits: [{ prop: 'padding', from: '16px', to: '24px' }] })]);
+    const md = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf-8');
+    assert.ok(md.includes('tweak: `padding` `16px` → `24px`'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('sanitizeTextEdit: collapses whitespace, drops empty/unchanged/garbage', () => {
+  assert.deepEqual(sanitizeTextEdit({ before: 'Best  coffee\nbeens', after: 'Best coffee beans' }),
+    { before: 'Best coffee beens', after: 'Best coffee beans' });
+  assert.equal(sanitizeTextEdit({ before: 'same', after: '  same ' }), null); // unchanged
+  assert.equal(sanitizeTextEdit({ before: 'x', after: '' }), null);           // empty target
+  assert.equal(sanitizeTextEdit('garbage'), null);
+  assert.equal(sanitizeTextEdit(null), null);
+  assert.ok(sanitizeTextEdit({ before: '', after: 'brand new' }));            // pure insertion is fine
+  assert.ok(sanitizeTextEdit({ before: 'a'.repeat(5000), after: 'b' }).before.length <= 2000);
+});
+
+test('makeComment: textEdit survives in BOTH modes (md is the headline use)', () => {
+  const textEdit = { before: 'teh', after: 'the' };
+  assert.deepEqual(makeComment({ text: 'x', textEdit }).textEdit, textEdit);
+  assert.deepEqual(makeComment({ text: 'x', textEdit, sourceFile: 'doc.md' }).textEdit, textEdit);
+  // a textEdit-only comment (no text) is legal — the diff IS the request
+  assert.equal(makeComment({ textEdit }).text, '');
+  assert.equal(makeComment({ text: 'x' }).textEdit, null);
+});
+
+test('exportMarkdown renders shot lines', async () => {
+  const dir = freshDir();
+  try {
+    const c = makeComment({ text: 'x' });
+    c.shot = 'shots/' + c.id + '.png';
+    await exportMarkdown(dir, [c]);
+    const md = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf-8');
+    assert.ok(md.includes('shot: `shots/' + c.id + '.png`'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('exportMarkdown renders text-edit lines', async () => {
+  const dir = freshDir();
+  try {
+    await exportMarkdown(dir, [makeComment({ textEdit: { before: 'beens', after: 'beans' } })]);
+    const md = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf-8');
+    assert.ok(md.includes('text edit: "beens" → "beans"'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the overlay tweak controls are a subset of TWEAKABLE_PROPS (no drift)', () => {
+  const src = readFileSync(path.join(__dirname, '..', 'public', 'overlay.js'), 'utf-8');
+  const block = src.slice(src.indexOf('TWEAK_CONTROLS'), src.indexOf('function clearTweakPreview'));
+  const props = [...block.matchAll(/prop:\s*'([a-z-]+)'/g)].map((m) => m[1]);
+  assert.ok(props.length >= 5, 'expected the overlay to declare tweak controls');
+  for (const p of props) assert.ok(TWEAKABLE_PROPS.includes(p), `overlay tweak prop "${p}" is not in TWEAKABLE_PROPS`);
 });

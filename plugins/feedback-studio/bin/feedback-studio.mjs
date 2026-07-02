@@ -12,6 +12,9 @@
 //   --md <path>      review a Markdown file or a folder of them
 //   --demo           serve the bundled sample page from a throwaway temp copy
 //   --no-seed        with --demo: start with no comments (add your own live)
+//   --share          mint view / comment / admin capability links (pairs well with --tunnel);
+//                    "--share strict" makes even localhost require a key
+//   --no-shots       disable pin-time element screenshots
 //   --port <n>       listen port (default 4444)
 //   --host <addr>    bind address (default 127.0.0.1; use 0.0.0.0 for phone/LAN)
 //   --https          serve over TLS with a self-signed cert (voice on phones)
@@ -27,7 +30,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { execSync, spawn } from 'node:child_process';
+import { exec, execSync, spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, stat, readdir, chmod, unlink, mkdtemp, cp } from 'node:fs/promises';
 import { existsSync, readFileSync, statSync, watch, createWriteStream } from 'node:fs';
 import path from 'node:path';
@@ -35,7 +38,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   ALLOWED_TYPES, STATUSES, AUTONOMY,
   readComments, writeComments, mutate, makeComment, makeReply, exportMarkdown,
-  exportProcessInstructions, seedAgentsFile,
+  exportProcessInstructions, seedAgentsFile, sanitizeEdits, sanitizeTextEdit,
 } from '../lib/store.mjs';
 import { exportMarkers as stampMarkers } from '../lib/markers.mjs';
 
@@ -112,6 +115,52 @@ let DATA_DIR = path.join(CWD, '.feedback');
 let DATA_FILE = path.join(DATA_DIR, 'comments.json');
 let CERT_DIR = path.join(DATA_DIR, '.cert');
 const GLOBAL_DATA = process.env.CLAUDE_PLUGIN_DATA || path.join(os.homedir(), '.feedback-studio');
+// Element screenshots at pin time (best-effort, lazy html-to-image). --no-shots turns them off.
+const SHOTS = !args['no-shots'];
+
+// ---------- share roles (capability links) ----------
+// --share mints three capability keys at startup — view / comment / admin — and
+// prints one link per role. Anyone opening a link gets that role via a cookie;
+// the key itself is the capability (no accounts). Direct localhost requests
+// keep full access so the solo loop and local agents stay frictionless;
+// `--share strict` closes that bypass too (then even localhost needs a key —
+// the auto-opened browser tab gets the admin one).
+const SHARE = !!args.share;
+const SHARE_STRICT = args.share === 'strict';
+const SHARE_KEYS = SHARE ? {
+  view: 'sv_' + crypto.randomBytes(15).toString('base64url'),
+  comment: 'sc_' + crypto.randomBytes(15).toString('base64url'),
+  admin: 'sa_' + crypto.randomBytes(15).toString('base64url'),
+} : null;
+
+function tokenRole(tok) {
+  if (!SHARE || !tok) return null;
+  for (const [role, key] of Object.entries(SHARE_KEYS)) {
+    const a = Buffer.from(String(tok));
+    const b = Buffer.from(key);
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) return role;
+  }
+  return null;
+}
+function cookieKey(req) {
+  const m = /(?:^|;\s*)kbf-key=([^;]+)/.exec(req.headers.cookie || '');
+  return m ? decodeURIComponent(m[1]) : '';
+}
+// "Local direct" = loopback socket AND a loopback Host header. The Host check
+// matters: tunnel traffic arrives via the local cloudflared daemon (loopback
+// socket!) but carries the public tunnel hostname — it must NOT bypass auth.
+function isLocalDirect(req) {
+  const a = req.socket.remoteAddress || '';
+  if (a !== '127.0.0.1' && a !== '::1' && a !== '::ffff:127.0.0.1') return false;
+  const h = String(req.headers.host || '').replace(/:\d+$/, '').toLowerCase();
+  return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '';
+}
+// 'full' (share off, or trusted local), 'admin' | 'comment' | 'view', or null.
+function roleFor(req, url) {
+  if (!SHARE) return 'full';
+  if (!SHARE_STRICT && isLocalDirect(req)) return 'full';
+  return tokenRole((url && url.searchParams.get('key')) || cookieKey(req));
+}
 
 // Static build directories we auto-detect when neither --dir nor --proxy given.
 const AUTODETECT = ['dist', 'build', 'out', '_site', 'public', '.output/public', 'site'];
@@ -174,6 +223,53 @@ async function ensureSelfsigned() {
   }
   if (!existsSync(local)) throw new Error('the HTTPS helper "selfsigned" did not install correctly');
   return (await import(pathToFileURL(local).href)).default;
+}
+
+// ---------- element screenshots: lazy browser library (html-to-image) ----------
+// Same lazy-dep pattern as selfsigned/marked, but the consumer is the BROWSER:
+// the overlay dynamic-imports the package's ESM build through the /vendor route
+// below. Nothing installs until the first capture is attempted, so tests/CI and
+// users who never pin a comment pay nothing; failure just means no screenshots.
+const HTI_DIR = path.join(GLOBAL_DATA, 'deps', 'node_modules', 'html-to-image');
+let _htiInstall = null; // in-flight install (dedupes concurrent first requests)
+function ensureHtmlToImage() {
+  if (existsSync(path.join(HTI_DIR, 'package.json'))) return Promise.resolve(true);
+  if (_htiInstall) return _htiInstall;
+  const depsDir = path.join(GLOBAL_DATA, 'deps');
+  _htiInstall = (async () => {
+    console.log('  Setting up element screenshots (one-time download of html-to-image)...');
+    await mkdir(depsDir, { recursive: true });
+    if (!existsSync(path.join(depsDir, 'package.json'))) {
+      await writeFile(path.join(depsDir, 'package.json'), '{"name":"feedback-studio-deps","private":true}');
+    }
+    await new Promise((resolve, reject) => {
+      // --ignore-scripts blocks install-time lifecycle scripts (supply-chain hardening).
+      exec('npm install html-to-image@^1 --no-audit --no-fund --ignore-scripts --loglevel=error',
+        { cwd: depsDir, timeout: 120000 }, (err) => (err ? reject(err) : resolve()));
+    });
+    return existsSync(path.join(HTI_DIR, 'package.json'));
+  })().catch((e) => {
+    console.log('  (element screenshots unavailable — npm install failed: ' + e.message + ')');
+    _htiInstall = null; // allow a retry on a later request
+    return false;
+  });
+  return _htiInstall;
+}
+
+// Serve files out of the installed html-to-image package (its ESM build uses
+// relative imports, so the whole package dir is exposed — .js/.mjs only, path
+// containment enforced).
+async function serveVendorHti(res, url) {
+  const notFound = (msg) => { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end(msg); };
+  if (!SHOTS) return notFound('screenshots disabled (--no-shots)');
+  if (!(await ensureHtmlToImage())) return notFound('html-to-image unavailable');
+  const rel = decodeURIComponent(url.pathname.slice('/__feedback/vendor/html-to-image/'.length));
+  const file = path.resolve(HTI_DIR, rel);
+  if (!file.startsWith(HTI_DIR + path.sep) || !/\.(js|mjs)$/.test(file) || !existsSync(file) || !statSync(file).isFile()) {
+    return notFound('not found');
+  }
+  res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'max-age=3600' });
+  res.end(readFileSync(file));
 }
 
 async function getTlsOptions(ips) {
@@ -304,14 +400,24 @@ function hostAllowed(req) {
   return ALLOWED_HOSTS.has(name);
 }
 
+// Comment ids are `c_<uuid>` from newId(); anything else must never reach the
+// filesystem as a shots/<id>.png path.
+const SAFE_SHOT_ID = /^c_[A-Za-z0-9-]{8,64}$/;
+
 // ---------- API ----------
 async function handleApi(req, res, url) {
   const parts = url.pathname.replace(/^\/__feedback\/api\/?/, '').split('/').filter(Boolean);
   const resource = parts[0] || '';
   const mutating = req.method !== 'GET' && req.method !== 'HEAD';
   if (mutating && crossSite(req)) return sendJSON(res, 403, { error: 'cross-site request blocked' });
-  // (The Host allowlist is enforced for the whole /__feedback surface — reads
-  // included — in handler(), before this function is reached.)
+  // (The Host allowlist + share-key authentication are enforced for the whole
+  // /__feedback surface in handler(), before this function is reached.)
+  // Role authorization per route: view = read-only; comment = may add comments,
+  // replies and shots; admin/full = everything (statuses, edits, deletes, exports).
+  const role = req._kbfRole || 'full';
+  const canComment = role !== 'view';
+  const canManage = role === 'full' || role === 'admin';
+  const deny = () => sendJSON(res, 403, { error: 'your share link does not allow this' });
 
   try {
     if (resource === 'comments') {
@@ -320,6 +426,7 @@ async function handleApi(req, res, url) {
 
       // POST /comments/:id/reply — add a message to a comment's conversation thread
       if (req.method === 'POST' && id && parts[2] === 'reply') {
+        if (!canComment) return deny();
         const body = await readJson(req);
         const out = await mutate(DATA_DIR, (list) => {
           const c = list.find((x) => x.id === id);
@@ -336,6 +443,7 @@ async function handleApi(req, res, url) {
       }
 
       if (req.method === 'POST' && !id) {
+        if (!canComment) return deny();
         const body = await readJson(req);
         const comment = await mutate(DATA_DIR, (list) => {
           const c = makeComment(body);
@@ -347,11 +455,14 @@ async function handleApi(req, res, url) {
       }
 
       if (req.method === 'PATCH' && id) {
+        if (!canManage) return deny();
         const body = await readJson(req);
         const out = await mutate(DATA_DIR, (list) => {
           const c = list.find((x) => x.id === id);
           if (!c) return { comments: list, value: { notFound: true } };
           if (typeof body.text === 'string') c.text = body.text.trim().slice(0, 10000);
+          if (Array.isArray(body.edits) && !c.sourceFile) c.edits = sanitizeEdits(body.edits);
+          if ('textEdit' in body) c.textEdit = sanitizeTextEdit(body.textEdit);
           if (STATUSES.includes(body.status)) c.status = body.status;
           if (ALLOWED_TYPES.includes(body.type)) c.type = body.type;
           if (AUTONOMY.includes(body.autonomy)) c.autonomy = body.autonomy;
@@ -364,21 +475,82 @@ async function handleApi(req, res, url) {
       }
 
       if (req.method === 'DELETE' && id) {
+        if (!canManage) return deny();
         const out = await mutate(DATA_DIR, (list) => {
           const next = list.filter((x) => x.id !== id);
           if (next.length === list.length) return { comments: list, value: { notFound: true } };
           return { comments: next, value: { ok: true } };
         });
         if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
+        if (SAFE_SHOT_ID.test(id)) await unlink(path.join(DATA_DIR, 'shots', id + '.png')).catch(() => {}); // GC its screenshot
         broadcastSoon();
         return sendJSON(res, 200, { ok: true });
       }
     }
+
+    // Element screenshot captured at pin time — visual ground truth of what the
+    // reviewer saw. Best-effort: nothing in the comment lifecycle depends on it.
+    if (resource === 'shot' && parts[1]) {
+      const id = parts[1];
+      if (!SAFE_SHOT_ID.test(id)) return sendJSON(res, 400, { error: 'bad id' });
+      const file = path.join(DATA_DIR, 'shots', id + '.png');
+      if (req.method === 'GET') {
+        if (!existsSync(file)) return sendJSON(res, 404, { error: 'no shot' });
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+        return res.end(readFileSync(file));
+      }
+      if (req.method === 'POST') {
+        if (!canComment) return deny();
+        if (!SHOTS) return sendJSON(res, 404, { error: 'screenshots disabled' });
+        const body = await readJson(req);
+        const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(String(body.dataUrl || ''));
+        if (!m) return sendJSON(res, 400, { error: 'expected a PNG data URL' });
+        const buf = Buffer.from(m[1], 'base64');
+        // magic bytes: a real PNG, not something else wearing the MIME type
+        if (buf.length < 8 || buf.readUInt32BE(0) !== 0x89504e47) return sendJSON(res, 400, { error: 'not a PNG' });
+        if (buf.length > 600_000) return sendJSON(res, 413, { error: 'image too large' });
+        const out = await mutate(DATA_DIR, async (list) => {
+          const c = list.find((x) => x.id === id);
+          if (!c) return { comments: list, value: { notFound: true } };
+          await mkdir(path.join(DATA_DIR, 'shots'), { recursive: true });
+          await writeFile(file, buf);
+          c.shot = 'shots/' + id + '.png';
+          c.updatedAt = new Date().toISOString();
+          return { comments: list, value: { comment: c } };
+        });
+        if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
+        broadcastSoon();
+        return sendJSON(res, 200, out);
+      }
+    }
+    // Watch-mode presence: an agent announces itself (online / working / offline)
+    // so open overlays can show "agent is here" live. In-memory only — presence
+    // is ephemeral by nature; the overlay ages it out if heartbeats stop.
+    // Deliberately SINGLE-agent (last write wins): one watching agent per
+    // session is the v1 model; a second watcher's heartbeat replaces the chip.
+    if (resource === 'agent-status') {
+      if (req.method === 'GET') return sendJSON(res, 200, { agent: agentStatus });
+      if (req.method === 'POST') {
+        if (!canManage) return deny(); // presence is the host agent's voice, not a reviewer's
+        const body = await readJson(req);
+        const state = ['online', 'working', 'offline'].includes(body.state) ? body.state : 'offline';
+        agentStatus = {
+          state,
+          name: String(body.name == null ? '' : body.name).slice(0, 60),
+          commentId: typeof body.commentId === 'string' ? body.commentId.slice(0, 80) : '',
+          ts: Date.now(),
+        };
+        broadcastAgentStatus();
+        return sendJSON(res, 200, { agent: agentStatus });
+      }
+    }
     if (resource === 'export' && req.method === 'POST') {
+      if (!canManage) return deny();
       await exportMarkdown(DATA_DIR, await readComments(DATA_DIR));
       return sendJSON(res, 200, { ok: true });
     }
     if (resource === 'md-export' && req.method === 'POST') {
+      if (!canManage) return deny();
       // sourceFile paths are recorded cwd-relative, so resolution stays rooted at
       // CWD — but when --md points outside the cwd, that tree is a legitimate
       // stamping target too, so it joins the containment allowlist.
@@ -516,6 +688,8 @@ function handleSSE(req, res) {
   // Bound the client set: drop the oldest stream if we somehow accumulate many.
   if (sseClients.size >= MAX_SSE) dropSse(sseClients.values().next().value);
   sseClients.add(res);
+  // Late joiners see the current agent presence straight away.
+  writeSse(res, 'event: agent-status\ndata: ' + JSON.stringify({ agent: agentStatus }) + '\n\n');
   const ping = setInterval(() => writeSse(res, ': ping\n\n'), 25000);
   let cleaned = false;
   const cleanup = () => {
@@ -539,6 +713,11 @@ function broadcastComments(comments) {
 }
 async function broadcastFromDisk() {
   try { broadcastComments(await readComments(DATA_DIR)); } catch (e) { /* corrupt mid-edit; ignore */ }
+}
+let agentStatus = { state: 'offline', name: '', commentId: '', ts: 0 };
+function broadcastAgentStatus() {
+  const payload = 'event: agent-status\ndata: ' + JSON.stringify({ agent: agentStatus }) + '\n\n';
+  for (const res of [...sseClients]) writeSse(res, payload);
 }
 let _bcTimer = null;
 function broadcastSoon() { clearTimeout(_bcTimer); _bcTimer = setTimeout(broadcastFromDisk, 30); }
@@ -827,16 +1006,61 @@ async function serveMd(req, res, url) {
 async function handler(req, res) {
   try {
     const url = new URL(req.url, `http://localhost:${PORT}`);
-    if (url.pathname === '/__feedback/overlay.js') return serveAsset(res, path.join(PUBLIC_DIR, 'overlay.js'));
+    // A share link (?key=...) on a page URL: validate, move the key into a
+    // cookie, and redirect to the clean URL so the capability doesn't linger in
+    // the address bar / history / copy-pasted screenshots.
+    if (SHARE && (req.method === 'GET' || req.method === 'HEAD')
+        && !url.pathname.startsWith('/__feedback/') && url.searchParams.has('key')) {
+      const key = url.searchParams.get('key');
+      if (!tokenRole(key)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        return res.end('403 — invalid share link (ask for a fresh one; keys change each server start)');
+      }
+      url.searchParams.delete('key');
+      const loc = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');
+      // Known limitation (RFC 6265): cookies scope by hostname, NOT port, so on
+      // localhost the browser also sends kbf-key to other local dev servers.
+      // The __Host- prefix would fix that but requires HTTPS, which --share
+      // doesn't mandate. Low stakes (a hostile local process could do worse),
+      // accepted + documented in SKILL.md; keys rotate every start anyway.
+      res.writeHead(302, {
+        Location: loc,
+        'Set-Cookie': 'kbf-key=' + encodeURIComponent(key) + '; Path=/; SameSite=Lax; HttpOnly',
+      });
+      return res.end();
+    }
+
+    if (url.pathname === '/__feedback/overlay.js') {
+      // Config is prefixed into this same file (an inline <script> could be
+      // blocked by a site's CSP): the --no-shots flag, and under --share the
+      // requester's role so the overlay renders view/comment-appropriately.
+      let prefix = '';
+      if (!SHOTS) prefix += 'window.__kbfShots=false;\n';
+      if (SHARE) prefix += 'window.__kbfRole=' + JSON.stringify(roleFor(req, url) || 'none') + ';\n';
+      if (prefix) {
+        const src = prefix + readFileSync(path.join(PUBLIC_DIR, 'overlay.js'), 'utf-8');
+        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+        return res.end(src);
+      }
+      return serveAsset(res, path.join(PUBLIC_DIR, 'overlay.js'));
+    }
     if (url.pathname === '/__feedback/overlay.css') return serveAsset(res, path.join(PUBLIC_DIR, 'overlay.css'));
     // DNS-rebinding guard for the whole comment surface, reads included — a
     // rebound page could otherwise read the review data (API GETs, SSE stream).
     // The static overlay assets above stay public; they contain no data.
-    if (url.pathname === '/__feedback/events' || url.pathname.startsWith('/__feedback/api')) {
+    if (url.pathname === '/__feedback/events' || url.pathname.startsWith('/__feedback/api') || url.pathname.startsWith('/__feedback/vendor/')) {
       if (!hostAllowed(req)) return sendJSON(res, 403, { error: 'host not allowed' });
+      // Share roles gate the whole feedback surface (reads included — the
+      // review data is what a view link grants). No/invalid key = no access.
+      if (SHARE) {
+        const role = roleFor(req, url);
+        if (!role) return sendJSON(res, 401, { error: 'missing or invalid share key' });
+        req._kbfRole = role;
+      }
     }
     if (url.pathname === '/__feedback/events') return handleSSE(req, res);
     if (url.pathname.startsWith('/__feedback/api')) return handleApi(req, res, url);
+    if (url.pathname.startsWith('/__feedback/vendor/html-to-image/')) return serveVendorHti(res, url);
 
     if (MD_MODE) {
       if (url.pathname === '/favicon.ico') { res.writeHead(204); return res.end(); }
@@ -862,12 +1086,32 @@ async function handler(req, res) {
   }
 }
 
+// Screenshots raise the stakes of an accidentally-committed .feedback/ (a shot
+// can capture logged-in dashboards or on-screen PII, not just comment text), so
+// don't leave the "gitignore it" instruction buried in docs: check and WARN at
+// startup. Warn-only by design — auto-editing a user-owned .gitignore on start
+// would break the same convention that keeps --seed-agents opt-in.
+function warnIfFeedbackCommittable() {
+  if (!SHOTS) return;
+  const rel = path.relative(CWD, DATA_DIR);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return; // demo/temp dir — not in this repo
+  if (!existsSync(path.join(CWD, '.git'))) return;
+  try {
+    execSync(`git check-ignore -q "${rel.split(path.sep).join('/')}"`, { cwd: CWD, stdio: 'ignore' });
+  } catch (e) {
+    console.log('\n  ! ' + rel + '/ is NOT gitignored. Comments — and element screenshots,');
+    console.log('    which can capture whatever was on screen — would be committed with your');
+    console.log('    code. Add ".feedback/" to .gitignore (or run with --no-shots).');
+  }
+}
+
 // ---------- banner ----------
 function banner(scheme, ips, publicUrl) {
   const src = DEMO ? `demo site (throwaway copy: ${STATIC_DIR})`
     : MD_MODE ? `reviewing markdown: ${path.relative(CWD, MD_SINGLE || MD_ROOT) || '.'}`
     : PROXY ? `proxying ${PROXY}`
     : `serving ${path.relative(CWD, STATIC_DIR) || '.'}/`;
+  const shareBase = publicUrl || (EXPOSE_LAN && ips.length ? `${scheme}://${ips[0]}:${PORT}` : `${scheme}://localhost:${PORT}`);
   const tag = publicUrl ? '  (secure tunnel — voice works anywhere)' : USE_HTTPS ? '  (HTTPS — voice works on phones)' : '';
   console.log(`\n  Feedback Studio${tag}`);
   console.log(`  ------------------------------------------`);
@@ -893,9 +1137,23 @@ function banner(scheme, ips, publicUrl) {
     console.log(`  hides a couple more flaws to find. Press C, click anything, leave a comment;`);
     console.log(`  then let your agent process ${path.join(DATA_DIR, 'comments.json')}.`);
   }
+  if (SHARE) {
+    console.log(`\n  Share links (a link IS its role — anyone holding one can act while this server runs;`);
+    console.log(`  keys change every start):`);
+    console.log(`    View only  ->  ${shareBase}/?key=${SHARE_KEYS.view}`);
+    console.log(`    Comment    ->  ${shareBase}/?key=${SHARE_KEYS.comment}`);
+    console.log(`    Admin      ->  ${shareBase}/?key=${SHARE_KEYS.admin}`);
+    if (SHARE_STRICT) console.log(`    Strict: localhost needs a key too — your own tab opens with the admin key.`);
+    else console.log(`    This computer keeps full access without a key (use "--share strict" to require one).`);
+  }
   if (publicUrl) {
-    console.log(`\n  The tunnel URL is public while the server runs — anyone with the link can`);
-    console.log(`  view and comment. Ctrl+C closes it.`);
+    if (SHARE) {
+      console.log(`\n  The tunnel is live while the server runs; without a share key it serves the`);
+      console.log(`  page but no feedback data. Ctrl+C closes it.`);
+    } else {
+      console.log(`\n  The tunnel URL is public while the server runs — anyone with the link can`);
+      console.log(`  view and comment (add --share for per-role links). Ctrl+C closes it.`);
+    }
   } else if (USE_HTTPS) {
     console.log(`\n  Phone: the browser will warn the certificate isn't trusted (self-signed).`);
     console.log(`  Tap Advanced -> Proceed, then the mic / voice-to-text works.`);
@@ -1016,7 +1274,10 @@ async function main() {
       }
     }
     banner(scheme, ips, publicUrl);
-    if (!args['no-open']) openBrowser(`${scheme}://localhost:${PORT}/`);
+    warnIfFeedbackCommittable();
+    // Under strict share even localhost needs a key — open our own tab as admin.
+    const openUrl = `${scheme}://localhost:${PORT}/` + (SHARE_STRICT ? `?key=${SHARE_KEYS.admin}` : '');
+    if (!args['no-open']) openBrowser(openUrl);
   });
 }
 

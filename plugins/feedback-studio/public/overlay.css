@@ -43,6 +43,13 @@
   box-sizing: border-box;
 }
 
+/* The [hidden] attribute must ALWAYS win: any `display: flex/grid/…` on a class
+   silently overrides the UA's `[hidden] { display: none }` (this bit us twice —
+   the tweak body and the count badge). Never rely on element defaults again. */
+:host [hidden] {
+  display: none !important;
+}
+
 /* ---------- dark theme ---------- */
 /* Applied two ways with the same values: automatically when the OS prefers dark (unless
    the user forced light), and always when the user forced dark via the panel toggle. Only
@@ -366,6 +373,12 @@ button {
   position: fixed;
   width: 340px;
   max-width: calc(100vw - 24px);
+  /* Never taller than the viewport: with Tweak Mode expanded the content can
+     exceed a short (laptop/landscape-phone) screen — the body scrolls instead
+     of clipping the Save/Cancel footer out of reach. */
+  max-height: calc(100vh - 24px);
+  display: flex;
+  flex-direction: column;
   background: var(--kbf-surface);
   border: 1px solid var(--kbf-border);
   border-radius: var(--kbf-radius);
@@ -385,6 +398,7 @@ button {
 .kbf-composer--dragging { animation: none; user-select: none; }
 
 .kbf-composer-head {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -425,7 +439,34 @@ button {
 .kbf-panel-actions { display: flex; align-items: center; gap: 4px; }
 .kbf-x svg { width: 14px; height: 14px; }
 
-.kbf-composer-body { padding: 12px; }
+.kbf-composer-body {
+  padding: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* shared "comment" links: reviewer name field */
+.kbf-name-input {
+  width: 100%;
+  height: 30px;
+  margin-bottom: 8px;
+  padding: 0 11px;
+  border: 1px solid var(--kbf-border-strong);
+  border-radius: var(--kbf-radius-sm);
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--kbf-ink);
+  background: var(--kbf-surface);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.kbf-name-input::placeholder { color: var(--kbf-muted); }
+.kbf-name-input:focus {
+  border-color: var(--kbf-clay);
+  box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.16);
+}
 
 .kbf-textarea {
   width: 100%;
@@ -556,6 +597,449 @@ button {
   animation: kbf-blink 1s steps(2, start) infinite;
 }
 @keyframes kbf-blink { 50% { opacity: 0.2; } }
+
+/* ---------- tweak mode (live style knobs) ---------- */
+
+.kbf-tweak {
+  margin-bottom: 10px;
+  border: 1px solid var(--kbf-border);
+  border-radius: var(--kbf-radius-sm);
+  background: var(--kbf-surface);
+  overflow: hidden;
+}
+.kbf-tweak-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--kbf-ink-soft);
+  transition: background 0.14s;
+}
+.kbf-tweak-toggle:hover { background: var(--kbf-hover); color: var(--kbf-ink); }
+.kbf-tweak-toggle svg { width: 13px; height: 13px; flex: none; }
+.kbf-tweak-title { flex: 1; text-align: left; }
+.kbf-tweak-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--kbf-clay);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: kbf-tweak-poof 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes kbf-tweak-poof { from { transform: scale(0.4); opacity: 0; } }
+/* chevron flips with a springy overshoot */
+.kbf-tweak-chev svg { transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); display: block; }
+.kbf-tweak.is-open .kbf-tweak-chev svg { transform: rotate(180deg); }
+
+/* Animated collapse: grid-template-rows 0fr→1fr tweens the body's height to its
+   natural size (no hard-coded max-height jump), Apple-sheet style. The inner
+   .kbf-tweak-rows owns padding + scroll so the collapsed state is truly 0px. */
+.kbf-tweak-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  overflow: hidden; /* belt-and-braces: nothing may poke out while collapsed */
+  transition: grid-template-rows 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.kbf-tweak.is-open .kbf-tweak-body { grid-template-rows: 1fr; }
+.kbf-tweak-rows {
+  min-height: 0;
+  overflow-y: auto;            /* clips during the tween; scrolls when open */
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  max-height: 42vh;            /* short viewports: the knob list scrolls itself */
+  /* vertical padding collapses with the section, so a 0-height track can never
+     leave a padding/scrollbar sliver under the toggle (seen on mobile) */
+  padding: 0 9px;
+  transition: padding 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  display: flex;
+  flex-direction: column;
+}
+.kbf-tweak.is-open .kbf-tweak-rows {
+  padding: 4px 9px 8px;
+  border-top: 1px solid var(--kbf-border);
+}
+
+.kbf-tweak-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 27px;
+  flex: none;
+}
+.kbf-tweak-row--off { display: none; }
+.kbf-tweak-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--kbf-ink-soft);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* changed-indicator dot: reserved space so rows never shift */
+.kbf-tweak-label::before {
+  content: '';
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background 0.15s;
+}
+.kbf-tweak-row.is-changed .kbf-tweak-label { color: var(--kbf-ink); }
+.kbf-tweak-row.is-changed .kbf-tweak-label::before { background: var(--kbf-clay); }
+.kbf-tweak-mixed {
+  font-style: normal;
+  font-size: 9.5px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--kbf-amber);
+}
+
+.kbf-tweak-num {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 23px;
+  border: 1px solid var(--kbf-border-strong);
+  border-radius: 7px;
+  background: var(--kbf-surface);
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+/* keyboard focus on the number field lights the whole stepper group (the input
+   itself has no outline — the ring on the group matches the textarea treatment) */
+.kbf-tweak-num:focus-within {
+  border-color: var(--kbf-clay);
+  box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.16);
+}
+.kbf-tweak-step {
+  width: 21px;
+  height: 100%;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--kbf-muted);
+  transition: all 0.12s;
+}
+.kbf-tweak-step:hover { background: var(--kbf-hover); color: var(--kbf-ink); }
+.kbf-tweak-step:active { background: var(--kbf-clay-tint); color: var(--kbf-clay-deep); }
+.kbf-tweak-input {
+  width: 34px;
+  border: 0;
+  background: transparent;
+  text-align: right;
+  font-size: 12px;
+  color: var(--kbf-ink);
+  outline: none;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.kbf-tweak-input::-webkit-outer-spin-button,
+.kbf-tweak-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.kbf-tweak-unit { font-size: 9.5px; color: var(--kbf-muted); padding: 0 2px 0 1px; }
+
+.kbf-tweak-select {
+  flex: none;
+  height: 23px;
+  padding: 0 6px;
+  border: 1px solid var(--kbf-border-strong);
+  border-radius: 7px;
+  background: var(--kbf-surface);
+  font-size: 12px;
+  color: var(--kbf-ink);
+  outline: none;
+}
+
+.kbf-tweak-alignseg {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 23px;
+  border: 1px solid var(--kbf-border-strong);
+  border-radius: 7px;
+  background: var(--kbf-surface);
+  overflow: hidden;
+}
+.kbf-tweak-alignbtn {
+  width: 26px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--kbf-muted);
+  transition: all 0.12s;
+}
+.kbf-tweak-alignbtn + .kbf-tweak-alignbtn { border-left: 1px solid var(--kbf-border); }
+.kbf-tweak-alignbtn svg { width: 12px; height: 12px; }
+.kbf-tweak-alignbtn:hover { background: var(--kbf-hover); color: var(--kbf-ink); }
+.kbf-tweak-alignbtn.is-active {
+  background: var(--kbf-clay-tint);
+  color: var(--kbf-clay-deep);
+}
+
+.kbf-tweak-colorwrap {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 23px;
+  padding: 0 7px;
+  border: 1px solid var(--kbf-border-strong);
+  border-radius: 7px;
+  background: var(--kbf-surface);
+  cursor: pointer;
+}
+.kbf-tweak-colorwrap:hover { background: var(--kbf-surface-2); }
+.kbf-tweak-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3.5px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+}
+/* "no color yet" (transparent) swatch = checkerboard */
+.kbf-tweak-colorwrap.is-none .kbf-tweak-swatch {
+  background:
+    linear-gradient(45deg, rgba(128,128,128,.35) 25%, transparent 25%, transparent 75%, rgba(128,128,128,.35) 75%),
+    linear-gradient(45deg, rgba(128,128,128,.35) 25%, transparent 25%, transparent 75%, rgba(128,128,128,.35) 75%);
+  background-size: 6px 6px;
+  background-position: 0 0, 3px 3px;
+}
+.kbf-tweak-hex {
+  font-family: ui-monospace, "Fira Mono", monospace;
+  font-size: 10px;
+  color: var(--kbf-ink-soft);
+  min-width: 42px;
+}
+.kbf-tweak-color {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: 0;
+  padding: 0;
+}
+
+.kbf-tweak-undo {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--kbf-muted);
+  opacity: 0;
+  transform: scale(0.7) rotate(90deg);
+  pointer-events: none;
+  transition: opacity 0.18s, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.kbf-tweak-undo svg { width: 10px; height: 10px; }
+.kbf-tweak-row.is-changed .kbf-tweak-undo { opacity: 1; transform: none; pointer-events: auto; }
+.kbf-tweak-undo:hover { background: var(--kbf-hover); color: var(--kbf-ink); }
+
+.kbf-tweak-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+.kbf-tweak-foot:has(.kbf-tweak-resetall:not([hidden])) { margin-top: 4px; }
+.kbf-tweak-resetall {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--kbf-ink-soft);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+.kbf-tweak-resetall:hover { background: var(--kbf-hover); color: var(--kbf-ink); }
+
+/* tweak chips on a panel card */
+.kbf-card-edits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 7px;
+}
+.kbf-edit-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--kbf-border);
+  background: var(--kbf-surface-2);
+  font-family: ui-monospace, "Fira Mono", monospace;
+  font-size: 10.5px;
+  color: var(--kbf-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.kbf-edit-chip b { font-weight: 700; color: var(--kbf-ink); }
+.kbf-edit-chip span { overflow: hidden; text-overflow: ellipsis; }
+.kbf-edit-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+}
+
+/* ---------- edit-in-place text ---------- */
+
+.kbf-editext {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.kbf-editext-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px dashed var(--kbf-border-strong);
+  border-radius: var(--kbf-radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--kbf-ink-soft);
+  text-align: left;
+  transition: all 0.15s;
+}
+.kbf-editext-btn svg { width: 13px; height: 13px; flex: none; }
+.kbf-editext-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kbf-editext-btn:hover { background: var(--kbf-hover); color: var(--kbf-ink); }
+.kbf-editext.is-editing .kbf-editext-btn {
+  border-style: solid;
+  border-color: var(--kbf-clay);
+  background: var(--kbf-clay-tint);
+  color: var(--kbf-clay-deep);
+}
+.kbf-editext.is-changed:not(.is-editing) .kbf-editext-btn {
+  border-style: solid;
+  color: var(--kbf-ink);
+}
+.kbf-editext-undo {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--kbf-muted);
+}
+.kbf-editext-undo svg { width: 11px; height: 11px; }
+.kbf-editext-undo:hover { background: var(--kbf-hover); color: var(--kbf-ink); }
+
+/* before → after diff on a panel card */
+.kbf-card-textedit { margin-top: 7px; font-size: 12px; line-height: 1.55; }
+.kbf-card-textedit del {
+  color: var(--kbf-muted);
+  text-decoration: line-through;
+  text-decoration-color: rgba(178, 59, 59, 0.55);
+  margin-right: 6px;
+}
+.kbf-card-textedit ins {
+  color: var(--kbf-ink);
+  text-decoration: none;
+  background: var(--kbf-clay-tint);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+
+/* pin-time element screenshot on an expanded card */
+.kbf-card-shot {
+  display: block;
+  margin-top: 8px;
+  max-width: 100%;
+  max-height: 120px;
+  width: auto;
+  border: 1px solid var(--kbf-border);
+  border-radius: 8px;
+  cursor: zoom-in;
+  background: var(--kbf-surface-2);
+}
+.kbf-card-shot:hover { border-color: var(--kbf-border-strong); box-shadow: var(--kbf-shadow-sm); }
+
+/* ---------- agent presence (watch mode) ---------- */
+
+.kbf-agent-chip {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--kbf-agent-deep);
+  background: var(--kbf-agent-tint);
+  border-radius: 999px;
+  padding: 3px 10px;
+  animation: kbf-tweak-poof 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.kbf-agent-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--kbf-green);
+}
+.kbf-agent-chip.is-working .kbf-agent-dot {
+  background: var(--kbf-amber);
+  animation: kbf-blink 1s steps(2, start) infinite;
+}
+/* small live-dot on the list FAB so presence shows even with the panel closed */
+.kbf-fab-wrap.kbf-agent-live .kbf-fab--mini { position: relative; }
+.kbf-fab-wrap.kbf-agent-live .kbf-fab--mini::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--kbf-green);
+  box-shadow: 0 0 0 2px var(--kbf-paper);
+}
+
+/* Touch: bigger targets (HIG-ish), and >=16px input font so iOS doesn't zoom
+   the page when a number field takes focus. The knob list gets a tighter cap —
+   the on-screen keyboard already eats half the viewport. */
+@media (pointer: coarse) {
+  .kbf-tweak-row { min-height: 34px; }
+  .kbf-tweak-num,
+  .kbf-tweak-select,
+  .kbf-tweak-alignseg,
+  .kbf-tweak-colorwrap { height: 29px; }
+  .kbf-tweak-step { width: 28px; font-size: 15px; }
+  .kbf-tweak-input { width: 44px; font-size: 16px; }
+  .kbf-tweak-select { font-size: 16px; }
+  .kbf-tweak-alignbtn { width: 30px; }
+  .kbf-tweak-alignbtn svg { width: 13px; height: 13px; }
+  .kbf-tweak-undo { width: 26px; height: 26px; }
+  .kbf-tweak-undo svg { width: 12px; height: 12px; }
+  .kbf-tweak-rows { max-height: 34vh; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kbf-tweak-body,
+  .kbf-tweak-chev svg,
+  .kbf-tweak-undo { transition: none; }
+  .kbf-tweak-count { animation: none; }
+}
 
 /* ---------- side panel ---------- */
 
@@ -1043,6 +1527,10 @@ button {
 .kbf-mini:active,
 .kbf-x:active { transform: scale(0.88); }
 .kbf-mic:active { transform: scale(0.93); }
+.kbf-tweak-step:active { transform: scale(0.9); }
+.kbf-tweak-undo:active,
+.kbf-tweak-alignbtn:active,
+.kbf-tweak-resetall:active { transform: scale(0.92); }
 .kbf-reply-send:active { transform: scale(0.92); }
 .kbf-pin:active { transform: scale(1.04); opacity: 1; }
 
@@ -1057,9 +1545,23 @@ button {
 .kbf-x:focus-visible,
 .kbf-reply-send:focus-visible,
 .kbf-chip-btn:focus-visible,
+.kbf-tweak-toggle:focus-visible,
+.kbf-tweak-step:focus-visible,
+.kbf-tweak-alignbtn:focus-visible,
+.kbf-editext-btn:focus-visible,
+.kbf-editext-undo:focus-visible,
+.kbf-tweak-undo:focus-visible,
+.kbf-tweak-resetall:focus-visible,
+.kbf-tweak-select:focus-visible,
+.kbf-tweak-colorwrap:focus-within,
+.kbf-card-shot:focus-visible,
 .kbf-langwrap:focus-within {
   outline: 2px solid var(--kbf-clay);
   outline-offset: 2px;
 }
-/* The transparent native <select> sits over the chip; show the ring on the chip. */
-.kbf-langselect:focus-visible { outline: none; }
+/* Steppers/align sit inside a grouped border — a tight inset ring reads better there. */
+.kbf-tweak-step:focus-visible,
+.kbf-tweak-alignbtn:focus-visible { outline-offset: -2px; }
+/* The transparent native <select>/<input type=color> sits over its chip; show the ring on the chip. */
+.kbf-langselect:focus-visible,
+.kbf-tweak-color:focus-visible { outline: none; }

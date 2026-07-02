@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-07-02
+
 ### Fixed
 - **Ctrl/Cmd+C no longer toggles comment mode** — the `C` shortcut now ignores every modifier,
   so copying page text can't flip the mode (Alt included, for AltGr layouts).
@@ -287,7 +289,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.4
 [0.3.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.3
 [0.3.2]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.2
 [0.3.1]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.1

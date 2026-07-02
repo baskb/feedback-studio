@@ -13,6 +13,7 @@ docs/media/demo-mobile/
 
 # Internal cross-session state + strategy — never ship
 PROGRESS.md
+PROGRESS-archive.md
 DECISIONS.md
 MEMORY.md
 CLAUDE.md

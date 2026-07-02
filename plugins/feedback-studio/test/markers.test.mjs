@@ -112,8 +112,39 @@ test('a sourceFile outside the root is never written (path traversal)', async ()
       await writeComments(dataDir, [mdComment(root, rel, 'Alpha line.')]);
       const r = await exportMarkers(dataDir, root);
       assert.equal(r.stamped, 0);
+      assert.equal(r.notFound, 1, 'refused files are counted, not silently dropped');
       assert.equal(readFileSync(outside, 'utf-8'), 'Alpha line.\n', 'outside file untouched');
     } finally { rmSync(outside, { force: true }); }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('--md outside the cwd: stamping works once that root is explicitly allowed', async () => {
+  const { root, dataDir } = setup(); // `root` plays the project cwd
+  const mdRoot = mkdtempSync(path.join(tmpdir(), 'fbs-mdroot-'));
+  try {
+    writeFileSync(path.join(mdRoot, 'report.md'), '# R\n\nAlpha paragraph here.\n');
+    // sourceFile is recorded cwd-relative, exactly as --md mode stores it
+    const rel = path.relative(root, path.join(mdRoot, 'report.md')).split(path.sep).join('/');
+    await writeComments(dataDir, [mdComment(root, rel, 'Alpha paragraph here.')]);
+    // default containment (cwd only) refuses and counts it…
+    const r1 = await exportMarkers(dataDir, root);
+    assert.deepEqual({ stamped: r1.stamped, notFound: r1.notFound }, { stamped: 0, notFound: 1 });
+    // …allowing the md root stamps it, still resolving against the cwd
+    const r2 = await exportMarkers(dataDir, root, [root, mdRoot]);
+    assert.equal(r2.stamped, 1);
+    assert.match(readFileSync(path.join(mdRoot, 'report.md'), 'utf-8'), /Alpha paragraph here\. <!-- @FB: note -->/);
+  } finally {
+    rmSync(mdRoot, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a missing sourceFile is counted in notFound, not silently dropped', async () => {
+  const { root, dataDir } = setup();
+  try {
+    await writeComments(dataDir, [mdComment(root, 'gone.md', 'whatever text')]);
+    const r = await exportMarkers(dataDir, root);
+    assert.deepEqual({ stamped: r.stamped, notFound: r.notFound }, { stamped: 0, notFound: 1 });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

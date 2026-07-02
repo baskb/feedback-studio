@@ -101,8 +101,10 @@
   if (!TYPE_IDS.includes(ctype)) ctype = TYPES[0].id;
 
   function normalizePath(p) {
+    // '/x' and '/x/' serve the same content here — collapse to one key so pins
+    // made on one form still render when the page is visited via the other.
     p = p.replace(/index\.html$/, '');
-    if (p.length > 1) p = p.replace(/\/+$/, '/');
+    if (p.length > 1) p = p.replace(/\/+$/, '');
     return p || '/';
   }
 
@@ -1087,14 +1089,15 @@
     return window.matchMedia ? window.matchMedia('(max-width: 480px)').matches : window.innerWidth <= 480;
   }
   // A comment's stored `url` comes from the API and could be anything; only ever
-  // navigate to an http(s) target, so a `javascript:`/`data:` url can't turn
-  // "Go to element" into script execution. Anything else falls back to the
-  // same-origin page path.
+  // navigate to a SAME-ORIGIN http(s) target, so a `javascript:`/`data:` url (or
+  // an off-origin link, e.g. a tunnel-era URL clicked from localhost) can't turn
+  // "Go to element" into script execution or an unexpected origin hop. Anything
+  // else falls back to the same-origin page path.
   function safeNavUrl(url, fallback) {
     if (!url) return fallback;
     try {
       const u = new URL(url, location.href);
-      if (u.protocol === 'http:' || u.protocol === 'https:') return u.href;
+      if ((u.protocol === 'http:' || u.protocol === 'https:') && u.origin === location.origin) return u.href;
     } catch (e) {}
     return fallback;
   }
@@ -1413,7 +1416,7 @@
       try {
         const r = await api('/md-export', { method: 'POST' });
         toast(`Stamped ${r.stamped} marker${r.stamped === 1 ? '' : 's'} into ${r.files} file${r.files === 1 ? '' : 's'}`
-          + (r.notFound ? ` (${r.notFound} skipped — no unique matching line; re-pin those)` : ''));
+          + (r.notFound ? ` (${r.notFound} skipped — no unique matching line/file; re-pin those)` : ''));
       } catch (e) { toastError('Stamp failed — ' + e.message); }
     });
   }
@@ -1426,7 +1429,9 @@
       if (activeComposer) { closeComposer(); return; }
       if (panelOpen) { setPanel(false); return; }
     }
-    if (!typing && !inComposer && (e.key === 'c' || e.key === 'C')) { setMode(!mode); }
+    // Bare C only: Ctrl/Cmd+C is the user copying page text, not a mode toggle
+    // (and Alt/AltGr+C types locale characters on some layouts).
+    if (!typing && !inComposer && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'c' || e.key === 'C')) { setMode(!mode); }
   });
 
   // ---------- boot ----------

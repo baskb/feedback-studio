@@ -286,6 +286,12 @@ const ALLOWED_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 function populateAllowedHosts(ips = []) {
   for (const ip of ips) ALLOWED_HOSTS.add(String(ip).toLowerCase());
   if (HOST && HOST !== '0.0.0.0' && HOST !== '::') ALLOWED_HOSTS.add(HOST.toLowerCase());
+  // The machine's own name (and its mDNS form) so `http://mypc.local:4444` works
+  // on the LAN — a rebinding attacker can't use these, they resolve locally.
+  try {
+    const hn = os.hostname().toLowerCase();
+    if (hn) { ALLOWED_HOSTS.add(hn); ALLOWED_HOSTS.add(hn + '.local'); }
+  } catch (e) {}
 }
 // A non-browser client (curl, the MCP server, a script) sends no Host or one we
 // don't recognise; those aren't the rebinding threat (they're code already on
@@ -304,7 +310,8 @@ async function handleApi(req, res, url) {
   const resource = parts[0] || '';
   const mutating = req.method !== 'GET' && req.method !== 'HEAD';
   if (mutating && crossSite(req)) return sendJSON(res, 403, { error: 'cross-site request blocked' });
-  if (mutating && !hostAllowed(req)) return sendJSON(res, 403, { error: 'host not allowed' });
+  // (The Host allowlist is enforced for the whole /__feedback surface — reads
+  // included — in handler(), before this function is reached.)
 
   try {
     if (resource === 'comments') {
@@ -372,7 +379,11 @@ async function handleApi(req, res, url) {
       return sendJSON(res, 200, { ok: true });
     }
     if (resource === 'md-export' && req.method === 'POST') {
-      return sendJSON(res, 200, { ok: true, ...(await stampMarkers(DATA_DIR, CWD)) });
+      // sourceFile paths are recorded cwd-relative, so resolution stays rooted at
+      // CWD — but when --md points outside the cwd, that tree is a legitimate
+      // stamping target too, so it joins the containment allowlist.
+      const roots = MD_ROOT ? [CWD, MD_ROOT] : [CWD];
+      return sendJSON(res, 200, { ok: true, ...(await stampMarkers(DATA_DIR, CWD, roots)) });
     }
     return sendJSON(res, 404, { error: 'unknown endpoint' });
   } catch (err) {
@@ -391,13 +402,13 @@ async function serveAsset(res, file) {
     res.end(buf);
   } catch (e) { res.writeHead(404); res.end('Not found'); }
 }
-async function serveStatic(res, file) {
+async function serveStatic(res, file, status = 200) {
   const ext = path.extname(file).toLowerCase();
   if (ext === '.html') {
-    res.writeHead(200, { 'Content-Type': MIME[ext], 'Cache-Control': 'no-store' });
+    res.writeHead(status, { 'Content-Type': MIME[ext], 'Cache-Control': 'no-store' });
     res.end(injectHtml(await readFile(file, 'utf-8')));
   } else {
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+    res.writeHead(status, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
     res.end(await readFile(file));
   }
 }
@@ -651,7 +662,9 @@ function startTunnel(cfPath, port) {
     cf.stderr.on('data', scan);
     cf.on('error', (e) => { if (!url) reject(e); });
     cf.on('exit', (code) => { if (!url) reject(new Error('cloudflared exited (code ' + code + ') before a tunnel URL appeared')); });
-    setTimeout(() => { if (!url) reject(new Error('timed out waiting for the tunnel URL')); }, 30000);
+    // On timeout, kill the child too — otherwise a cloudflared that never
+    // prints a URL lingers invisibly until server shutdown.
+    setTimeout(() => { if (!url) { try { cf.kill(); } catch (e) {} reject(new Error('timed out waiting for the tunnel URL')); } }, 30000);
   });
 }
 
@@ -725,7 +738,7 @@ function mdDocShell(title, sourceRel, bodyHtml) {
     <div class="doc-source">${htmlAttr(sourceRel || '')}</div>
     ${bodyHtml}
   </article>
-  <script>window.__kbfMode="md";window.__kbfSource=${JSON.stringify(sourceRel || '')};</script>
+  <script>window.__kbfMode="md";window.__kbfSource=${JSON.stringify(sourceRel || '').replace(/</g, '\\u003c')};</script>
 </body></html>`;
 }
 
@@ -745,9 +758,10 @@ function sanitizeRenderedHtml(html) {
     // drop tags that can execute, frame, or redirect the page
     .replace(/<\/?(iframe|object|embed|base|meta|form|link)\b[^>]*>/gi, '')
     // strip inline event handlers:  onclick="…"  onerror='…'  onload=foo
-    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '')
-    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '')
-    .replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
+    // ('/' counts as attribute whitespace in HTML5, so <img/onerror=…> too)
+    .replace(/[\s/]on[a-z]+\s*=\s*"[^"]*"/gi, '')
+    .replace(/[\s/]on[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/[\s/]on[a-z]+\s*=\s*[^\s>]+/gi, '')
     // neutralise javascript:/vbscript: URLs in href/src
     .replace(/\b(href|src)\s*=\s*"\s*(?:javascript|vbscript):[^"]*"/gi, '$1="#"')
     .replace(/\b(href|src)\s*=\s*'\s*(?:javascript|vbscript):[^']*'/gi, "$1='#'");
@@ -775,7 +789,10 @@ async function listMdFiles(dir, base = dir) {
 
 async function renderMdIndex() {
   const files = await listMdFiles(MD_ROOT);
-  const items = files.map((rel) => `<li><a href="/${htmlAttr(rel.replace(/\.md$/i, ''))}">${htmlAttr(rel)}</a></li>`).join('\n');
+  // Percent-encode each segment so filenames with '#', '?' or '%' survive as
+  // links (serveMd decodes the pathname back).
+  const encPath = (p) => p.split('/').map(encodeURIComponent).join('/');
+  const items = files.map((rel) => `<li><a href="/${htmlAttr(encPath(rel.replace(/\.md$/i, '')))}">${htmlAttr(rel)}</a></li>`).join('\n');
   const body = `<h1>Markdown files</h1><p>${files.length} document${files.length === 1 ? '' : 's'} to review.</p><ul>${items || '<li>(none found)</li>'}</ul>`;
   return mdDocShell('Markdown files', path.relative(CWD, MD_ROOT).split(path.sep).join('/') || '.', body);
 }
@@ -812,6 +829,12 @@ async function handler(req, res) {
     const url = new URL(req.url, `http://localhost:${PORT}`);
     if (url.pathname === '/__feedback/overlay.js') return serveAsset(res, path.join(PUBLIC_DIR, 'overlay.js'));
     if (url.pathname === '/__feedback/overlay.css') return serveAsset(res, path.join(PUBLIC_DIR, 'overlay.css'));
+    // DNS-rebinding guard for the whole comment surface, reads included — a
+    // rebound page could otherwise read the review data (API GETs, SSE stream).
+    // The static overlay assets above stay public; they contain no data.
+    if (url.pathname === '/__feedback/events' || url.pathname.startsWith('/__feedback/api')) {
+      if (!hostAllowed(req)) return sendJSON(res, 403, { error: 'host not allowed' });
+    }
     if (url.pathname === '/__feedback/events') return handleSSE(req, res);
     if (url.pathname.startsWith('/__feedback/api')) return handleApi(req, res, url);
 
@@ -824,7 +847,9 @@ async function handler(req, res) {
     const file = await resolveStaticFile(url.pathname);
     if (!file) {
       const notFound = path.join(STATIC_DIR, '404.html');
-      if (existsSync(notFound)) { res.statusCode = 404; return serveStatic(res, notFound); }
+      // Pass the status explicitly: writeHead()'s code wins over res.statusCode,
+      // so setting the property here would still send the custom page as a 200.
+      if (existsSync(notFound)) return serveStatic(res, notFound, 404);
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('404 — not found');
     }
@@ -933,11 +958,16 @@ async function main() {
     console.error(`\n  No build directory found. Tried: ${AUTODETECT.join(', ')}.`);
     console.error(`  Build your site first, then pass --dir <folder>, or proxy a dev server with --proxy <url>.`);
     console.error(`  e.g.  feedback-studio --dir dist`);
-    console.error(`        feedback-studio --proxy http://localhost:5173\n`);
+    console.error(`        feedback-studio --proxy http://localhost:5173`);
+    console.error(`  No site yet? Try the instant demo:  feedback-studio --demo\n`);
     process.exit(1);
   }
   await mkdir(DATA_DIR, { recursive: true });
-  if (!existsSync(DATA_FILE)) await writeComments(DATA_DIR, []);
+  // Create the data file under the cross-process lock: a bare writeComments([])
+  // here could clobber a concurrent MCP write between the existence check and
+  // the write. The no-op mutate re-reads under the lock, so it creates-if-absent
+  // and preserves whatever another process just wrote.
+  if (!existsSync(DATA_FILE)) await mutate(DATA_DIR, (list) => ({ comments: list }));
   // Drop the self-contained processing guide next to the data (regenerated each run,
   // like FEEDBACK.md) so any agent — plugin or not — has the workflow on hand.
   await exportProcessInstructions(DATA_DIR).catch(() => {});

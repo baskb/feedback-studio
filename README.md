@@ -60,10 +60,13 @@ line.
 
 **Try it in 30 seconds, no site needed.**
 Say *"show me the Feedback Studio demo"*, or run `npx feedback-studio --demo`.
-A sample landing page opens (a throwaway copy in a temp dir) with three comments
-pre-pinned — one typo to fix, one button label to change, one headline to improve —
-and a couple more flaws hidden for you to find. Process them and watch the pins
-turn green; your own project is never touched.
+A sample landing page opens (a throwaway copy in a temp dir). The `npx` run
+pre-pins three example comments — a button label to change, a lorem-ipsum
+paragraph to improve, a typo to fix — while the skill starts empty so you place
+your own (ask for *"the demo with examples"* to seed the three). Either way a
+couple more flaws — a bland headline, a stale footer year — hide on the page
+for you to find. Process the comments and watch the pins turn green; your own
+project is never touched.
 
 **Review your site from your phone, by voice.**
 Say *"start Feedback Studio, mobile-ready"*, or run `npx feedback-studio --dir dist --tunnel`.
@@ -120,8 +123,11 @@ It works with any framework: serve a static build, proxy a Vite, Next, or Astro
 dev server with live reload, or review Markdown. On touch, step through nested
 elements with ▲/▼ to pick the right one. The UI lives in its own isolated layer,
 so it does not touch your site's markup or styles. Every anchor re-resolves with
-a confidence score and refuses to guess when it cannot place a comment safely.
-The anchor numbers are in [HARNESS.md](HARNESS.md).
+a confidence score and refuses to guess when it cannot place a comment safely:
+measured on a hard real-world page, **25/25 anchors re-resolved after realistic
+rebuilds**, and in a deliberately harsh worst case every anchor that could not be
+re-found **degraded to a re-pin request instead of a confident wrong edit**.
+Method and numbers are in [HARNESS.md](HARNESS.md).
 
 ## Use the server directly (without Claude Code)
 
@@ -158,8 +164,8 @@ node plugins/feedback-studio/bin/feedback-studio.mjs --proxy http://localhost:51
 | `--no-open` | Don't auto-open the browser. |
 | `--seed-agents` | Append the "how to process the feedback" workflow to this project's `CLAUDE.md` and `AGENTS.md` (idempotent), then exit. So your agent knows the flow without the plugin installed. |
 
-The overlay follows your **OS light/dark theme**; a toggle in the feedback panel header forces
-light or dark. Drag the **Comment button** to any corner (it remembers), and on desktop drag a
+The overlay starts in **light theme**; a toggle in the feedback panel header switches to dark
+(remembered per browser). Drag the **Comment button** to any corner (it remembers), and on desktop drag a
 **comment composer** by its header to move it off the content.
 
 > **Requires Node 18+.** Runtime HTTP has zero dependencies; `--https`, `--md`, and
@@ -253,7 +259,9 @@ deliberate action, with `.bak` backups.
   voice. English is the default; the one-tap language menu also covers Spanish,
   Mandarin, Hindi, Arabic, Portuguese, French, German, Japanese, Korean, Russian,
   Italian, Dutch, Turkish, Polish, Indonesian, and more (18 locales in all). The
-  interface stays English.
+  interface stays English. One honest caveat: dictation runs on the browser's
+  speech engine, and Chromium sends that audio to its cloud recognizer — so
+  voice, unlike everything else here, is not purely local. Type when that matters.
 - **`--https` (LAN alternative to a tunnel)** uses a self-signed certificate. The
   phone warns once ("not private"): tap **Advanced -> Proceed**. After that the
   connection counts as secure and the mic works. `--tunnel` avoids this step.

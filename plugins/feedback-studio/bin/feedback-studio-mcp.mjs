@@ -47,6 +47,7 @@ function summarize(c) {
     author: c.author || 'user',
     authorName: c.authorName || undefined,
     status: c.status,
+    autonomy: c.autonomy || 'review', // agents must honour this without an extra get_comment
     text: c.text,
     anchor: { snippet: c.anchor && (c.anchor.snippet || c.anchor.rangeText), selector: c.anchor && c.anchor.selector },
     replies: Array.isArray(c.thread) ? c.thread.length : 0,

@@ -138,7 +138,12 @@ export async function writeComments(dir, comments, opts = {}) {
   const body = JSON.stringify({ version: FILE_VERSION, updatedAt: new Date().toISOString(), comments }, null, 2);
   const tmp = path.join(dir, 'comments.json.tmp-' + process.pid + '-' + (_writeSeq++));
   await writeFile(tmp, body);
-  await rename(tmp, dataFile(dir)); // atomic replace
+  try {
+    await rename(tmp, dataFile(dir)); // atomic replace
+  } catch (e) {
+    await unlink(tmp).catch(() => {}); // don't leave orphan tmp files behind
+    throw e;
+  }
   if (opts.exportMd !== false) {
     await exportMarkdown(dir, comments).catch(() => {}); // a readable mirror; best-effort
   }
@@ -156,10 +161,17 @@ async function acquireLock(dir, { retries = 100, wait = 50, staleMs = 15000 } = 
       return lp;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      // Steal an abandoned lock (a process that crashed mid-write).
+      // Steal an abandoned lock (a process that crashed mid-write). Steal by
+      // RENAME, not unlink: two waiters can both see the lock as stale, but only
+      // one rename succeeds — with unlink, the loser could delete a fresh lock
+      // the winner had already re-created, letting both proceed.
       try {
         const st = await stat(lp);
-        if (Date.now() - st.mtimeMs > staleMs) { await unlink(lp).catch(() => {}); continue; }
+        if (Date.now() - st.mtimeMs > staleMs) {
+          const stale = lp + '.stale-' + process.pid;
+          try { await rename(lp, stale); await unlink(stale).catch(() => {}); } catch (_) { /* another waiter won the steal */ }
+          continue;
+        }
       } catch (_) { /* lock vanished; retry immediately */ continue; }
       await sleep(wait);
     }

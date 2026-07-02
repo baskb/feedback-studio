@@ -6,6 +6,42 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Ctrl/Cmd+C no longer toggles comment mode** — the `C` shortcut now ignores every modifier,
+  so copying page text can't flip the mode (Alt included, for AltGr layouts).
+- **A custom `404.html` is now served with a real HTTP 404** (it was sent as 200).
+- **"Stamp .md" works when `--md` points outside the project cwd** — the out-of-cwd Markdown
+  root is now an allowed stamping target. Missing or out-of-root source files are **counted in
+  the skipped total** instead of being silently dropped, and the panel toast says so.
+- Markdown index links are percent-encoded, so filenames containing `#`, spaces, or `%` open.
+- Pins no longer fragment between `/page` and `/page/` — the overlay treats both URL forms
+  (which serve the same content) as one page.
+- The demo skill's worked-example descriptions and the README demo recipe now match the actual
+  seeded comments (change: button label · improve: lorem-ipsum paragraph · fix: typo), and the
+  README no longer claims the overlay follows the OS theme (light is the default since 0.3.3).
+- The demo seed comments were realigned to the published demo video (order and improve target).
+
+### Security
+- The **Host allowlist now covers reads too** (API GETs and the SSE stream, not only writes),
+  closing the read side of the DNS-rebinding surface. The machine's hostname and its `.local`
+  mDNS form are recognised, so `http://<hostname>.local:4444` keeps working on the LAN.
+- Rendered-Markdown sanitizing also strips slash-separated inline handlers (`<img/onerror=…>`),
+  and the md page shell escapes `<` in its inline source-path JSON so no path can form a
+  premature `</script>`.
+- "Go to element" only ever navigates to a **same-origin** http(s) URL.
+
+### Changed
+- MCP `list_comments` summaries now include each comment's `autonomy`, so agents can honour
+  `review`/`auto` without fetching every comment.
+- The processing workflow gained an explicit step: **refresh the page** after applying a batch,
+  so the user sees the updated content under the now-green pins.
+- The "no build directory found" error now suggests the instant demo (`feedback-studio --demo`).
+- README: published the measured anchor resolve-rate (with the HARNESS.md method link) and an
+  honest note that voice dictation uses the browser's cloud speech engine.
+- Internal robustness: the comments file is created under the cross-process lock at startup; a
+  stale write-lock is stolen by rename (a racing waiter can't delete a fresh lock); failed
+  atomic writes clean up their temp file; a tunnel that never yields a URL is killed on timeout.
+
 ## [0.3.3] - 2026-06-14
 
 ### Changed

@@ -68,7 +68,13 @@ Studio is polite to its agents. ;-)
    first; `auto` = apply directly. Mark each resolved when applied (the pin flips green live):
    PATCH `/__feedback/api/comments/<id>` with `{"status":"resolved"}` if the server is running,
    else set `"status":"resolved"` in the file.
-5. Summarise by page, and list anything left open (low-confidence anchors, decisions needed).
+5. **Refresh the page** once the batch is applied so the user sees the *updated* page under its
+   now-green pins. The pins flip green live over SSE, but the page content itself does **not**
+   reload itself: a static `--dir` needs a rebuild (if applicable) then a hard reload; `--proxy`
+   with live reload refreshes on save, but reload anyway to be sure. Tell the user to reload (or,
+   if you're driving a browser, reload the tab) — a stale page under green pins looks like the
+   edits didn't land.
+6. Summarise by page, and list anything left open (low-confidence anchors, decisions needed).
 
 ## Author your own comments (optional)
 

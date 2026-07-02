@@ -40,8 +40,14 @@ export function fbMarker(c) {
 //     several matches → the comment is skipped (counted in `notFound`), never
 //     appended at EOF and never stamped onto a first-of-many guess;
 //   - already-stamped markers are left alone (idempotent);
-//   - a `.bak` of the original file is saved before the first write.
-export async function exportMarkers(dataDir, rootDir) {
+//   - a `.bak` of the original file is saved before the first write;
+//   - a sourceFile that is missing, or that resolves outside every allowed
+//     root, is counted in `notFound` — never written, never silently dropped.
+// `roots` lists the directories comments may legitimately write into (the
+// project cwd, plus the --md root when that lives outside the cwd). Paths are
+// still RESOLVED against `rootDir` — sourceFile is recorded cwd-relative —
+// `roots` only widens the containment check, never the resolution base.
+export async function exportMarkers(dataDir, rootDir, roots = [rootDir]) {
   const comments = await readComments(dataDir);
   const byFile = new Map();
   for (const c of comments) {
@@ -52,7 +58,7 @@ export async function exportMarkers(dataDir, rootDir) {
   let files = 0, stamped = 0, notFound = 0;
   for (const [rel, list] of byFile) {
     const file = path.normalize(path.join(rootDir, rel));
-    if (!within(rootDir, file) || !existsSync(file)) continue;
+    if (!roots.some((r) => within(r, file)) || !existsSync(file)) { notFound += list.length; continue; }
     let text = await readFile(file, 'utf-8');
     const lines = text.split('\n');
     let changed = false;

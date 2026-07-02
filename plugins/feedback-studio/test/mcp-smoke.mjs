@@ -48,7 +48,9 @@ try {
   check('unknown tool => tool error', unknown.result.isError === true);
 
   const list = await rpc({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'list_comments', arguments: {} } });
-  check('list_comments shows the added one', JSON.parse(list.result.content[0].text).count === 1);
+  const listed = JSON.parse(list.result.content[0].text);
+  check('list_comments shows the added one', listed.count === 1);
+  check('list_comments summary carries autonomy', listed.comments[0].autonomy === 'review');
 
   const notFound = await rpc({ jsonrpc: '2.0', id: 8, method: 'frobnicate' });
   check('unknown method => -32601', notFound.error && notFound.error.code === -32601);

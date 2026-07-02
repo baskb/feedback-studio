@@ -11,11 +11,11 @@ allowed-tools: Bash Read Edit Glob Grep
 
 Serves a bundled, deliberately imperfect landing page ("Roastly") from a **throwaway
 temp-dir copy**. By default it starts **empty** — no comments — so the user adds their own
-(ideal for a clean walkthrough or recording). The page hides a couple of flaws (a lorem-ipsum
-leftover, a stale footer year) as ready targets. If the user wants worked examples instead,
-the **`--seeded`** option loads three open comments — one `fix` (a typo), one `change` (a
-button label), one `improve` (a bland headline). Either way, processing edits the throwaway
-copy, never the user's project.
+(ideal for a clean walkthrough or recording). The page hides a couple of flaws (a bland
+headline, a stale footer year) as ready targets. If the user wants worked examples instead,
+the **`--seeded`** option loads three open comments — one `change` (a button label), one
+`improve` (a lorem-ipsum paragraph), one `fix` (a typo). Either way, processing edits the
+throwaway copy, never the user's project.
 
 ## Start it
 
@@ -46,8 +46,8 @@ tell the user, briefly:
 1. The page starts empty — press **C** (or the Comment button), then click any element or
    select text to leave a comment; the **mic** dictates. (If they ran `--seeded`, three
    example pins are already there to click and read.)
-2. Two flaws are hidden on the page — a lorem-ipsum leftover and a stale footer year — good
-   targets to find and pin. Try one of each type (fix / change / improve) to show the model.
+2. Two flaws are hidden on the page — a bland say-nothing headline and a stale footer year —
+   good targets to find and pin. Try one of each type (fix / change / improve) to show the model.
 3. When they're ready, the cue is **PPF** — *Please Process Feedback* (or just "process the
    feedback"). The *please* is intentional: we're nice to our agents. ;-)
 
@@ -61,8 +61,8 @@ Follow the standard processing workflow from the `feedback` skill, with two over
 Statuses still update live: PATCH `http://localhost:<port>/__feedback/api/comments/<id>`
 with `{"status":"resolved"}` so the user watches the pins flip green. Process whatever
 comments are present — the user's own, or (with `--seeded`) the worked examples: a `fix` is a
-typo to patch, a `change` is near-verbatim, an `improve` wants your judgement (propose a
-headline, offer options).
+typo to patch, a `change` is near-verbatim, an `improve` wants your judgement (replace the
+lorem-ipsum with real copy, offer options).
 
 ## After the loop
 

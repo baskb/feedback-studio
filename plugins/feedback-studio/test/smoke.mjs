@@ -25,6 +25,7 @@ const root = mkdtempSync(path.join(tmpdir(), 'fbs-smoke-'));
 const site = path.join(root, 'site');
 mkdirSync(site);
 writeFileSync(path.join(site, 'index.html'), '<!doctype html><html><body><h1 id="t">Hi</h1></body></html>');
+writeFileSync(path.join(site, '404.html'), '<!doctype html><html><body><h1>custom not found</h1></body></html>');
 writeFileSync(path.join(root, 'secret.txt'), 'TOP SECRET');
 
 const PORT = 4567;
@@ -43,6 +44,12 @@ try {
   const homeBody = await home.text();
   check('serves index', home.status === 200);
   check('injects overlay script', homeBody.includes('/__feedback/overlay.js'));
+
+  // a custom 404.html must keep its 404 status (writeHead used to force 200)
+  const miss = await fetch(ORIGIN + '/no-such-page');
+  const missBody = await miss.text();
+  check('custom 404.html served with status 404', miss.status === 404 && missBody.includes('custom not found'));
+  check('404 page gets the overlay too', missBody.includes('/__feedback/overlay.js'));
 
   const list = await (await fetch(ORIGIN + '/__feedback/api/comments')).json();
   check('GET comments returns array', Array.isArray(list.comments));
@@ -76,6 +83,13 @@ try {
     'Connection: close', '', rebindBody,
   ]);
   check('forged Host blocked (403)', rebind.includes('403'));
+
+  // …and READS are gated against rebinding too (a rebound page could otherwise
+  // read the review data via API GETs or the SSE stream).
+  const rebindRead = await rawRequest(PORT, [
+    'GET /__feedback/api/comments HTTP/1.1', 'Host: evil.example', 'Connection: close', '', '',
+  ]);
+  check('forged-Host read blocked (403)', rebindRead.includes('403'));
 
   const trav = await fetch(ORIGIN + '/%2e%2e/%2e%2e/secret.txt');
   const travBody = await trav.text();

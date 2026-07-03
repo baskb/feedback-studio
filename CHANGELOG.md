@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-03
+
 ### Added
 - **Variant picker** — for a vague `improve` ("make this pop"), the agent can reply with 2–4
   design alternatives of the pinned element (`variants: [{label, html, note}]`). The user
@@ -376,7 +378,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.5.0
 [0.4.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.4.0
 [0.3.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.4
 [0.3.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.3

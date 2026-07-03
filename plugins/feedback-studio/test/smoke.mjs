@@ -304,7 +304,9 @@ try {
 
   // --data-dir + --label: multi-site isolation. Data lands in the custom dir (not
   // cwd/.feedback), meta.json names the site, and the overlay carries the label.
-  const MS_PORT = PORT + 3;
+  // NOTE: PORT+3 is used by the --no-shots check below; use +6 to avoid a bind
+  // collision when this server's port hasn't been released yet on a slow runner.
+  const MS_PORT = PORT + 6;
   const msCwd = path.join(root, 'mscwd');
   mkdirSync(msCwd);
   const msData = path.join(msCwd, 'sites', 'marketing', '.feedback');

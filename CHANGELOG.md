@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-03
+
 ### Security
 - **Share keys no longer leak to a proxied dev server.** Under `--proxy --share`, the
   `kbf-key` capability cookie was scoped to `/` and forwarded to the upstream on every
@@ -414,7 +416,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/baskb/feedback-studio/releases/tag/v0.5.1
 [0.5.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.5.0
 [0.4.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.4.0
 [0.3.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.3.4

@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **README refresh** — a prominent "newest" section showcasing the 0.7.0 headline features
+  (Talk me through it / Ask the page / it narrates back / swap an image / several sites in one
+  repo), plus matching Highlights. Docs only.
+
 ## [0.7.0] - 2026-07-03
 
 ### Added

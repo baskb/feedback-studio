@@ -6,7 +6,9 @@ Point, comment, done. Feedback Studio overlays a local website you're building �
 or a Markdown file you're writing — so you can click any element, select any
 sentence, and say what should change: typed or spoken, from your desk or your
 couch. You can even **show** the change instead of describing it: dial the
-padding until it looks right, or retype the headline directly on the page.
+padding until it looks right, or retype the headline directly on the page. Or
+just **talk your way through the whole page** and let it pin each comment where
+you point — and when your agent is done, it can **read the changes back to you**.
 Everything lands in `.feedback/comments.json`, and your coding agent applies it
 to the real source when you say the magic words.
 
@@ -47,7 +49,40 @@ npx feedback-studio --proxy http://localhost:5173   # wrap a running dev server
 npx feedback-studio --md report.md                  # review a Markdown file
 ```
 
-## Nine ways people use it
+## Newest — talk your way through it, and it talks back
+
+The tool used to be point-and-type. Now it's a conversation.
+
+**🎙 Talk me through it.** Don't type, don't even click — hit **Talk** and walk the
+page by voice while you move the cursor: *"this hero's too quiet… make this button
+orange… the footer year is wrong."* Feedback Studio times your speech against your
+pointer and grounds each spoken sentence on the element you were pointing at (the
+1980 "Put-That-There" trick, on your own page). Confident ones pin on the spot; only
+the ones it can't place ask you to point. Works on your phone too.
+
+**💬 Ask the page.** Point at anything and just *ask* — *"what does this do?"*, *"why
+is this here?"*, *"where's this defined?"* Your agent answers on the thread with a
+`file:line` pointer instead of changing anything. Your codebase, explained right where
+you're looking.
+
+**🔊 It narrates back.** After your agent works through the batch, hit **Walk me
+through the changes** and it plays a guided tour — scrolling to each element,
+highlighting it, and reading its own explanation **out loud** (in the language it
+replied in). The review becomes an actual two-way conversation, hands-free.
+
+**🖼 Swap an image on the page.** Pick a new picture from your machine and drop it onto
+any `<img>` or CSS background; frame, crop, and resize it live. It's auto-downscaled in
+the browser, and your agent drops the file into your repo and repoints the element.
+
+**🗂 Several sites, one repo.** Running a monorepo of sites? Start a session per site,
+each with its own `--label` and isolated `.feedback/`. Comment on all of them at once —
+your agent keeps every comment, screenshot, and image with the site it belongs to, and
+never mixes them up. ([jump to setup](#several-sites-in-one-repo))
+
+All of it is still **zero-dependency** (native Web Speech, pointer events, canvas, and
+speech synthesis — nothing to install) and **local-first**.
+
+## Nine more ways people use it
 
 Every story below is one sentence to your agent (or one `npx` line) away.
 
@@ -133,6 +168,16 @@ reverse.
   text; a numbered pin marks the spot, and threads keep the conversation on it.
 - **Show, don't tell** — live style knobs (Tweak Mode) and edit-text-in-place
   record *exact* deltas; previews always revert, the agent edits the source.
+- **Talk, don't type** — narrate the page by voice while pointing, and each
+  spoken comment pins to the element you meant; the review talks back with a
+  read-aloud walkthrough of what changed.
+- **Ask, don't guess** — pin a question on any element and the agent answers in
+  a reply (with a `file:line` pointer) instead of editing.
+- **Swap an image on the page** — drop a new picture onto any `<img>` or CSS
+  background, frame/crop it live; auto-downscaled in-browser, placed into your
+  repo by the agent.
+- **Several sites, one repo** — `--label` + `--data-dir` isolate each site's
+  comments/images so your agent never mixes them up.
 - **Smart knobs** — only relevant controls appear (no text size on an image;
   `gap` only on flex/grid), and giving a box a background reveals the corner
   radius knob. The details are the product.
@@ -192,8 +237,10 @@ The overlay starts in **light theme** (panel toggle for dark, remembered per
 browser). Drag the **Comment button** to any corner; on desktop, drag a composer
 by its header. Use **Chrome or Edge** for voice.
 
-**Several sites in one repo?** Run a session per site — each on its own port, with a `--label`
-and its own `--data-dir` beside the site — and give feedback on all of them at once:
+### Several sites in one repo
+
+Run a session per site — each on its own port, with a `--label` and its own `--data-dir`
+beside the site — and give feedback on all of them at once:
 
 ```bash
 npx feedback-studio --dir sites/marketing/dist --data-dir sites/marketing/.feedback --label Marketing --port 4001

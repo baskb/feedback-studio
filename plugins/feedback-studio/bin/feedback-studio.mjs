@@ -428,11 +428,14 @@ async function handleApi(req, res, url) {
       if (req.method === 'POST' && id && parts[2] === 'reply') {
         if (!canComment) return deny();
         const body = await readJson(req);
+        // Variants carry HTML that other viewers' overlays inject into the page:
+        // proposing them is the host/agent side's privilege. Picking one is not.
+        if (body.variants && !canManage) return deny();
         const out = await mutate(DATA_DIR, (list) => {
           const c = list.find((x) => x.id === id);
           if (!c) return { comments: list, value: { notFound: true } };
           if (!Array.isArray(c.thread)) c.thread = [];
-          const reply = makeReply({ author: body.author, authorName: body.authorName, text: body.text });
+          const reply = makeReply({ author: body.author, authorName: body.authorName, text: body.text, variants: body.variants, pick: body.pick });
           c.thread.push(reply);
           c.updatedAt = new Date().toISOString();
           return { comments: list, value: { comment: c, reply } };
@@ -543,6 +546,15 @@ async function handleApi(req, res, url) {
         broadcastAgentStatus();
         return sendJSON(res, 200, { agent: agentStatus });
       }
+    }
+    // After applying a batch, the agent calls this so open overlays reload
+    // themselves and show the edited page under the now-green pins — no manual
+    // refresh. The overlay reloads only when it's safe (no composer / variant
+    // preview / in-progress typing open); otherwise it surfaces a "reload" nudge.
+    if (resource === 'reload' && req.method === 'POST') {
+      if (!canManage) return deny();
+      broadcastReload();
+      return sendJSON(res, 200, { ok: true });
     }
     if (resource === 'export' && req.method === 'POST') {
       if (!canManage) return deny();
@@ -717,6 +729,10 @@ async function broadcastFromDisk() {
 let agentStatus = { state: 'offline', name: '', commentId: '', ts: 0 };
 function broadcastAgentStatus() {
   const payload = 'event: agent-status\ndata: ' + JSON.stringify({ agent: agentStatus }) + '\n\n';
+  for (const res of [...sseClients]) writeSse(res, payload);
+}
+function broadcastReload() {
+  const payload = 'event: reload\ndata: ' + JSON.stringify({ at: Date.now() }) + '\n\n';
   for (const res of [...sseClients]) writeSse(res, payload);
 }
 let _bcTimer = null;

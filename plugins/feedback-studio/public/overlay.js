@@ -141,6 +141,7 @@
     alignL: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="14" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg>',
     alignC: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="6.5" y1="12" x2="17.5" y2="12"/><line x1="5" y1="18" x2="19" y2="18"/></svg>',
     alignR: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="6" y1="18" x2="21" y2="18"/></svg>',
+    eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>',
   };
 
   // ---------- shadow host ----------
@@ -484,6 +485,8 @@
       }
       if (moved > 10) return; // a scroll / swipe / drag, not a tap
       if (!(target instanceof Element) || target === document.body || target === document.documentElement) return;
+      // never anchor a comment to a variant-preview candidate — it's throwaway DOM
+      if (target.closest('[data-kbf-variant]')) return;
       if (type === 'mouse') {
         openComposer({ kind: 'new', anchor: buildElementAnchor(target), rect: target.getBoundingClientRect(), el: target });
       } else {
@@ -1160,11 +1163,181 @@
     } catch (e) { /* best-effort by design */ }
   }
 
+  // ---------- variant preview (agent-proposed alternatives, tried ON the page) ----------
+  // An agent reply can carry 2–4 `variants` (sanitized server-side at write
+  // time). "Preview on the page" hides the pinned element and shows each
+  // candidate in its place via an overlay-owned container; a floating switcher
+  // flips Original/A/B/C, and "Use this" records the pick on the thread. Like
+  // every preview here, it is temporary — the page reverts on close, the agent
+  // implements the picked variant in source.
+  let variantPreview = null; // { comment, reply, el, prevDisplay, container, bar, index, scrubbed }
+
+  // Second, AUTHORITATIVE sanitation layer, run immediately before injection.
+  // The server sanitizes at write time with regexes, but regexes over raw
+  // markup cannot fully reason about HTML entity encoding — this pass parses
+  // the fragment into an inert <template> (no script execution, no resource
+  // loads) where the browser has ALREADY decoded entities, then walks the real
+  // tree: executable elements out, on* handlers out, script-ish URLs (decoded!)
+  // neutralised, external url() beacons stripped from inline styles.
+  const SCRUB_BAD_TAG = /^(script|style|iframe|object|embed|base|meta|form|link|frame|frameset|title)$/i;
+  const SCRUB_URL_ATTRS = ['href', 'src', 'xlink:href', 'formaction', 'action'];
+  function scrubVariantHtml(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = String(html == null ? '' : html);
+    for (const el of [...tpl.content.querySelectorAll('*')]) {
+      if (SCRUB_BAD_TAG.test(el.tagName)) { el.remove(); continue; }
+      for (const attr of [...el.attributes]) {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith('on') || name === 'srcdoc') { el.removeAttribute(attr.name); continue; }
+        if (SCRUB_URL_ATTRS.includes(name)) {
+          const v = String(attr.value).replace(/[\u0000-\u0020\u00a0]+/g, '').toLowerCase();
+          if (/^(javascript|vbscript|data:text\/html)/.test(v)) el.setAttribute(attr.name, '#');
+        }
+        if (name === 'style' && /url\s*\(|@import|expression\s*\(/i.test(attr.value)) {
+          el.setAttribute('style', String(attr.value)
+            .replace(/url\s*\(\s*(['"]?)\s*(?!#|data:image\/)[^)]*\)/gi, 'none')
+            .replace(/@import/gi, '')
+            .replace(/expression\s*\(/gi, 'none('));
+        }
+      }
+    }
+    return tpl.innerHTML;
+  }
+
+  function closeVariantPreview() {
+    const v = variantPreview;
+    if (!v) return;
+    variantPreview = null;
+    try { v.container.remove(); } catch (e) {}
+    try { v.el.style.display = v.prevDisplay; } catch (e) {}
+    try { v.bar.remove(); } catch (e) {}
+    schedulePos();
+  }
+
+  function positionVariantBar() {
+    const v = variantPreview;
+    if (!v) return;
+    const target = v.index < 0 ? v.el : v.container;
+    const r = target.getBoundingClientRect();
+    const bw = v.bar.offsetWidth || 280, bh = v.bar.offsetHeight || 44;
+    let left = r.left + r.width / 2 - bw / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - bw - 8));
+    let top = r.top - bh - 10;
+    if (top < 8) top = Math.min(r.bottom + 10, window.innerHeight - bh - 8);
+    v.bar.style.left = left + 'px';
+    v.bar.style.top = top + 'px';
+  }
+
+  function showVariant(index) {
+    const v = variantPreview;
+    if (!v) return;
+    v.index = index;
+    if (index < 0) { // original
+      v.container.style.display = 'none';
+      v.el.style.display = v.prevDisplay;
+    } else {
+      v.el.style.display = 'none';
+      v.container.style.display = '';
+      // parser-based scrub right before injection (see scrubVariantHtml) — the
+      // write-time sanitizer is only the first of two independent layers
+      if (!v.scrubbed[index]) v.scrubbed[index] = scrubVariantHtml(v.reply.variants[index].html);
+      v.container.innerHTML = v.scrubbed[index];
+    }
+    v.bar.querySelectorAll('.kbf-vchip').forEach((b) => b.classList.toggle('is-active', Number(b.dataset.v) === index));
+    const use = v.bar.querySelector('.kbf-vuse');
+    use.disabled = index < 0;
+    const note = v.bar.querySelector('.kbf-vnote');
+    note.textContent = index < 0 ? 'Original' : (v.reply.variants[index].note || v.reply.variants[index].label);
+    requestAnimationFrame(positionVariantBar);
+  }
+
+  async function pickVariant() {
+    const v = variantPreview;
+    if (!v || v.index < 0) return;
+    const chosen = v.reply.variants[v.index];
+    try {
+      const data = await api('/comments/' + v.comment.id + '/reply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          author: 'user',
+          authorName: ROLE === 'comment' ? (LS.get('kbf-name') || '') : '',
+          text: 'Picked: ' + chosen.label + (chosen.note ? ' — ' + chosen.note : ''),
+          pick: { of: v.reply.id, index: v.index, label: chosen.label },
+        }),
+      });
+      const i = comments.findIndex((c) => c.id === v.comment.id);
+      if (i >= 0) comments[i] = data.comment;
+      if (CAN_MANAGE) {
+        try {
+          const d2 = await api('/comments/' + v.comment.id, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'approved' }),
+          });
+          if (i >= 0) comments[i] = d2.comment;
+        } catch (e) {}
+      }
+      closeVariantPreview();
+      refresh();
+      toast('Choice recorded — your agent implements “' + chosen.label + '”');
+    } catch (e) {
+      toastError('Could not record the pick — ' + e.message);
+    }
+  }
+
+  function openVariantPreview(comment, reply) {
+    closeVariantPreview();
+    closeComposer();
+    // Same confidence bar as every other on-page action: swapping markup on a
+    // GUESSED element would preview the wrong thing entirely.
+    const { el, confidence } = resolveWithConfidence(comment.anchor);
+    if (!el || confidence === 'low' || confidence === 'none') {
+      toastError("Couldn't confidently locate this element — re-pin the comment first.");
+      return;
+    }
+    if (panelIsFullScreen()) setPanel(false); // the page must be visible to compare
+    const container = document.createElement('div');
+    container.setAttribute('data-kbf-variant', '1');
+    // In an explicitly-placed grid (grid-area/column/row on the original), a bare
+    // sibling would auto-flow into the wrong cell — carry the placement over.
+    // `order` keeps flex position honest too.
+    try {
+      const cs = getComputedStyle(el);
+      for (const p of ['grid-area', 'grid-column', 'grid-row', 'justify-self', 'align-self', 'order']) {
+        const val = cs.getPropertyValue(p);
+        if (val && val !== 'auto' && val !== 'auto / auto / auto / auto' && val !== '0') container.style.setProperty(p, val);
+      }
+    } catch (e) {}
+    el.parentNode.insertBefore(container, el.nextSibling);
+
+    const bar = document.createElement('div');
+    bar.className = 'kbf-vbar';
+    bar.setAttribute('role', 'toolbar');
+    bar.setAttribute('aria-label', 'Try the proposed options');
+    bar.innerHTML = `
+      <button type="button" class="kbf-vchip is-active" data-v="-1">Original</button>
+      ${reply.variants.map((vv, i) => `<button type="button" class="kbf-vchip" data-v="${i}" title="${escapeHtml(vv.note || '')}">${escapeHtml(vv.label)}</button>`).join('')}
+      <span class="kbf-vnote">Original</span>
+      <button type="button" class="kbf-vuse" disabled>${I.check} Use this</button>
+      <button type="button" class="kbf-vx" title="Close (Esc)" aria-label="Close variant preview">${I.close}</button>`;
+    root.appendChild(bar);
+    bar.addEventListener('click', (e) => {
+      const chip = e.target.closest('.kbf-vchip');
+      if (chip) { showVariant(Number(chip.dataset.v)); return; }
+      if (e.target.closest('.kbf-vuse')) { pickVariant(); return; }
+      if (e.target.closest('.kbf-vx')) closeVariantPreview();
+    });
+
+    variantPreview = { comment, reply, el, prevDisplay: el.style.display, container, bar, index: -1, scrubbed: [] };
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    showVariant(-1);
+    setTimeout(positionVariantBar, 300); // after the scroll settles
+  }
+
   // ---------- composer ----------
   function closeComposer() {
     stopRecognition();
     clearTarget();
     clearTweakPreview();
+    closeVariantPreview(); // never compose on top of a swapped-in candidate
     if (activeTextEditRestore) { try { activeTextEditRestore(); } catch (e) {} activeTextEditRestore = null; }
     activeComposer = null;
     composerSlot.innerHTML = '';
@@ -1560,6 +1733,7 @@
       positionPins();
       positionTarget();
       if (pickChain.length && picker.style.display !== 'none') renderPick();
+      if (variantPreview) positionVariantBar();
     });
   }
   window.addEventListener('scroll', schedulePos, true);
@@ -1682,6 +1856,9 @@
                 <div class="kbf-reply ${r.author === 'agent' ? 'is-agent' : ''}">
                   <span class="kbf-reply-who">${escapeHtml(r.author === 'agent' ? (r.authorName || 'agent') : (r.authorName || (ROLE === 'full' ? 'you' : 'host')))}</span>
                   <span class="kbf-reply-text">${escapeHtml(r.text)}</span>
+                  ${Array.isArray(r.variants) && r.variants.length ? `
+                    <button type="button" class="kbf-vpreview" data-act="variants" data-reply="${escapeHtml(r.id)}">${I.eye}<span>Try ${r.variants.length} option${r.variants.length === 1 ? '' : 's'} on the page</span></button>` : ''}
+                  ${r.pick ? `<span class="kbf-vpicked">${I.check} Picked: ${escapeHtml(r.pick.label || ('#' + (r.pick.index + 1)))}</span>` : ''}
                 </div>`).join('')}</div>` : ''}
               ${CAN_COMMENT ? `<div class="kbf-replybox">
                 <textarea class="kbf-reply-input" placeholder="Reply to this thread…" rows="1"></textarea>
@@ -1780,6 +1957,11 @@
     if (act === 'reject') return setStatus(c, 'rejected');
     if (act === 'jump') return goToComment(c);
     if (act === 'shot') { window.open(API + '/shot/' + c.id, '_blank', 'noopener'); return; }
+    if (act === 'variants') {
+      const r = (c.thread || []).find((x) => x.id === actBtn.dataset.reply);
+      if (r && Array.isArray(r.variants) && r.variants.length) openVariantPreview(c, r);
+      return;
+    }
     // default: click on the card body toggles the conversation thread
     toggleExpand(c);
   });
@@ -1993,6 +2175,34 @@
     if (on) presenceTimer = setTimeout(() => applyAgentStatus({ state: 'offline' }), 100000);
   }
 
+  // The agent finished a batch and wants the page to show its edits under the
+  // now-green pins. Reload — but NEVER yank the page out from under in-progress
+  // work: if a composer, a variant preview, the touch picker, or a focused text
+  // field is open, defer and surface a one-tap "Reload" toast instead. The panel
+  // open/mode/filter state survives the reload (kept in sessionStorage), so it
+  // feels seamless. A brief delay lets the green-pin flip register first.
+  let reloadPending = false;
+  function reloadIsUnsafe() {
+    if (activeComposer || variantPreview || pickChain.length) return true;
+    const a = root.activeElement || document.activeElement;
+    if (a && (/^(input|textarea|select)$/i.test(a.nodeName) || a.isContentEditable)) return true;
+    return false;
+  }
+  function doReload() { try { location.reload(); } catch (e) {} }
+  function requestReload() {
+    if (reloadPending) return;
+    reloadPending = true;
+    if (reloadIsUnsafe()) {
+      // don't interrupt: offer it, and also auto-apply once the work is dismissed
+      toast('Page updated by your agent', { actionLabel: 'Reload now', duration: 8000, onAction: doReload });
+      const iv = setInterval(() => { if (!reloadIsUnsafe()) { clearInterval(iv); doReload(); } }, 1000);
+      setTimeout(() => clearInterval(iv), 60000); // give up after a minute; the toast still stands
+      return;
+    }
+    toast('Applying your agent’s edits — reloading…', { duration: 1200 });
+    setTimeout(doReload, 700);
+  }
+
   let es = null;
   let sseBackoff = 1000;
   function subscribeLive() {
@@ -2006,6 +2216,7 @@
     es.addEventListener('agent-status', (e) => {
       try { const d = JSON.parse(e.data); if (d && d.agent) applyAgentStatus(d.agent); } catch (err) {}
     });
+    es.addEventListener('reload', () => requestReload());
     es.onopen = () => { sseBackoff = 1000; resync(); };
     es.onerror = () => {
       // EventSource silently auto-retries transient blips; it does NOT recover
@@ -2157,6 +2368,7 @@
     const typing = e.target && /^(input|textarea|select)$/i.test(e.target.nodeName) || (e.target && e.target.isContentEditable);
     const inComposer = e.composedPath && e.composedPath().includes(host);
     if (e.key === 'Escape') {
+      if (variantPreview) { closeVariantPreview(); return; }
       if (pickChain.length) { clearPick(); return; }
       if (activeComposer) { closeComposer(); return; }
       if (panelOpen) { setPanel(false); return; }

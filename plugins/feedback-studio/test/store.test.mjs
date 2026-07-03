@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import {
   WEB_TYPES, MD_TYPES, ALLOWED_TYPES, STATUSES, TWEAKABLE_PROPS,
   makeComment, makeReply, coerceType, sanitizeAnchor, sanitizeEdits, sanitizeTextEdit,
+  sanitizeVariants, sanitizeVariantHtml, sanitizePick,
   readComments, writeComments, mutate, exportMarkdown,
   exportProcessInstructions, seedAgentsFile, AGENTS_SNIPPET_MARKER,
 } from '../lib/store.mjs';
@@ -238,6 +239,79 @@ test('exportMarkdown renders text-edit lines', async () => {
     const md = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf-8');
     assert.ok(md.includes('text edit: "beens" → "beans"'));
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('sanitizeVariantHtml strips everything executable (it is injected into the host page)', () => {
+  const dirty = `<div class="hero"><script>alert(1)</script><style>*{}</style>
+    <img src="x" onerror="alert(1)"><img/onerror='alert(1)' src=x>
+    <a href="javascript:alert(1)">x</a><a href='JAVASCRIPT:alert(1)'>y</a>
+    <iframe src="https://evil"></iframe><form action="https://evil"><input formaction="javascript:x"></form>
+    <a href="https://ok.example">fine</a><b style="color:red">bold ok</b></div>`;
+  const clean = sanitizeVariantHtml(dirty);
+  assert.ok(!/script|<style|<iframe|<form|onerror/i.test(clean));
+  assert.ok(!/javascript:/i.test(clean));
+  assert.ok(clean.includes('https://ok.example'));       // safe href kept
+  assert.ok(clean.includes('style="color:red"'));        // inline styles kept (variants need them)
+});
+
+test('sanitizeVariantHtml defeats encoding-evasion vectors (the confirmed bypass class)', () => {
+  // entity-encoded scheme: browser decodes &#106; to "j" at render time
+  const a = sanitizeVariantHtml('<a href="&#106;avascript:alert(1)">x</a>');
+  assert.ok(!/javascript|&#106;avascript/i.test(a) || a.includes('href="#"'), 'entity-encoded javascript: must be neutralised: ' + a);
+  assert.ok(a.includes('href="#"'));
+  // hex entities + missing semicolons
+  assert.ok(sanitizeVariantHtml('<a href="&#x6A;avascript:alert(1)">x</a>').includes('href="#"'));
+  assert.ok(sanitizeVariantHtml('<a href="&#106avascript:alert(1)">x</a>').includes('href="#"'));
+  // whitespace/control-split scheme
+  assert.ok(sanitizeVariantHtml('<a href="java\tscript:alert(1)">x</a>').includes('href="#"'));
+  assert.ok(sanitizeVariantHtml('<a href="jav\nascript:alert(1)">x</a>').includes('href="#"'));
+  // named-entity colon
+  assert.ok(sanitizeVariantHtml('<a href="javascript&colon;alert(1)">x</a>').includes('href="#"'));
+  // srcdoc always dropped, even when innocuous-looking
+  assert.ok(sanitizeVariantHtml('<iframe srcdoc="<b>x</b>"></iframe>') === '' || !/srcdoc/i.test(sanitizeVariantHtml('<div srcdoc="x">y</div>')) || sanitizeVariantHtml('<div srcdoc="x">y</div>').includes('srcdoc="#"'));
+  // CSS url() exfil beacons stripped from kept style attributes…
+  const s1 = sanitizeVariantHtml('<div style="background:url(https://evil.example/x.png);color:red">hi</div>');
+  assert.ok(!s1.includes('evil.example') && s1.includes('color:red'));
+  // …including entity-encoded url( in the attribute value
+  const s2 = sanitizeVariantHtml('<div style="background:&#117;rl(https://evil.example/x)">hi</div>');
+  assert.ok(!s2.includes('evil.example'));
+  // fragment + data:image survive (legitimate variant styling)
+  const s3 = sanitizeVariantHtml('<div style="background:url(#grad);cursor:url(data:image/png;base64,AA==),auto">hi</div>');
+  assert.ok(s3.includes('url(#grad)'));
+  // nested-tag evasion still collapses to nothing executable
+  assert.ok(!/script/i.test(sanitizeVariantHtml('<scr<script>ipt>alert(1)</scr</script>ipt>')));
+});
+
+test('the overlay re-scrubs variants through a real parser before injection (no drift)', () => {
+  const src = readFileSync(path.join(__dirname, '..', 'public', 'overlay.js'), 'utf-8');
+  // the injection site must go through the parser-based scrub, never raw html
+  assert.ok(src.includes('scrubVariantHtml('), 'overlay must define/use scrubVariantHtml');
+  assert.ok(!/container\.innerHTML\s*=\s*v\.reply\.variants/.test(src), 'variants must never be injected unscrubbed');
+  // and the scrub must use an inert template (parser-decoded attributes)
+  assert.ok(src.includes("createElement('template')"));
+});
+
+test('sanitizeVariants: caps count + label/note lengths, auto-labels, drops empty html', () => {
+  const out = sanitizeVariants([
+    { html: '<p>a</p>' },                                 // auto label "A"
+    { label: 'x'.repeat(100), html: '<p>b</p>', note: 'n'.repeat(500) },
+    { html: '<script>only</script>' },                    // sanitizes to empty → dropped
+    { html: '<p>c</p>' }, { html: '<p>d</p>' }, { html: '<p>e</p>' }, // over the cap
+    'junk', null,
+  ]);
+  assert.equal(out.length, 4); // VARIANTS_MAX
+  assert.equal(out[0].label, 'A');
+  assert.ok(out[1].label.length <= 40 && out[1].note.length <= 300);
+});
+
+test('makeReply carries sanitized variants and pick; junk pick is dropped', () => {
+  const r = makeReply({ text: '3 options', author: 'agent', variants: [{ label: 'Bold', html: '<p onclick="x()">hi</p>' }] });
+  assert.equal(r.variants.length, 1);
+  assert.ok(!r.variants[0].html.includes('onclick'));
+  const p = makeReply({ text: 'Picked: Bold', pick: { of: 'r_1', index: 0, label: 'Bold' } });
+  assert.deepEqual(p.pick, { of: 'r_1', index: 0, label: 'Bold' });
+  assert.equal(makeReply({ text: 'x', pick: { index: 99 } }).pick, undefined);
+  assert.equal(makeReply({ text: 'x' }).variants, undefined); // plain replies stay lean
 });
 
 test('the overlay tweak controls are a subset of TWEAKABLE_PROPS (no drift)', () => {

@@ -136,6 +136,30 @@ try {
   check('PATCH textEdit:null clears it', tep.status === 200 && (await tep.json()).comment.textEdit === null);
   await fetch(ORIGIN + '/__feedback/api/comments/' + tec.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
 
+  // Variants: reply carries sanitized alternatives; pick round-trips
+  const vOwner = (await (await fetch(ORIGIN + '/__feedback/api/comments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ page: '/', text: 'options?', type: 'improve', anchor: { snippet: 'Hi' } }),
+  })).json()).comment;
+  const vReply = await fetch(ORIGIN + '/__feedback/api/comments/' + vOwner.id + '/reply', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ author: 'agent', text: '2 options', variants: [
+      { label: 'Bold', html: '<h1 style="font-weight:800" onclick="pwn()">Hi</h1>', note: 'heavier' },
+      { label: 'Soft', html: '<h1><script>x()</script>Hi</h1>' },
+    ] }),
+  });
+  const vr = (await vReply.json()).comment.thread[0];
+  check('variant reply stored + sanitized', vReply.status === 201 && vr.variants.length === 2
+    && !vr.variants[0].html.includes('onclick') && !/script/i.test(vr.variants[1].html)
+    && vr.variants[0].html.includes('font-weight:800'));
+  const vPick = await fetch(ORIGIN + '/__feedback/api/comments/' + vOwner.id + '/reply', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ author: 'user', text: 'Picked: Bold', pick: { of: vr.id, index: 0, label: 'Bold' } }),
+  });
+  const vp = (await vPick.json()).comment.thread[1];
+  check('pick reply round-trips', vPick.status === 201 && vp.pick && vp.pick.of === vr.id && vp.pick.index === 0);
+  await fetch(ORIGIN + '/__feedback/api/comments/' + vOwner.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
+
   // Shots: PNG upload round-trips, junk is rejected, GC on comment delete
   const shotOwner = (await (await fetch(ORIGIN + '/__feedback/api/comments', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
@@ -178,6 +202,10 @@ try {
     body: JSON.stringify({ state: 'hacked' }),
   });
   check('agent-status coerces junk state to offline', (await as3.json()).agent.state === 'offline');
+
+  // reload broadcast endpoint (agent refreshes open overlays after a batch)
+  const reload = await fetch(ORIGIN + '/__feedback/api/reload', { method: 'POST', headers: { Origin: ORIGIN } });
+  check('reload endpoint accepts POST', reload.status === 200 && (await reload.json()).ok === true);
 
   // the agent processing guide is written next to the data on startup
   check('writes HOW-TO-PROCESS.md', existsSync(path.join(root, '.feedback', 'HOW-TO-PROCESS.md')));
@@ -250,6 +278,13 @@ try {
     const cDelete = await fetch(SH + `/__feedback/api/comments/${cc.id}?key=${keys.comment}`, { method: 'DELETE', headers: J });
     check('share: comment adds comments+replies (named) but no status/delete',
       cWrite.status === 201 && cc.authorName === 'Pat' && cReply.status === 201 && cPatch.status === 403 && cDelete.status === 403);
+    const cVar = await fetch(SH + `/__feedback/api/comments/${cc.id}/reply?key=${keys.comment}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ author: 'user', text: 'try this', variants: [{ label: 'X', html: '<p>x</p>' }] }),
+    });
+    check('share: comment role cannot inject variants (host/agent privilege)', cVar.status === 403);
+    const cReload = await fetch(SH + `/__feedback/api/reload?key=${keys.comment}`, { method: 'POST', headers: J });
+    const aReload = await fetch(SH + `/__feedback/api/reload?key=${keys.admin}`, { method: 'POST', headers: J });
+    check('share: reload is admin-only', cReload.status === 403 && aReload.status === 200);
     const aPatch = await fetch(SH + `/__feedback/api/comments/${cc.id}?key=${keys.admin}`, {
       method: 'PATCH', headers: J, body: JSON.stringify({ status: 'resolved' }),
     });

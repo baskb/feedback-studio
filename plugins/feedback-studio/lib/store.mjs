@@ -147,12 +147,102 @@ export function makeComment(input = {}) {
   };
 }
 
+// ---------- variants (agent-proposed alternatives, previewed on the page) ----------
+// A reply may carry up to VARIANTS_MAX design alternatives for the pinned
+// element. Their html is INJECTED INTO THE HOST PAGE by the overlay's preview
+// switcher, so it is sanitized here, at write time, for every writer (HTTP
+// server and MCP alike) — stricter than the md renderer's pass because the
+// destination is a live DOM, not an isolated document.
+const VARIANTS_MAX = 4;
+const VARIANT_HTML_MAX = 20000;
+
+// HTML-entity-decode + strip control/whitespace characters, so an encoded or
+// split scheme (`&#106;avascript:`, `java\tscript:`) can't hide from the check —
+// the browser's parser would decode it at render time, so WE must decode it at
+// test time. Named subset covers the entities usable inside a URL scheme.
+const NAMED_ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', tab: '\t', newline: '\n', colon: ':', sol: '/' };
+function decodeEntities(v) {
+  return String(v)
+    .replace(/&#x([0-9a-f]+);?/gi, (m, h) => { const c = parseInt(h, 16); return c > 0 && c < 0x110000 ? String.fromCodePoint(c) : ''; })
+    .replace(/&#(\d+);?/g, (m, d) => { const c = parseInt(d, 10); return c > 0 && c < 0x110000 ? String.fromCodePoint(c) : ''; })
+    .replace(/&([a-z]+);/gi, (m, n) => (NAMED_ENT[n.toLowerCase()] != null ? NAMED_ENT[n.toLowerCase()] : m));
+}
+function schemeIsEvil(rawAttrValue) {
+  const v = decodeEntities(rawAttrValue).replace(/[\u0000-\u0020\u00a0]+/g, '').toLowerCase();
+  return /(?:javascript|vbscript|data:text\/html)/.test(v);
+}
+// Strip external url(...) from an (entity-decoded) inline style: a background
+// image is an eager-loading exfil beacon for anyone who merely PREVIEWS the
+// variant. Fragment refs and inline data:image stay; expression()/@import go.
+function stripCssBeacons(css) {
+  return String(css)
+    .replace(/url\s*\(\s*(['"]?)\s*(?!#|data:image\/)[^)]*\)/gi, 'none')
+    .replace(/@import/gi, '')
+    .replace(/expression\s*\(/gi, 'none(');
+}
+
+export function sanitizeVariantHtml(html) {
+  return String(html == null ? '' : html)
+    .slice(0, VARIANT_HTML_MAX)
+    // drop script/style/svg-script containers with their contents
+    .replace(/<(script|style|title)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    // drop anything that can execute, frame, redirect, or submit
+    .replace(/<\/?(script|style|iframe|object|embed|base|meta|form|link|frame|frameset)\b[^>]*>/gi, '')
+    // strip inline event handlers ('/' counts as attribute whitespace in HTML5)
+    .replace(/[\s/]on[a-z]+\s*=\s*"[^"]*"/gi, '')
+    .replace(/[\s/]on[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/[\s/]on[a-z]+\s*=\s*[^\s>]+/gi, '')
+    // neutralise script-ish URLs (checked entity-decoded + whitespace-stripped)
+    .replace(/\b(href|src|xlink:href|formaction|action|srcdoc)\s*=\s*"([^"]*)"/gi, (m, attr, val) =>
+      schemeIsEvil(val) || attr.toLowerCase() === 'srcdoc' ? attr + '="#"' : m)
+    .replace(/\b(href|src|xlink:href|formaction|action|srcdoc)\s*=\s*'([^']*)'/gi, (m, attr, val) =>
+      schemeIsEvil(val) || attr.toLowerCase() === 'srcdoc' ? attr + "='#'" : m)
+    // inline styles are kept (variants need them) minus network beacons
+    .replace(/\bstyle\s*=\s*("([^"]*)"|'([^']*)')/gi, (m, q, dq, sq) => {
+      const cleaned = stripCssBeacons(decodeEntities(dq != null ? dq : sq));
+      return 'style="' + cleaned.replace(/"/g, '&quot;') + '"';
+    });
+}
+// NOTE: this write-time pass is one of TWO independent layers — the overlay
+// re-scrubs through a real HTML parser (inert <template>, decoded attributes)
+// immediately before injection. Regexes over raw markup cannot fully reason
+// about encoding; the parser-side scrub is the authoritative gate.
+
+export function sanitizeVariants(variants) {
+  if (!Array.isArray(variants)) return [];
+  const out = [];
+  for (const v of variants) {
+    if (!v || typeof v !== 'object') continue;
+    const html = sanitizeVariantHtml(v.html).trim();
+    if (!html) continue;
+    out.push({
+      label: str(v.label, 40).trim() || String.fromCharCode(65 + out.length), // A, B, C…
+      html,
+      note: str(v.note, 300).trim(),
+    });
+    if (out.length >= VARIANTS_MAX) break;
+  }
+  return out;
+}
+
+// The user's choice among a reply's variants: {of: <replyId>, index, label}.
+export function sanitizePick(p) {
+  if (!p || typeof p !== 'object') return null;
+  const index = Number(p.index);
+  if (!Number.isInteger(index) || index < 0 || index >= VARIANTS_MAX) return null;
+  return { of: str(p.of, 80), index, label: str(p.label, 40) };
+}
+
 export function makeReply(input = {}) {
+  const variants = sanitizeVariants(input.variants);
+  const pick = sanitizePick(input.pick);
   return {
     id: newId('r'),
     author: input.author === 'agent' ? 'agent' : 'user',
     authorName: str(input.authorName, 60),
     text: str(input.text, TEXT_MAX).trim(),
+    ...(variants.length ? { variants } : {}),
+    ...(pick ? { pick } : {}),
     createdAt: new Date().toISOString(),
   };
 }
@@ -295,6 +385,10 @@ export async function exportMarkdown(dir, comments) {
       for (const r of c.thread || []) {
         const rwho = r.author === 'agent' ? `agent${r.authorName ? ' (' + collapse(r.authorName) + ')' : ''}` : 'user';
         md += `  - ↳ ${rwho}:\n${String(r.text || '').trim().split('\n').map((l) => `    ${l}`).join('\n')}\n`;
+        for (const v of r.variants || []) {
+          md += `    - variant ${code(v.label)}${v.note ? ` — ${collapse(v.note)}` : ''} (html in comments.json)\n`;
+        }
+        if (r.pick) md += `    - PICKED: variant ${code(r.pick.label || String(r.pick.index))} of reply ${code(r.pick.of)} — implement that one\n`;
       }
       md += `\n`;
     }
@@ -351,6 +445,12 @@ it is exactly what the reviewer saw, and a mismatch with the element you located
   the source may wrap lines or hold inline markup) and apply the exact \`after\` wording,
   preserving surrounding markup. In Markdown, edit the \`sourceFile\`. If \`before\` no longer
   matches there, do NOT guess — leave the comment open and ask for a re-pin.
+- For a vague \`improve\` ("make this pop", "give me options"), you may propose **variants**:
+  reply with \`variants: [{label, html, note}]\` (2–3 self-contained alternatives of the
+  element's markup, styles inlined). The user previews them ON the page and picks; the pick
+  arrives as a reply with \`pick: {of, index, label}\` (and often status \`approved\`).
+  Implement the picked variant with judgement — translate its inline styles into the
+  project's idiom — then resolve. Never auto-apply a variant nobody picked.
 - Markdown — \`comment\` (address the note), \`rephrase\`, \`expand\`, \`delete\`, \`question\`
   (answer in a reply). Edit the **\`sourceFile\`**, never the throwaway rendered HTML.
 
@@ -365,10 +465,15 @@ Honour \`autonomy\`: \`review\` (default) = show the change first; \`auto\` = ap
   \`POST /__feedback/api/comments/<id>/reply\`).
 - **Leave your own notes:** \`add_comment\` pins a comment for the user to approve.
 
-## 4. Summarise
+## 4. Refresh, then summarise
 
-Report what changed, grouped by page (with \`file:line\` where you can), and list anything left
-open and why (low-confidence anchor → needs a re-pin, or needs a decision).
+After applying the batch, if the HTTP review server is running, \`POST /__feedback/api/reload\`
+so open overlays reload themselves and show the edited page under the now-green pins (they
+reload only when it's safe — a composer or in-progress edit defers it to a one-tap nudge).
+Rebuild a static \`--dir\` first if the project has a build step. No server? Tell the user to reload.
+
+Then report what changed, grouped by page (with \`file:line\` where you can), and list anything
+left open and why (low-confidence anchor → needs a re-pin, or needs a decision).
 `;
 
 export async function exportProcessInstructions(dir) {

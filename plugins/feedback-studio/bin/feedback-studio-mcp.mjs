@@ -101,10 +101,17 @@ const TOOLS = [
   },
   {
     name: 'reply',
-    description: 'Add a reply to a comment\'s conversation thread (as the agent).',
+    description: 'Add a reply to a comment\'s conversation thread (as the agent). For a vague "improve" you may attach 2-3 design variants of the pinned element (self-contained HTML, styles inlined) — the user previews them ON the page and picks one; the pick comes back as a reply with pick:{of,index,label}. Implement only a picked variant.',
     inputSchema: {
       type: 'object', required: ['id', 'text'],
-      properties: { id: { type: 'string' }, text: { type: 'string' }, authorName: { type: 'string' } },
+      properties: {
+        id: { type: 'string' }, text: { type: 'string' }, authorName: { type: 'string' },
+        variants: {
+          type: 'array',
+          description: 'Up to 4 alternatives for the pinned element: [{label, html, note}]. html is sanitized (no scripts/handlers) and previewed live on the page.',
+          items: { type: 'object', properties: { label: { type: 'string' }, html: { type: 'string' }, note: { type: 'string' } } },
+        },
+      },
     },
   },
   {
@@ -181,7 +188,7 @@ async function callTool(name, rawArgs) {
       const c = list.find((x) => x.id === args.id);
       if (!c) return { comments: list, value: { notFound: true } };
       if (!Array.isArray(c.thread)) c.thread = [];
-      c.thread.push(makeReply({ author: 'agent', authorName: args.authorName || 'agent', text: args.text }));
+      c.thread.push(makeReply({ author: 'agent', authorName: args.authorName || 'agent', text: args.text, variants: args.variants }));
       c.updatedAt = new Date().toISOString();
       return { comments: list, value: { ok: true, replies: c.thread.length } };
     });

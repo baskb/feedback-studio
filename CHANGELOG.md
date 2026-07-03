@@ -6,6 +6,29 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Variant picker** — for a vague `improve` ("make this pop"), the agent can reply with 2–4
+  design alternatives of the pinned element (`variants: [{label, html, note}]`). The user
+  flips **Original / A / B / C live on the page** via a floating switcher and taps **Use
+  this**; the choice is recorded as a `pick: {of, index, label}` reply (auto-approved for the
+  host) and the agent implements only the chosen one, translating its inline styles into the
+  project's idiom. Panel cards show a "Try N options on the page" button and a "Picked: …"
+  badge; the MCP `reply` tool and the process docs gained the propose/pick workflow.
+- **Automatic page refresh after processing** — the agent calls `POST /__feedback/api/reload`
+  once a batch is applied and every open overlay reloads itself to show the edited page under
+  its now-green pins. It reloads only when safe: if a composer, variant preview, or text field
+  is open it defers to a one-tap "Reload" nudge instead of interrupting. Panel/mode/filter
+  state survives the reload. Admin-only under `--share strict`.
+
+### Security
+- Variant HTML is injected into the live host page, so it is sanitized at **two independent
+  layers**: a write-time pass in `store.mjs` (now entity-decodes attribute values before the
+  scheme check, closing encoded-`javascript:` bypasses, and strips external `url()` beacons
+  from inline styles), and an **authoritative parser-based scrub** in the overlay immediately
+  before injection (an inert `<template>` where the browser has already decoded entities, then
+  a real tree-walk removing executable tags, event handlers, script-ish URLs, and CSS beacons).
+  Proposing variants requires the admin/host role; picking one stays open to the comment role.
+
 ## [0.4.0] - 2026-07-02
 
 ### Added

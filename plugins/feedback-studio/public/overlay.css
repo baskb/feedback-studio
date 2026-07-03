@@ -977,6 +977,106 @@ button {
 }
 .kbf-card-shot:hover { border-color: var(--kbf-border-strong); box-shadow: var(--kbf-shadow-sm); }
 
+/* ---------- variant preview (try agent-proposed options on the page) ---------- */
+
+.kbf-vbar {
+  position: fixed;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  background: var(--kbf-chip);
+  border-radius: 999px;
+  box-shadow: var(--kbf-shadow-lg);
+  pointer-events: auto;
+  max-width: calc(100vw - 16px);
+  animation: kbf-pop 0.18s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.kbf-vchip {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #d8d4c8;
+  background: transparent;
+  transition: all 0.14s;
+  white-space: nowrap;
+}
+.kbf-vchip:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+.kbf-vchip.is-active { background: var(--kbf-clay); color: #fff; }
+.kbf-vnote {
+  font-size: 11.5px;
+  color: #a49e8f;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 2px;
+}
+.kbf-vuse {
+  height: 30px;
+  padding: 0 13px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 650;
+  background: var(--kbf-green);
+  color: #fff;
+  transition: all 0.14s;
+  white-space: nowrap;
+}
+.kbf-vuse svg { width: 13px; height: 13px; }
+.kbf-vuse:hover { filter: brightness(1.1); }
+.kbf-vuse[disabled] { opacity: 0.35; cursor: not-allowed; }
+.kbf-vuse:not([disabled]):active { transform: scale(0.96); }
+.kbf-vx {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a49e8f;
+  transition: all 0.14s;
+}
+.kbf-vx:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+.kbf-vx svg { width: 12px; height: 12px; }
+@media (max-width: 560px) { .kbf-vnote { display: none; } }
+
+/* the reply affordances */
+.kbf-vpreview {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--kbf-agent);
+  border-radius: 999px;
+  background: var(--kbf-agent-tint);
+  color: var(--kbf-agent-deep);
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.14s;
+}
+.kbf-vpreview svg { width: 13px; height: 13px; }
+.kbf-vpreview:hover { filter: brightness(0.96); }
+.kbf-vpreview:active { transform: scale(0.97); }
+.kbf-vpicked {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--kbf-green);
+}
+.kbf-vpicked svg { width: 12px; height: 12px; }
+
 /* ---------- agent presence (watch mode) ---------- */
 
 .kbf-agent-chip {
@@ -1550,6 +1650,10 @@ button {
 .kbf-tweak-alignbtn:focus-visible,
 .kbf-editext-btn:focus-visible,
 .kbf-editext-undo:focus-visible,
+.kbf-vchip:focus-visible,
+.kbf-vuse:focus-visible,
+.kbf-vx:focus-visible,
+.kbf-vpreview:focus-visible,
 .kbf-tweak-undo:focus-visible,
 .kbf-tweak-resetall:focus-visible,
 .kbf-tweak-select:focus-visible,

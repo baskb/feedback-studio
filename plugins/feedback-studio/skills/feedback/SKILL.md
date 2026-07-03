@@ -78,8 +78,17 @@ Studio is polite to its agents. ;-)
      means re-pin, not guess.
    - **Act per `type`:** `fix` = reproduce then patch; `change` = apply near-verbatim, no
      redesign; `improve` = rewrite with judgement in the project's voice. If a (spoken) comment
-     is vague, propose a concrete interpretation; for `improve`, offer options. Keep the
-     project's conventions (read any CLAUDE.md).
+     is vague, propose a concrete interpretation. Keep the project's conventions (read any
+     CLAUDE.md).
+   - **For a vague `improve`, propose variants the user can TRY on the page.** Reply with
+     `variants`: 2–3 self-contained alternatives of the pinned element's markup (outer element,
+     styles inlined, real content — the overlay injects them as-is next to the original):
+     `POST /__feedback/api/comments/<id>/reply` with `{"author":"agent","text":"3 directions —
+     try them on the page","variants":[{"label":"Bolder","html":"<div …>…</div>","note":"…"}]}`
+     (or the MCP `reply` tool). The user flips Original/A/B/C live and taps **Use this**; the
+     pick lands as a reply with `pick:{of,index,label}` (often + status `approved`). Implement
+     ONLY the picked variant — translate its inline styles into the project's idiom — then
+     resolve. Never apply an unpicked variant; no pick means the question is still open.
    - **Apply `edits[]` (Tweak Mode) near-verbatim.** Web comments may carry `edits`: exact CSS
      deltas the user dialled in live on the element (e.g. `{"prop":"padding","from":"16px",
      "to":"24px"}`). The *target values* are fixed — the user already saw them on screen — but
@@ -97,12 +106,16 @@ Studio is polite to its agents. ;-)
    PATCH `/__feedback/api/comments/<id>` with `{"status":"resolved"}` if the server is running,
    else set `"status":"resolved"` in the file. (If the server runs with `--share strict`, API
    calls 401/403 without a key — append `?key=<admin key from the startup banner>`.)
-5. **Refresh the page** once the batch is applied so the user sees the *updated* page under its
-   now-green pins. The pins flip green live over SSE, but the page content itself does **not**
-   reload itself: a static `--dir` needs a rebuild (if applicable) then a hard reload; `--proxy`
-   with live reload refreshes on save, but reload anyway to be sure. Tell the user to reload (or,
-   if you're driving a browser, reload the tab) — a stale page under green pins looks like the
-   edits didn't land.
+5. **Auto-refresh the open overlays** once the batch is applied, so the user sees the *updated*
+   page under its now-green pins (a stale page under green pins looks like the edits didn't land).
+   The pins flip green live over SSE, but page content does not reload itself — so after the batch:
+   - For a static `--dir`, rebuild first if the project has a build step.
+   - Then `POST /__feedback/api/reload` (append `?key=<admin>` under `--share strict`). Every open
+     overlay reloads itself — but only when it's safe: if the user has a composer, a variant
+     preview, or a text field open, it waits and shows a one-tap **Reload** nudge instead of
+     yanking the page. Panel/mode state survives the reload. `--proxy` with live reload already
+     refreshes on save; the call is still harmless (belt-and-braces).
+   - No server running (you edited `comments.json` on disk)? Then just tell the user to reload.
 6. Summarise by page, and list anything left open (low-confidence anchors, decisions needed).
 
 ## Watch mode (live session)
@@ -129,6 +142,8 @@ without it the API answers 401/403.)
    - **`autonomy:"review"`:** reply "Queued — I'll show you this change before applying it."
      and leave it open (batch it for PPF or an approval).
    - **status → `approved`:** that IS the go-ahead — implement it now, then resolve.
+   - **A reply with `pick:{of,index,label}`:** the user chose a variant you proposed —
+     implement that variant now, then resolve.
 4. On exit: `POST $S/agent-status` with `{"state":"offline"}` and summarise the session
    (what was applied, answered, still open).
 

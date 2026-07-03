@@ -14,7 +14,7 @@
 //   - A corrupt/unparseable file is NEVER silently treated as empty — that would
 //     let one bad read overwrite good data with []. readComments() throws ECORRUPT.
 
-import { readFile, writeFile, mkdir, rename, open, unlink, stat } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, open, unlink, stat, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
@@ -161,13 +161,16 @@ const VARIANT_HTML_MAX = 20000;
 // the browser's parser would decode it at render time, so WE must decode it at
 // test time. Named subset covers the entities usable inside a URL scheme.
 const NAMED_ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', tab: '\t', newline: '\n', colon: ':', sol: '/' };
-function decodeEntities(v) {
+export function decodeEntities(v) {
   return String(v)
     .replace(/&#x([0-9a-f]+);?/gi, (m, h) => { const c = parseInt(h, 16); return c > 0 && c < 0x110000 ? String.fromCodePoint(c) : ''; })
     .replace(/&#(\d+);?/g, (m, d) => { const c = parseInt(d, 10); return c > 0 && c < 0x110000 ? String.fromCodePoint(c) : ''; })
     .replace(/&([a-z]+);/gi, (m, n) => (NAMED_ENT[n.toLowerCase()] != null ? NAMED_ENT[n.toLowerCase()] : m));
 }
-function schemeIsEvil(rawAttrValue) {
+// True if an attribute value resolves (after entity-decode + whitespace strip)
+// to a script-ish scheme. Exported so the Markdown renderer defends against
+// encoded/split `javascript:` the same way the variant sanitizer does.
+export function schemeIsEvil(rawAttrValue) {
   const v = decodeEntities(rawAttrValue).replace(/[\u0000-\u0020\u00a0]+/g, '').toLowerCase();
   return /(?:javascript|vbscript|data:text\/html)/.test(v);
 }
@@ -201,7 +204,14 @@ export function sanitizeVariantHtml(html) {
     .replace(/\bstyle\s*=\s*("([^"]*)"|'([^']*)')/gi, (m, q, dq, sq) => {
       const cleaned = stripCssBeacons(decodeEntities(dq != null ? dq : sq));
       return 'style="' + cleaned.replace(/"/g, '&quot;') + '"';
-    });
+    })
+    // eager-loading resource attributes with an ABSOLUTE (external) URL are
+    // preview-time beacons — blank them. Relative + data: stay. The overlay's
+    // parser scrub is the authoritative layer; this is write-time defense in depth.
+    .replace(/\b(src|poster|srcset)\s*=\s*"([^"]*)"/gi, (m, attr, val) =>
+      /(?:^|,|\s)\s*(?:https?:)?\/\//i.test(val) ? attr + '=""' : m)
+    .replace(/\b(src|poster|srcset)\s*=\s*'([^']*)'/gi, (m, attr, val) =>
+      /(?:^|,|\s)\s*(?:https?:)?\/\//i.test(val) ? attr + "=''" : m);
 }
 // NOTE: this write-time pass is one of TWO independent layers — the overlay
 // re-scrubs through a real HTML parser (inert <template>, decoded attributes)
@@ -292,7 +302,13 @@ export async function writeComments(dir, comments, opts = {}) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function acquireLock(dir, { retries = 100, wait = 50, staleMs = 15000 } = {}) {
+// A held lock is only "stale" (stealable) after LOCK_STALE_MS with no mtime
+// bump. mutate() refreshes the mtime every LOCK_STALE_MS/2 while it works, so a
+// legitimately slow write (large file, OneDrive stall, long export) can't have
+// its LIVE lock stolen by a waiter — only a genuinely abandoned one is.
+const LOCK_STALE_MS = 15000;
+
+async function acquireLock(dir, { retries = 100, wait = 50, staleMs = LOCK_STALE_MS } = {}) {
   const lp = lockFile(dir);
   for (let i = 0; i < retries; i++) {
     try {
@@ -325,6 +341,12 @@ async function acquireLock(dir, { retries = 100, wait = 50, staleMs = 15000 } = 
 export async function mutate(dir, fn) {
   await mkdir(dir, { recursive: true });
   const lp = await acquireLock(dir);
+  // Heartbeat: keep the lock's mtime fresh so a slow hold isn't judged stale and
+  // stolen. Best-effort (a missed bump never crashes — cf. proper-lockfile's
+  // onCompromised, which misfires after sleep); unref'd so it can't hold the
+  // process open.
+  const beat = setInterval(() => { const t = Date.now() / 1000; utimes(lp, t, t).catch(() => {}); }, LOCK_STALE_MS / 2);
+  if (beat.unref) beat.unref();
   try {
     const current = await readComments(dir);
     const out = await fn(current);
@@ -332,6 +354,7 @@ export async function mutate(dir, fn) {
     await writeComments(dir, next);
     return out ? out.value : undefined;
   } finally {
+    clearInterval(beat);
     await unlink(lp).catch(() => {});
   }
 }

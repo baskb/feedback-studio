@@ -704,7 +704,10 @@
     return () => {
       if (trusted && opts.el && opts.el.isConnected) return opts.el;
       const { el, confidence } = resolveWithConfidence(opts.anchor);
-      if (!el || confidence === 'low' || confidence === 'none') return null;
+      // Only a HIGH-confidence re-resolve is trusted for recording source-changing
+      // data — 'medium' means the snippet is present but not a clean match (a
+      // possibly over-broad/wrong element), which is a re-pin, not a guess.
+      if (!el || confidence !== 'high') return null;
       trusted = true;
       opts.el = el;
       return el;
@@ -1139,7 +1142,7 @@
       else if (opts.el && opts.el.isConnected) target = opts.el;
       else {
         const { el, confidence } = resolveWithConfidence(opts.anchor);
-        if (el && confidence !== 'low' && confidence !== 'none') target = el;
+        if (el && confidence === 'high') target = el; // never screenshot a guessed element as "ground truth"
       }
       if (!target) return;
       const hti = await loadHti();
@@ -1181,17 +1184,39 @@
   // neutralised, external url() beacons stripped from inline styles.
   const SCRUB_BAD_TAG = /^(script|style|iframe|object|embed|base|meta|form|link|frame|frameset|title)$/i;
   const SCRUB_URL_ATTRS = ['href', 'src', 'xlink:href', 'formaction', 'action'];
+  // Safe to EAGER-LOAD only if fragment, relative/same-origin, or inline
+  // data:image. An absolute cross-origin resource is a network beacon that fires
+  // the instant a variant is previewed (leaking viewer IP/referrer, worse over
+  // share links). Navigational href on <a> loads on click, not preview, so it's
+  // left alone — only resource attributes are gated.
+  function sameOriginOrData(u) {
+    const s = String(u == null ? '' : u).trim();
+    if (!s || s[0] === '#') return true;
+    if (/^data:image\//i.test(s)) return true;
+    try { return new URL(s, location.href).origin === location.origin; } catch (e) { return false; }
+  }
   function scrubVariantHtml(html) {
     const tpl = document.createElement('template');
     tpl.innerHTML = String(html == null ? '' : html);
     for (const el of [...tpl.content.querySelectorAll('*')]) {
       if (SCRUB_BAD_TAG.test(el.tagName)) { el.remove(); continue; }
+      const tag = el.tagName.toLowerCase();
       for (const attr of [...el.attributes]) {
         const name = attr.name.toLowerCase();
         if (name.startsWith('on') || name === 'srcdoc') { el.removeAttribute(attr.name); continue; }
         if (SCRUB_URL_ATTRS.includes(name)) {
           const v = String(attr.value).replace(/[\u0000-\u0020\u00a0]+/g, '').toLowerCase();
-          if (/^(javascript|vbscript|data:text\/html)/.test(v)) el.setAttribute(attr.name, '#');
+          if (/^(javascript|vbscript|data:text\/html)/.test(v)) { el.setAttribute(attr.name, '#'); continue; }
+        }
+        // eager-loading resource attributes: drop external ones (beacons)
+        const isEager = name === 'src' || name === 'poster'
+          || ((name === 'href' || name === 'xlink:href') && (tag === 'image' || tag === 'use'));
+        if (isEager && !sameOriginOrData(attr.value)) { el.removeAttribute(attr.name); continue; }
+        if (name === 'srcset') {
+          const kept = String(attr.value).split(',').map((s) => s.trim()).filter(Boolean)
+            .filter((cand) => sameOriginOrData(cand.split(/\s+/)[0]));
+          if (kept.length) el.setAttribute('srcset', kept.join(', ')); else el.removeAttribute('srcset');
+          continue;
         }
         if (name === 'style' && /url\s*\(|@import|expression\s*\(/i.test(attr.value)) {
           el.setAttribute('style', String(attr.value)
@@ -1226,6 +1251,7 @@
     if (top < 8) top = Math.min(r.bottom + 10, window.innerHeight - bh - 8);
     v.bar.style.left = left + 'px';
     v.bar.style.top = top + 'px';
+    v.bar.style.visibility = 'visible'; // revealed only once it has coordinates
   }
 
   function showVariant(index) {
@@ -1287,9 +1313,10 @@
     closeVariantPreview();
     closeComposer();
     // Same confidence bar as every other on-page action: swapping markup on a
-    // GUESSED element would preview the wrong thing entirely.
+    // GUESSED element would preview the wrong thing entirely. High only — a
+    // 'medium' (buried-text) match is not trustworthy enough to replace.
     const { el, confidence } = resolveWithConfidence(comment.anchor);
-    if (!el || confidence === 'low' || confidence === 'none') {
+    if (!el || confidence !== 'high') {
       toastError("Couldn't confidently locate this element — re-pin the comment first.");
       return;
     }
@@ -1310,6 +1337,7 @@
 
     const bar = document.createElement('div');
     bar.className = 'kbf-vbar';
+    bar.style.visibility = 'hidden'; // no top-left flash before positionVariantBar runs
     bar.setAttribute('role', 'toolbar');
     bar.setAttribute('aria-label', 'Try the proposed options');
     bar.innerHTML = `
@@ -1707,6 +1735,10 @@
       pin.title = (c.author === 'agent' ? '[agent] ' : '') + gist;
       pin.setAttribute('role', 'button');
       pin.tabIndex = 0;
+      // Hidden until positionPins() gives it real coordinates — a fixed-position
+      // pin with no left/top paints at the top-left corner otherwise (the flash
+      // seen when clicking through pages before the anchor is measured).
+      pin.style.display = 'none';
       pin.setAttribute('aria-label', (c.author === 'agent' ? 'Agent comment: ' : 'Comment: ') + norm(gist).slice(0, 80));
       const activate = () => focusComment(c.id, true);
       pin.addEventListener('click', activate);
@@ -1715,10 +1747,17 @@
       placed.push({ comment: c, el, pinEl: pin });
     });
     positionPins();
+    // A newly-navigated page may still be laying out (images/fonts/SPA DOM) when
+    // this first pass runs, so some anchors measure 0×0 and stay hidden above.
+    // Re-measure on the next frame to reveal them without waiting for a scroll.
+    requestAnimationFrame(positionPins);
   }
   function positionPins() {
     for (const p of placed) {
       const r = p.el.getBoundingClientRect();
+      // No box yet (not laid out / display:none ancestor) — keep it hidden rather
+      // than parking it at 0,0. A later pass reveals it once it has a real rect.
+      if (!r.width && !r.height) { p.pinEl.style.display = 'none'; continue; }
       p.pinEl.style.left = r.left + 'px';
       p.pinEl.style.top = r.top + 'px';
       const off = r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth;
@@ -2217,6 +2256,12 @@
       try { const d = JSON.parse(e.data); if (d && d.agent) applyAgentStatus(d.agent); } catch (err) {}
     });
     es.addEventListener('reload', () => requestReload());
+    es.addEventListener('store-error', (e) => {
+      // Server-sent application error (its own event name, so it never collides
+      // with EventSource's built-in connection 'error') — e.g. the comments file
+      // became unreadable. Surface it rather than letting the panel go stale.
+      try { if (e && e.data && JSON.parse(e.data).error === 'ECORRUPT') toastError('Comments file unreadable — check .feedback/comments.json'); } catch (err) {}
+    });
     es.onopen = () => { sseBackoff = 1000; resync(); };
     es.onerror = () => {
       // EventSource silently auto-retries transient blips; it does NOT recover

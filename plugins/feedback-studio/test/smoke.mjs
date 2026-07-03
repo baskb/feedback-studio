@@ -91,6 +91,13 @@ try {
   ]);
   check('forged-Host read blocked (403)', rebindRead.includes('403'));
 
+  // …and the SERVED SITE is guarded too (not just the /__feedback data surface):
+  // a rebound origin must not read local page content or pivot through a proxy.
+  const rebindPage = await rawRequest(PORT, [
+    'GET / HTTP/1.1', 'Host: evil.example', 'Connection: close', '', '',
+  ]);
+  check('forged-Host page read blocked (403)', rebindPage.includes('403'));
+
   const trav = await fetch(ORIGIN + '/%2e%2e/%2e%2e/secret.txt');
   const travBody = await trav.text();
   check('path traversal blocked', trav.status === 404 && !travBody.includes('TOP SECRET'));
@@ -119,6 +126,12 @@ try {
   });
   const twp2 = (await twp.json()).comment;
   check('PATCH rewrites edits', twp.status === 200 && twp2.edits.length === 1 && twp2.edits[0].prop === 'color');
+  // PATCH type is coerced to the comment's mode: a web comment can't take an md verb
+  const twt = await fetch(ORIGIN + '/__feedback/api/comments/' + twc.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ type: 'delete' }), // 'delete' is a Markdown verb
+  });
+  check('PATCH type coerced to web mode', twt.status === 200 && (await twt.json()).comment.type === 'change');
   await fetch(ORIGIN + '/__feedback/api/comments/' + twc.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
 
   // Edit-in-place: textEdit round-trips on POST (collapsed), PATCH null clears it
@@ -298,10 +311,40 @@ try {
     const cookie = page.headers.get('set-cookie') || '';
     check('share: page key exchanges into an HttpOnly cookie + clean redirect',
       page.status === 302 && cookie.includes('kbf-key=') && cookie.includes('HttpOnly') && !(page.headers.get('location') || '').includes('key='));
+    // cookie scoped to /__feedback so it never rides ordinary page/asset (or proxied) requests
+    check('share: key cookie scoped to Path=/__feedback', /path=\/__feedback/i.test(cookie));
     const ovl = await (await fetch(SH + '/__feedback/overlay.js', { headers: { Cookie: `kbf-key=${keys.view}` } })).text();
     check('share: overlay is served role-aware', ovl.startsWith('window.__kbfRole="view";'));
+    // a malformed key cookie must not 500 — it's treated as absent (→ 401 under strict)
+    const badCookie = await fetch(SH + '/__feedback/api/comments', { headers: { Cookie: 'kbf-key=%ZZ' } });
+    check('share: malformed key cookie → 401, not 500', badCookie.status === 401);
   } finally {
     shSrv.kill();
+  }
+
+  // --proxy --share: the share key must NEVER be forwarded to the upstream app.
+  // Stand up a mock upstream that echoes the Cookie header it received.
+  const http = await import('node:http');
+  let upstreamCookie = 'UNSET';
+  const upstream = http.createServer((ureq, ures) => {
+    upstreamCookie = ureq.headers.cookie || '';
+    ures.writeHead(200, { 'Content-Type': 'text/html' }); ures.end('<html><body>up</body></html>');
+  });
+  await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
+  const upPort = upstream.address().port;
+  const PX_PORT = PORT + 5;
+  const pxSrv = spawn(process.execPath, [bin, '--proxy', `http://127.0.0.1:${upPort}`, '--share', 'strict', '--port', String(PX_PORT), '--no-open'],
+    { stdio: ['ignore', 'pipe', 'ignore'], cwd: root });
+  try {
+    const pkeys = await new Promise((resolve, reject) => {
+      let out = ''; const t = setTimeout(() => reject(new Error('proxy share banner not printed')), 8000);
+      pxSrv.stdout.on('data', (d) => { out += d.toString(); const m = /\?key=(sa_[\w-]+)/.exec(out); if (m) { clearTimeout(t); resolve({ admin: m[1] }); } });
+    });
+    // request a page route carrying the admin key cookie; the upstream must not see kbf-key
+    await fetch(`http://127.0.0.1:${PX_PORT}/`, { headers: { Cookie: `kbf-key=${pkeys.admin}; other=keepme` } });
+    check('proxy: share key stripped from forwarded Cookie', !/kbf-key/.test(upstreamCookie) && /keepme/.test(upstreamCookie));
+  } finally {
+    pxSrv.kill(); upstream.close();
   }
 
   // --no-shots: shot uploads refused, and the served overlay carries the flag

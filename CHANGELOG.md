@@ -6,6 +6,42 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **Share keys no longer leak to a proxied dev server.** Under `--proxy --share`, the
+  `kbf-key` capability cookie was scoped to `/` and forwarded to the upstream on every
+  request (handing it the host tab's admin key). It is now scoped to `Path=/__feedback` and
+  stripped from the `Cookie` header forwarded to the upstream in both the HTTP and
+  websocket-upgrade paths (other cookies are preserved).
+- **DNS-rebinding guard now covers the served site, not just `/__feedback/*`.** A forged
+  `Host` is refused on page / static / `--md` / `--proxy` routes and the websocket upgrade,
+  so a rebound origin can't read local page content or pivot through the proxy. Legitimate
+  loopback / LAN / tunnel access is unaffected (all already in the host allowlist).
+- **Markdown rendering hardened against encoded scheme bypasses.** `sanitizeRenderedHtml`
+  now entity-decodes attribute values (shared `schemeIsEvil` helper) before the
+  `javascript:`/`vbscript:`/`data:text/html` check, so `&#106;avascript:` and control-split
+  schemes can't survive in a rendered `.md`.
+- **Variant previews can't beacon out.** Agent-proposed variants now have external
+  eager-loading resources stripped (`img src`, `srcset`, `poster`, SVG `image href`) at both
+  the write-time and the authoritative parser scrub — relative and `data:image` are kept — so
+  previewing a variant (incl. over a share link) fires no third-party request.
+
+### Changed
+- **Anchor confidence is now `high`-only for load-bearing actions.** Recording tweak/text
+  edits, capturing a screenshot, and previewing a variant require a high-confidence anchor
+  re-resolve; a `medium` (weak/buried-text) match asks for a re-pin instead of acting on a
+  possibly-wrong element. Fresh direct clicks are unaffected.
+- The file-store lock now **refreshes its mtime on a heartbeat while held**, so a slow write
+  (large file / network FS stall / long export) can't have its live lock stolen.
+
+### Fixed
+- The comment `PATCH` endpoint coerces `type` to the comment's own web/Markdown mode
+  (a web comment can no longer be given a Markdown verb, or vice-versa).
+- A corrupt `comments.json` now pushes a `store-error` SSE event so open overlays surface it
+  instead of silently showing stale data.
+- A malformed `kbf-key` cookie no longer 500s a feedback request (treated as absent).
+- Pins and the variant switcher no longer flash briefly at the top-left corner before they
+  are positioned (hidden until they have coordinates).
+
 ## [0.5.0] - 2026-07-03
 
 ### Added

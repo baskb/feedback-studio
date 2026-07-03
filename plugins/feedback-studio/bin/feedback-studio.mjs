@@ -39,6 +39,7 @@ import {
   ALLOWED_TYPES, STATUSES, AUTONOMY,
   readComments, writeComments, mutate, makeComment, makeReply, exportMarkdown,
   exportProcessInstructions, seedAgentsFile, sanitizeEdits, sanitizeTextEdit,
+  coerceType, modeFor, schemeIsEvil,
 } from '../lib/store.mjs';
 import { exportMarkers as stampMarkers } from '../lib/markers.mjs';
 
@@ -144,7 +145,19 @@ function tokenRole(tok) {
 }
 function cookieKey(req) {
   const m = /(?:^|;\s*)kbf-key=([^;]+)/.exec(req.headers.cookie || '');
-  return m ? decodeURIComponent(m[1]) : '';
+  if (!m) return '';
+  // A malformed percent-escape must not 500 the whole feedback request — treat
+  // an undecodable cookie as absent (no key).
+  try { return decodeURIComponent(m[1]); } catch (e) { return ''; }
+}
+// Remove the kbf-key capability from a Cookie header before it leaves for the
+// upstream: the share key is OURS, never the proxied app's, and forwarding it
+// would hand the (possibly admin) capability to the dev server (cf. the
+// cookie-to-proxy leak class, CVE-2026-5119). Returns the remaining cookies.
+function stripKbfCookie(cookie) {
+  if (!cookie) return cookie;
+  const kept = String(cookie).split(/;\s*/).filter((c) => c && !/^kbf-key=/i.test(c));
+  return kept.join('; ');
 }
 // "Local direct" = loopback socket AND a loopback Host header. The Host check
 // matters: tunnel traffic arrives via the local cloudflared daemon (loopback
@@ -467,7 +480,10 @@ async function handleApi(req, res, url) {
           if (Array.isArray(body.edits) && !c.sourceFile) c.edits = sanitizeEdits(body.edits);
           if ('textEdit' in body) c.textEdit = sanitizeTextEdit(body.textEdit);
           if (STATUSES.includes(body.status)) c.status = body.status;
-          if (ALLOWED_TYPES.includes(body.type)) c.type = body.type;
+          // Coerce a recognized type to the comment's own mode (web vs md) so a
+          // PATCH can't put a Markdown verb on a web comment or vice-versa — the
+          // same rule makeComment applies. Unknown types are ignored, as before.
+          if (ALLOWED_TYPES.includes(body.type)) c.type = coerceType(body.type, modeFor(c.sourceFile));
           if (AUTONOMY.includes(body.autonomy)) c.autonomy = body.autonomy;
           c.updatedAt = new Date().toISOString();
           return { comments: list, value: { comment: c } };
@@ -603,10 +619,12 @@ async function serveStatic(res, file, status = 200) {
 // so this can't be turned into an open proxy / SSRF pivot.
 function proxyRequest(req, res) {
   const u = new URL(req.url, PROXY_URL);
+  const fwd = { ...req.headers, host: PROXY_URL.host, 'accept-encoding': 'identity' };
+  if (fwd.cookie) { const c = stripKbfCookie(fwd.cookie); if (c) fwd.cookie = c; else delete fwd.cookie; } // never leak the share key upstream
   const opts = {
     protocol: PROXY_URL.protocol, hostname: PROXY_URL.hostname, port: PROXY_PORT,
     path: u.pathname + u.search, method: req.method,
-    headers: { ...req.headers, host: PROXY_URL.host, 'accept-encoding': 'identity' },
+    headers: fwd,
   };
   const preq = PROXY_AGENT.request(opts, (pres) => {
     const ct = pres.headers['content-type'] || '';
@@ -646,10 +664,18 @@ function proxyRequest(req, res) {
 
 // Pass HMR / live-reload websockets straight through to the upstream dev server.
 function proxyUpgrade(req, clientSocket, head) {
+  // Same DNS-rebinding guard as the HTTP routes — a forged Host can't open a
+  // socket through us to the dev server.
+  if (!hostAllowed(req)) { try { clientSocket.destroy(); } catch (e) {} return; }
   const onReady = (upstream) => {
     upstream.setTimeout(0); // connected: HMR sockets legitimately idle for minutes
     upstream.write(`${req.method} ${req.url} HTTP/1.1\r\n`);
-    for (let i = 0; i < req.rawHeaders.length; i += 2) upstream.write(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`);
+    for (let i = 0; i < req.rawHeaders.length; i += 2) {
+      const name = req.rawHeaders[i], value = req.rawHeaders[i + 1];
+      // Strip the share key from the forwarded Cookie (see stripKbfCookie).
+      const out = /^cookie$/i.test(name) ? stripKbfCookie(value) : value;
+      if (out) upstream.write(`${name}: ${out}\r\n`);
+    }
     upstream.write('\r\n');
     if (head && head.length) upstream.write(head);
     upstream.pipe(clientSocket);
@@ -724,7 +750,16 @@ function broadcastComments(comments) {
   for (const res of [...sseClients]) writeSse(res, payload);
 }
 async function broadcastFromDisk() {
-  try { broadcastComments(await readComments(DATA_DIR)); } catch (e) { /* corrupt mid-edit; ignore */ }
+  try { broadcastComments(await readComments(DATA_DIR)); }
+  catch (e) {
+    // A transient partial write can momentarily parse as corrupt; but a real
+    // ECORRUPT means open overlays would otherwise sit on stale data with no
+    // hint. Tell them so they can surface it instead of silently going stale.
+    if (e && e.code === 'ECORRUPT') {
+      const payload = 'event: store-error\ndata: ' + JSON.stringify({ error: 'ECORRUPT', message: 'comments.json is unreadable' }) + '\n\n';
+      for (const res of [...sseClients]) writeSse(res, payload);
+    }
+  }
 }
 let agentStatus = { state: 'offline', name: '', commentId: '', ts: 0 };
 function broadcastAgentStatus() {
@@ -957,9 +992,11 @@ function sanitizeRenderedHtml(html) {
     .replace(/[\s/]on[a-z]+\s*=\s*"[^"]*"/gi, '')
     .replace(/[\s/]on[a-z]+\s*=\s*'[^']*'/gi, '')
     .replace(/[\s/]on[a-z]+\s*=\s*[^\s>]+/gi, '')
-    // neutralise javascript:/vbscript: URLs in href/src
-    .replace(/\b(href|src)\s*=\s*"\s*(?:javascript|vbscript):[^"]*"/gi, '$1="#"')
-    .replace(/\b(href|src)\s*=\s*'\s*(?:javascript|vbscript):[^']*'/gi, "$1='#'");
+    // neutralise script-ish URLs in href/src — checked ENTITY-DECODED (via the
+    // shared schemeIsEvil), so an encoded/split scheme like `&#106;avascript:`
+    // or `java&Tab;script:` can't slip past the way a literal-substring match would.
+    .replace(/\b(href|src)\s*=\s*"([^"]*)"/gi, (m, attr, val) => (schemeIsEvil(val) ? attr + '="#"' : m))
+    .replace(/\b(href|src)\s*=\s*'([^']*)'/gi, (m, attr, val) => (schemeIsEvil(val) ? attr + "='#'" : m));
 }
 
 async function renderMd(file) {
@@ -1034,14 +1071,16 @@ async function handler(req, res) {
       }
       url.searchParams.delete('key');
       const loc = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');
-      // Known limitation (RFC 6265): cookies scope by hostname, NOT port, so on
-      // localhost the browser also sends kbf-key to other local dev servers.
-      // The __Host- prefix would fix that but requires HTTPS, which --share
-      // doesn't mandate. Low stakes (a hostile local process could do worse),
-      // accepted + documented in SKILL.md; keys rotate every start anyway.
+      // Path=/__feedback: every role-dependent read (overlay.js, /events, /api)
+      // lives under it, and page routes don't check role — so the browser never
+      // attaches the key to ordinary page/asset requests, and in --proxy mode it
+      // is never forwarded to the upstream dev server. (Known RFC 6265 limitation:
+      // cookies scope by hostname, not port, so other local dev servers on the
+      // same host still receive it — the __Host- prefix would fix that but
+      // requires HTTPS, which --share doesn't mandate; keys rotate every start.)
       res.writeHead(302, {
         Location: loc,
-        'Set-Cookie': 'kbf-key=' + encodeURIComponent(key) + '; Path=/; SameSite=Lax; HttpOnly',
+        'Set-Cookie': 'kbf-key=' + encodeURIComponent(key) + '; Path=/__feedback; SameSite=Lax; HttpOnly',
       });
       return res.end();
     }
@@ -1077,6 +1116,17 @@ async function handler(req, res) {
     if (url.pathname === '/__feedback/events') return handleSSE(req, res);
     if (url.pathname.startsWith('/__feedback/api')) return handleApi(req, res, url);
     if (url.pathname.startsWith('/__feedback/vendor/html-to-image/')) return serveVendorHti(res, url);
+
+    // DNS-rebinding guard for the served SITE too, not just the data surface: a
+    // rebound hostile origin must not read the local page content or pivot
+    // through --proxy to the dev server. Legit access always uses an allowed
+    // host (loopback / LAN IPs / machine name / tunnel are all in ALLOWED_HOSTS);
+    // only a forged Host is refused. (The inert overlay.js/.css assets above stay
+    // host-agnostic — they carry no site data.)
+    if (!hostAllowed(req)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('403 — host not allowed');
+    }
 
     if (MD_MODE) {
       if (url.pathname === '/favicon.ico') { res.writeHead(204); return res.end(); }

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import {
   WEB_TYPES, MD_TYPES, ALLOWED_TYPES, STATUSES, TWEAKABLE_PROPS,
   makeComment, makeReply, coerceType, sanitizeAnchor, sanitizeEdits, sanitizeTextEdit,
-  sanitizeVariants, sanitizeVariantHtml, sanitizePick,
+  sanitizeVariants, sanitizeVariantHtml, sanitizePick, decodeEntities, schemeIsEvil,
   readComments, writeComments, mutate, exportMarkdown,
   exportProcessInstructions, seedAgentsFile, AGENTS_SNIPPET_MARKER,
 } from '../lib/store.mjs';
@@ -289,6 +289,30 @@ test('the overlay re-scrubs variants through a real parser before injection (no 
   assert.ok(!/container\.innerHTML\s*=\s*v\.reply\.variants/.test(src), 'variants must never be injected unscrubbed');
   // and the scrub must use an inert template (parser-decoded attributes)
   assert.ok(src.includes("createElement('template')"));
+});
+
+test('schemeIsEvil decodes entities + strips control chars before the scheme check', () => {
+  assert.ok(schemeIsEvil('javascript:alert(1)'));
+  assert.ok(schemeIsEvil('&#106;avascript:alert(1)'));   // decimal entity
+  assert.ok(schemeIsEvil('&#x6A;avascript:alert(1)'));   // hex entity
+  assert.ok(schemeIsEvil('java\tscript:alert(1)'));      // control-split
+  assert.ok(schemeIsEvil('javascript&colon;alert(1)'));  // named-entity colon
+  assert.ok(schemeIsEvil('data:text/html,<b>'));
+  assert.ok(!schemeIsEvil('https://example.com/x'));     // real links pass
+  assert.ok(!schemeIsEvil('/relative/path'));
+  assert.ok(!schemeIsEvil('#frag'));
+  assert.equal(decodeEntities('&#106;&#x6a;'), 'jj');
+});
+
+test('sanitizeVariantHtml strips external eager-resource URLs (preview beacons)', () => {
+  // external img src / poster / srcset → neutralised; relative + data:image kept
+  assert.ok(!/evil\.example/.test(sanitizeVariantHtml('<img src="https://evil.example/x.png">')));
+  assert.ok(!/evil\.example/.test(sanitizeVariantHtml('<video poster="//evil.example/p.jpg"></video>')));
+  assert.ok(!/evil\.example/.test(sanitizeVariantHtml('<img srcset="https://evil.example/x.png 2x">')));
+  const rel = sanitizeVariantHtml('<img src="/logo.png">');
+  assert.ok(rel.includes('/logo.png'));
+  const data = sanitizeVariantHtml('<img src="data:image/png;base64,AAAA">');
+  assert.ok(data.includes('data:image/png'));
 });
 
 test('sanitizeVariants: caps count + label/note lengths, auto-labels, drops empty html', () => {

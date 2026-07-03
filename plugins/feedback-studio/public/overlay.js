@@ -12,6 +12,7 @@
   // deletes — those are the host team's); none = no valid key, mount nothing.
   const ROLE = window.__kbfRole || 'full';
   if (ROLE === 'none') return;
+  const LABEL = String(window.__kbfLabel || '').slice(0, 60); // site name in a multi-site repo
   const CAN_COMMENT = ROLE !== 'view';
   const CAN_MANAGE = ROLE === 'full' || ROLE === 'admin';
 
@@ -91,20 +92,22 @@
   const MODE = (typeof window !== 'undefined' && window.__kbfMode) || 'web';
   const TYPE_SETS = {
     web: [
-      { id: 'fix', label: 'Fix', hint: 'Something is broken or wrong — reproduce and patch it.' },
-      { id: 'change', label: 'Change', hint: 'Make it exactly this — apply near-verbatim, no redesign.' },
-      { id: 'improve', label: 'Improve', hint: 'This is weak — rewrite or redesign with judgement.' },
+      { id: 'fix', label: 'Fix', hint: 'Something is broken or wrong — reproduce and patch it.', placeholder: 'What’s broken, and what should happen instead? (typed or spoken)' },
+      { id: 'change', label: 'Change', hint: 'Make it exactly this — apply near-verbatim, no redesign.', placeholder: 'What should this say or look like? (typed or spoken)' },
+      { id: 'improve', label: 'Improve', hint: 'This is weak — rewrite or redesign with judgement.', placeholder: 'What could be better here? (typed or spoken)' },
+      { id: 'question', label: 'Ask', hint: 'Ask about this — the agent answers in a reply, and does not change it.', placeholder: 'What’s your question about this? (typed or spoken)' },
     ],
     md: [
-      { id: 'comment', label: 'Comment', hint: 'A general note about this passage.' },
-      { id: 'rephrase', label: 'Rephrase', hint: 'Propose specific replacement wording.' },
-      { id: 'expand', label: 'Expand', hint: 'Add more detail / content here.' },
-      { id: 'delete', label: 'Delete', hint: 'Remove this passage.' },
-      { id: 'question', label: 'Question', hint: 'Ask the agent something about this.' },
+      { id: 'comment', label: 'Comment', hint: 'A general note about this passage.', placeholder: 'Your note on this passage (typed or spoken)' },
+      { id: 'rephrase', label: 'Rephrase', hint: 'Propose specific replacement wording.', placeholder: 'How should this be reworded? (typed or spoken)' },
+      { id: 'expand', label: 'Expand', hint: 'Add more detail / content here.', placeholder: 'What should be added or expanded on? (typed or spoken)' },
+      { id: 'delete', label: 'Delete', hint: 'Remove this passage.', placeholder: 'Why should this be removed? (optional, typed or spoken)' },
+      { id: 'question', label: 'Question', hint: 'Ask the agent something about this.', placeholder: 'What’s your question about this? (typed or spoken)' },
     ],
   };
   const TYPES = TYPE_SETS[MODE] || TYPE_SETS.web;
   const TYPE_IDS = TYPES.map((t) => t.id);
+  const placeholderFor = (id) => (TYPES.find((t) => t.id === id) || {}).placeholder || PLACEHOLDER;
   let ctype = LS.get('kbf-ctype-' + MODE) || TYPES[0].id;
   if (!TYPE_IDS.includes(ctype)) ctype = TYPES[0].id;
 
@@ -143,6 +146,13 @@
     alignR: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="6" y1="18" x2="21" y2="18"/></svg>',
     eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>',
     image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>',
+    narrate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M2 19h5M17 19h5"/></svg>',
+    stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+    point: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3l6.5 16 2.2-6.8 6.8-2.2z"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 5.5v13l11-6.5z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+    prev: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 5h2v14H7zM20 5v14l-10-7z"/></svg>',
+    next: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M15 5h2v14h-2zM4 5v14l10-7z"/></svg>',
   };
 
   // ---------- shadow host ----------
@@ -173,7 +183,7 @@
     <aside class="kbf-panel ${panelOpen ? 'is-open' : ''}" id="kbf-panel" role="region" aria-label="Feedback">
       <div class="kbf-panel-head">
         <div class="kbf-panel-title">
-          <h2>Feedback</h2>
+          <h2>Feedback${LABEL ? ` <span class="kbf-site">${escapeHtml(LABEL)}</span>` : ''}</h2>
           <div class="kbf-panel-actions">
             <button class="kbf-x" id="kbf-theme-toggle" title="Theme" aria-label="Theme"></button>
             <button class="kbf-x" id="kbf-panel-close" title="Close" aria-label="Close feedback panel">${I.close}</button>
@@ -190,17 +200,22 @@
       <div class="kbf-list" id="kbf-list"></div>
       <div class="kbf-panel-foot">
         <span class="kbf-readyline" id="kbf-ready" title="Saved to .feedback/comments.json + FEEDBACK.md"></span>
+        <button class="kbf-btn kbf-btn--ghost kbf-walk-btn" id="kbf-walk" title="Play a guided tour of what the agent changed, read aloud" style="display:none">${I.play} Walk me through the changes</button>
         <button class="kbf-btn kbf-btn--ghost kbf-stamp" id="kbf-stamp" title="Write these comments into the .md as @FB markers (portable + greppable)" style="display:none">Stamp .md</button>
         <span class="kbf-copyfb-caption" title="Saved to .feedback/ — say this to your coding agent to apply the comments">Tell your agent: <strong>“Please process feedback”</strong> (PPF)</span>
       </div>
     </aside>
 
     <div class="kbf-fab-wrap">
-      <button class="kbf-fab kbf-fab--mini" id="kbf-toggle-panel" title="Open feedback list" aria-label="Open feedback list" aria-expanded="${panelOpen ? 'true' : 'false'}">
-        ${I.list}<span class="kbf-count" id="kbf-count"></span>
+      ${LABEL ? `<div class="kbf-fab-site" title="This feedback session: ${escapeHtml(LABEL)}">${escapeHtml(LABEL)}</div>` : ''}
+      <button class="kbf-fab kbf-fab--mini" id="kbf-toggle-panel" title="Feedback list" aria-label="Open feedback list" aria-expanded="${panelOpen ? 'true' : 'false'}">
+        <span class="kbf-fab-label">List</span><span class="kbf-fab-ico">${I.list}<span class="kbf-count" id="kbf-count"></span></span>
       </button>
-      <button class="kbf-fab" id="kbf-toggle-mode" title="Toggle comment mode (C)" aria-pressed="false">
-        ${I.comment}<span class="kbf-fab-label" id="kbf-mode-label">Comment</span>
+      <button class="kbf-fab kbf-fab--talk" id="kbf-narrate" title="Talk — narrate the page by voice (T)" aria-label="Talk (narrate the page), shortcut T" aria-pressed="false">
+        <span class="kbf-fab-label">Talk</span><span class="kbf-fab-ico">${I.narrate}</span>
+      </button>
+      <button class="kbf-fab" id="kbf-toggle-mode" title="Point at an element to comment (P)" aria-pressed="false">
+        <span class="kbf-fab-label" id="kbf-mode-label">Point</span><span class="kbf-fab-ico">${I.point}</span>
       </button>
     </div>
 
@@ -222,7 +237,6 @@
   const countEl = $('kbf-count');
   const readyEl = $('kbf-ready');
   const modeBtn = $('kbf-toggle-mode');
-  const modeLabel = $('kbf-mode-label');
   const toastsEl = $('kbf-toasts');
 
   // ---------- anchoring ----------
@@ -413,15 +427,20 @@
   };
 
   // ---------- comment mode ----------
-  function setMode(on) {
+  function setMode(on, announce) {
     if (!CAN_COMMENT) on = false; // view links never enter comment mode
+    if (on && (narrating || walkState)) return; // don't enter Point mode mid-narration/walkthrough
+    const was = mode;
     mode = on;
     SS.set('kbf-mode', on ? '1' : '0');
     modeBtn.classList.toggle('is-active', on);
     modeBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
-    modeLabel.textContent = on ? 'Commenting' : 'Comment';
+    // label stays "Point" — active state is shown by colour, not a longer word
+    // (which was clipping to "Pointin" in the fixed-width pill).
     document.documentElement.style.cursor = on ? 'crosshair' : '';
     if (!on) { hideHighlight(); closeComposer(); }
+    // Uniform with Talk: announce the mode when the user turns it on (not on load).
+    if (on && !was && announce) toast('Point mode — click any element, or select text, to comment');
   }
 
   function hideHighlight() { hl.classList.remove('is-on'); }
@@ -812,7 +831,7 @@
       countBadge.hidden = !tweaks.size;
       countBadge.textContent = String(tweaks.size);
       resetAllBtn.hidden = !tweaks.size;
-      ta.placeholder = tweaks.size ? 'Optional note — the tweaks above are the change' : PLACEHOLDER;
+      ta.placeholder = tweaks.size ? 'Optional note — the tweaks above are the change' : placeholderFor(ctype);
       applyPreview();
       if (hooks.validate) hooks.validate();
     }
@@ -1361,6 +1380,527 @@
     setTimeout(positionVariantBar, 300); // after the scroll settles
   }
 
+  // ---------- "Talk me through it" — narrate the page → draft comments ----------
+  // The reviewer speaks while moving the cursor; we capture two timestamped
+  // streams (what was SAID, what was POINTED AT) and hand them to the pure
+  // correlation engine (lib/narration.mjs), which grounds each utterance on the
+  // element under the cursor (Put-That-There). Draft comments come back for the
+  // reviewer to confirm — nothing is committed without a glance, and an
+  // unconfident target asks for a pin rather than guessing.
+  let narrating = false;
+  let narrSession = 0;           // bumped on every start/stop — stale recognizer events no-op
+  let narrRec = null;            // dedicated SpeechRecognition (separate from composer dictation)
+  let narrTranscript = [];       // [{ t, text }] finalised phrases
+  let narrHovers = [];           // [{ key, text, t0, t1, anchor }]
+  let narrClicks = [];           // [{ t, key, text, anchor }]
+  let narrCur = null;            // current hover interval being built
+  let narrBar = null;            // the live recording bar
+  let narrTimeout = 0;           // safety auto-stop
+  let _narrEngine = null;
+  async function loadNarrEngine() {
+    if (_narrEngine) return _narrEngine;
+    try { _narrEngine = await import(ROOT + '/lib/narration.mjs'); } catch (e) { _narrEngine = null; }
+    return _narrEngine;
+  }
+  // The tall draft tray sits in the FAB's own corner, so hide the cluster while
+  // it's up. (Used only for the draft tray now — see setFabRaised for the bars.)
+  function setChromeHidden(hidden) {
+    const fw = root.querySelector('.kbf-fab-wrap');
+    if (fw) fw.style.visibility = hidden ? 'hidden' : '';
+  }
+  // For the narrate/walk bottom bars: DON'T hide the buttons (that felt like the
+  // whole UI vanished) — just lift the cluster above the bar so they stay visible
+  // and reachable. Only affects bottom corners; top-docked FABs need no lift.
+  function setFabRaised(raised) {
+    const fw = root.querySelector('.kbf-fab-wrap');
+    if (fw) fw.classList.toggle('kbf-fab-wrap--raised', raised);
+  }
+  const REDUCED_MOTION = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  function narrKeyFor(el) {
+    const a = buildElementAnchor(el);
+    return { key: a.selector || a.xpath || a.tag, text: a.snippet || '', anchor: a };
+  }
+  function narrCloseHover(t) { if (narrCur) { narrCur.t1 = t; narrHovers.push(narrCur); narrCur = null; } }
+
+  const narrMove = (e) => {
+    if (!narrating || isInUI(e)) return;
+    const el = e.target;
+    if (!(el instanceof Element) || el === document.body || el === document.documentElement) return;
+    if (narrCur && narrCur.el === el) return; // same element — skip the (costly) anchor build
+    const k = narrKeyFor(el);
+    const now = Date.now();
+    narrCloseHover(now);
+    narrCur = { el, key: k.key, text: k.text, anchor: k.anchor, t0: now, t1: now };
+    showHighlightFor(el);
+    updateNarrPointing(k.text || el.nodeName.toLowerCase());
+  };
+  const narrClick = (e) => {
+    if (!narrating || isInUI(e)) return;
+    const el = e.target;
+    if (!(el instanceof Element) || el === document.body || el === document.documentElement) return;
+    // A click is a "this one" signal, not an interaction — suppress it so the
+    // page can't navigate away (losing the session) or fire side effects.
+    e.preventDefault(); e.stopPropagation();
+    const k = narrKeyFor(el);
+    narrClicks.push({ t: Date.now(), key: k.key, text: k.text, anchor: k.anchor });
+  };
+
+  function updateNarrPointing(text) {
+    if (!narrBar) return;
+    const p = narrBar.querySelector('.kbf-narr-point');
+    if (p) p.textContent = text ? ('pointing at: ' + text.slice(0, 40)) : '';
+  }
+  function updateNarrTicker(text) {
+    if (!narrBar) return;
+    const t = narrBar.querySelector('.kbf-narr-ticker');
+    if (t) t.textContent = text || '';
+  }
+
+  function showNarrBar() {
+    narrBar = document.createElement('div');
+    narrBar.className = 'kbf-narr-bar';
+    narrBar.innerHTML = `
+      <span class="kbf-narr-dot"></span>
+      <span class="kbf-narr-live">
+        <span class="kbf-narr-ticker">Listening… talk me through the page.</span>
+        <span class="kbf-narr-point"></span>
+      </span>
+      <label class="kbf-langwrap kbf-narr-lang" title="Voice language: ${escapeHtml(langName(speechLang))}">
+        <span class="kbf-lang" aria-hidden="true">${escapeHtml(langShort(speechLang))}</span>
+        <select class="kbf-langselect" aria-label="Voice language">
+          ${LANGS.map((l) => `<option value="${l.code}"${l.code === speechLang ? ' selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}
+        </select>
+      </label>
+      <button type="button" class="kbf-narr-stop" data-narr="stop">${I.stop}<span>Stop &amp; review</span></button>`;
+    root.appendChild(narrBar);
+    narrBar.querySelector('[data-narr="stop"]').addEventListener('click', stopNarrate);
+    // Blur after picking so the <select> doesn't keep focus — otherwise pressing
+    // T to stop would type-ahead the dropdown (e.g. jump to "Turkish") instead.
+    narrBar.querySelector('.kbf-langselect').addEventListener('change', (e) => { setNarrLang(e.target.value); e.target.blur(); });
+  }
+  function setNarrLang(code) {
+    if (!LANGS.some((l) => l.code === code)) return;
+    speechLang = code;
+    LS.set('kbf-voicelang', code);
+    if (narrBar) {
+      const chip = narrBar.querySelector('.kbf-narr-lang .kbf-lang'); if (chip) chip.textContent = langShort(code);
+      const w = narrBar.querySelector('.kbf-narr-lang'); if (w) w.title = 'Voice language: ' + langName(code);
+    }
+    // switch the running recogniser to the new language mid-session (onend restarts it)
+    if (narrating && narrRec) { narrRec.lang = code; try { narrRec.stop(); } catch (e) {} }
+    toast('Voice language: ' + langName(code));
+  }
+  function hideNarrBar() { if (narrBar) { try { narrBar.remove(); } catch (e) {} narrBar = null; } }
+
+  function startNarrate() {
+    if (!CAN_COMMENT) return;
+    if (narrating) { stopNarrate(); return; }
+    if (!SR) { toastError('Voice needs Chrome or Edge over a secure connection'); return; }
+    // narration is its own mode; make sure comment mode / composer / walkthrough
+    // are off (a live walkthrough speaks aloud — the mic would hear the agent).
+    if (mode) setMode(false);
+    closeComposer();
+    closeWalkthrough();
+    closeDraftTray();               // any leftover review tray from a prior session
+    if (panelOpen) setPanel(false); // clear the feedback overview: more room to point, and the draft tray won't land on top of it
+    narrating = true;
+    const session = ++narrSession; // this run's id; stale recognizer events check against it
+    narrTranscript = []; narrHovers = []; narrClicks = []; narrCur = null;
+    document.documentElement.style.cursor = 'crosshair';
+    const nb = $('kbf-narrate'); if (nb) { nb.classList.add('is-live'); nb.setAttribute('aria-pressed', 'true'); }
+    setFabRaised(true); // keep the buttons visible, just lift them above the bar
+    showNarrBar();
+    loadNarrEngine();
+    document.addEventListener('pointermove', narrMove, true);
+    document.addEventListener('click', narrClick, true);
+    // speech
+    narrRec = new SR();
+    narrRec.lang = speechLang; narrRec.interimResults = true; narrRec.continuous = true;
+    narrRec.onresult = (e) => {
+      if (session !== narrSession) return; // event from a superseded/stopped session
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const seg = e.results[i][0].transcript;
+        if (e.results[i].isFinal) {
+          const txt = norm(seg);
+          if (!txt) continue;
+          const now = Date.now();
+          const last = narrTranscript[narrTranscript.length - 1];
+          // Mobile Web Speech re-emits a GROWING cumulative final ("so" →
+          // "so explain" → "so explain me"…) in quick succession. Collapse a
+          // prefix chain ONLY when the finals arrive close together — otherwise a
+          // genuine repeat ("make this bigger" … later …) would be wrongly merged.
+          if (last && (now - last.t) < 1400 && (txt.startsWith(last.text) || last.text.startsWith(txt))) {
+            if (txt.length >= last.text.length) { last.text = txt; last.t = now; }
+          } else {
+            narrTranscript.push({ t: now, text: txt });
+          }
+        } else interim += seg;
+      }
+      updateNarrTicker(norm(interim) || (narrTranscript.length ? '“' + narrTranscript[narrTranscript.length - 1].text + '”' : 'Listening…'));
+    };
+    narrRec.onerror = (ev) => { if (session === narrSession && (ev.error === 'not-allowed' || ev.error === 'service-not-allowed')) { toastError('Microphone blocked — allow mic access'); stopNarrate(); } };
+    narrRec.onend = () => { if (session === narrSession && narrating) { try { narrRec.start(); } catch (e) {} } };
+    try { narrRec.start(); } catch (e) {}
+    clearTimeout(narrTimeout);
+    narrTimeout = setTimeout(() => { if (narrating) { toast('Narration auto-stopped after 10 min'); stopNarrate(); } }, 600000);
+    // One-time privacy note: continuous capture routes audio through the
+    // browser's cloud speech recognizer (shown once per browser).
+    if (!LS.get('kbf-narr-privacy')) { LS.set('kbf-narr-privacy', '1'); toast('Narrating — talk and point. (Voice is transcribed by your browser’s speech service.) Hit Stop when done.', { duration: 5000 }); }
+    else toast('Narrating — talk and point. Hit Stop when done.');
+  }
+
+  async function stopNarrate() {
+    if (!narrating) return;
+    narrating = false;
+    narrSession++; // invalidate the recognizer's queued events immediately
+    clearTimeout(narrTimeout);
+    document.documentElement.style.cursor = '';
+    const nb = $('kbf-narrate'); if (nb) { nb.classList.remove('is-live'); nb.setAttribute('aria-pressed', 'false'); }
+    narrCloseHover(Date.now());
+    document.removeEventListener('pointermove', narrMove, true);
+    document.removeEventListener('click', narrClick, true);
+    if (narrRec) { try { narrRec.stop(); } catch (e) {} narrRec = null; }
+    hideHighlight(); hideNarrBar();
+    setFabRaised(false); // drop the cluster back down (draft tray, if it opens, will hide it)
+    // Snapshot the timelines BEFORE the await, so a start-during-await (which
+    // resets these arrays) can't make us correlate the wrong session's data.
+    const transcript = narrTranscript.slice(), hovers = narrHovers.slice(), clicks = narrClicks.slice();
+    const eng = await loadNarrEngine();
+    if (!eng) { toastError('Could not load the narration engine'); return; }
+    const drafts = eng.correlate(transcript, { hovers, clicks }).filter((d) => (d.text || '').trim());
+    if (!drafts.length) { toast('No feedback caught — nothing to review'); return; }
+    // Confident ones behave exactly like a manual comment: they're pinned right
+    // away and PPF picks them up — no accept step. Only the ones we couldn't
+    // confidently place ask the reviewer to point at the element.
+    const confident = drafts.filter((d) => !d.needsPin);
+    const needPin = drafts.filter((d) => d.needsPin);
+    let saved = 0;
+    const failed = [];
+    for (const d of confident) { try { if (await saveNarrationComment(d)) saved++; else failed.push(d); } catch (e) { failed.push(d); } }
+    if (saved) { refresh(); toast(saved + ' spoken comment' + (saved === 1 ? '' : 's') + ' pinned'); }
+    if (failed.length) toastError(failed.length + ' comment' + (failed.length === 1 ? "" : 's') + " couldn't save — review below");
+    const review = needPin.concat(failed); // don't drop failed saves — surface them for retry/pin
+    if (review.length) openDraftTray(review);
+    else if (!saved) toast('No feedback caught — nothing to review');
+  }
+
+  // POST one narration draft as a real comment (the confident path + the "placed
+  // it" path both call this). Behaves like a manual save: pin appears, PPF sees it.
+  async function saveNarrationComment(d) {
+    const text = (d.text || '').trim();
+    if (!text) return null;
+    const data = await api('/comments', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ page: PAGE, pageTitle: document.title, url: location.href, anchor: d.anchor || {}, text, type: d.type, via: 'narration', authorName: ROLE === 'comment' ? (LS.get('kbf-name') || '') : '' }),
+    });
+    comments.push(data.comment);
+    if (d.anchor) captureShot(data.comment.id, { anchor: d.anchor });
+    return data.comment;
+  }
+
+  // ---------- draft tray — ONLY for spoken comments we couldn't confidently place ----------
+  let draftTray = null;
+  function openDraftTray(drafts) {
+    closeDraftTray();
+    const n = drafts.length;
+    draftTray = document.createElement('div');
+    draftTray.className = 'kbf-drafts';
+    draftTray.innerHTML = `
+      <div class="kbf-drafts-head">
+        <b>${n} spoken comment${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} a spot</b>
+        <span class="kbf-drafts-sub">I heard ${n === 1 ? 'this' : 'these'} but wasn’t sure where — point at the element</span>
+        <button type="button" class="kbf-x" data-dr="close" title="Dismiss">${I.close}</button>
+      </div>
+      <div class="kbf-drafts-list"></div>
+      <div class="kbf-drafts-foot">
+        <button type="button" class="kbf-btn kbf-btn--ghost" data-dr="discardall">Discard all</button>
+        <div class="kbf-spacer"></div>
+        <button type="button" class="kbf-btn kbf-btn--ghost" data-dr="saveall">Save all without pins</button>
+      </div>`;
+    root.appendChild(draftTray);
+    setChromeHidden(true);
+    const list = draftTray.querySelector('.kbf-drafts-list');
+    drafts.forEach((d, i) => list.appendChild(renderDraftRow(d, i)));
+    draftTray.addEventListener('click', (e) => {
+      const act = e.target.closest('[data-dr]')?.dataset.dr;
+      if (act === 'close' || act === 'discardall') { closeDraftTray(); return; }
+      if (act === 'saveall') { saveAllUnpinned(); return; }
+    });
+  }
+  function renderDraftRow(d, i) {
+    // Two kinds land in the tray: ones we couldn't confidently place (no anchor —
+    // "Point to it"), and ones that were anchored fine but whose save FAILED
+    // (already have a good spot — just "Retry"). Render each accurately.
+    const needsSpot = d.needsPin || !d.anchor;
+    const row = document.createElement('div');
+    row.className = 'kbf-draft' + (needsSpot ? ' needs-pin' : '');
+    row.dataset.i = i;
+    row._draft = d;
+    row.innerHTML = `
+      <div class="kbf-draft-top">
+        <span class="kbf-draft-conf kbf-conf-${d.confidence}" title="anchor confidence: ${d.confidence}"></span>
+        <span class="kbf-draft-type-tag kbf-type-${d.type}">${d.type}</span>
+        <span class="kbf-draft-nopin">${needsSpot ? 'unsure where' : 'couldn’t save'}</span>
+      </div>
+      <textarea class="kbf-draft-text" rows="1">${escapeHtml(d.text)}</textarea>
+      <div class="kbf-draft-foot">
+        ${needsSpot ? '<button type="button" class="kbf-chip-btn kbf-draft-pin" data-d="pin">' + I.jump + ' Point to it</button>' : ''}
+        <div class="kbf-spacer"></div>
+        <button type="button" class="kbf-chip-btn kbf-draft-discard" data-d="discard">${I.reject} Discard</button>
+        <button type="button" class="kbf-chip-btn kbf-draft-accept" data-d="accept">${I.check} ${needsSpot ? 'Save anyway' : 'Retry'}</button>
+      </div>`;
+    const ta = row.querySelector('.kbf-draft-text');
+    ta.addEventListener('input', () => { d.text = ta.value; ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; });
+    setTimeout(() => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; }, 0);
+    row.addEventListener('click', (e) => {
+      const act = e.target.closest('[data-d]')?.dataset.d;
+      // (No "show me" here — needs-a-spot drafts have no anchor yet; the user
+      // places one with "Point to it".)
+      if (act === 'discard') { row.remove(); updateDraftCount(); return; }
+      if (act === 'pin') { startDraftPin(d, row); return; }
+      if (act === 'accept') { acceptDraft(d, row); return; }
+    });
+    return row;
+  }
+  function startDraftPin(d, row) {
+    if (draftTray) draftTray.style.display = 'none';
+    toast('Click the element this is about', { duration: 4000 });
+    const onPick = async (e) => {
+      if (isInUI(e)) return;
+      e.preventDefault(); e.stopPropagation();
+      const el = e.target;
+      cleanup();
+      if (draftTray) draftTray.style.display = '';
+      if (el instanceof Element && el !== document.body) {
+        d.anchor = buildElementAnchor(el); d.needsPin = false; d.confidence = 'high';
+        await acceptDraft(d, row); // placed → save it immediately, like a confident one
+      }
+    };
+    const onMove = (e) => { if (!isInUI(e) && e.target instanceof Element) showHighlightFor(e.target); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); cleanup(); if (draftTray) draftTray.style.display = ''; } };
+    function cleanup() {
+      document.removeEventListener('click', onPick, true);
+      document.removeEventListener('pointermove', onMove, true);
+      document.removeEventListener('keydown', onKey, true);
+      document.documentElement.style.cursor = ''; // restore the page cursor
+      hideHighlight();
+    }
+    document.documentElement.style.cursor = 'crosshair';
+    document.addEventListener('click', onPick, true);
+    document.addEventListener('pointermove', onMove, true);
+    document.addEventListener('keydown', onKey, true);
+  }
+  async function acceptDraft(d, row) {
+    if (d._saving) return; // idempotent: ignore repeat clicks while the POST is in flight
+    if (!(d.text || '').trim()) { toastError('Add a note or discard this'); return; }
+    d._saving = true;
+    if (row) row.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    try {
+      await saveNarrationComment(d);
+      if (row) row.remove();
+      refresh();
+      toast('Comment added');
+      updateDraftCount();
+    } catch (e) {
+      d._saving = false; // let them retry
+      if (row) row.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+      toastError('Save failed — ' + e.message);
+    }
+  }
+  async function saveAllUnpinned() {
+    if (!draftTray) return;
+    const rows = [...draftTray.querySelectorAll('.kbf-draft')];
+    for (const r of rows) await acceptDraft(r._draft, r);
+    updateDraftCount();
+  }
+  // Recompute the header count whenever a draft is discarded/accepted/pinned; close
+  // the tray once the last one is gone.
+  function updateDraftCount() {
+    if (!draftTray) return;
+    const n = draftTray.querySelectorAll('.kbf-draft').length;
+    if (!n) { closeDraftTray(); return; }
+    const b = draftTray.querySelector('.kbf-drafts-head b');
+    if (b) b.textContent = n + ' spoken comment' + (n === 1 ? '' : 's') + ' need' + (n === 1 ? 's' : '') + ' a spot';
+    const sub = draftTray.querySelector('.kbf-drafts-sub');
+    if (sub) sub.textContent = 'I heard ' + (n === 1 ? 'this' : 'these') + ' but wasn’t sure where — point at the element';
+  }
+  function closeDraftTray() { if (draftTray) { try { draftTray.remove(); } catch (e) {} draftTray = null; setChromeHidden(false); } }
+
+  // ---------- "Agent narrates back" — a guided walkthrough of what the agent changed ----------
+  // The mirror of narrate mode: after the agent processes feedback and leaves a
+  // reply on each comment explaining what it did, the reviewer can play a tour —
+  // each element is scrolled into view and highlighted while the agent's own
+  // words are read aloud (native SpeechSynthesis — zero-dep). Turns a review into
+  // a two-way conversation.
+  const TTS = window.speechSynthesis || null;
+  let walkState = null;   // { list, i, playing }
+  let walkBar = null;
+
+  function walkComments() {
+    // Only this page's comments — the tour resolves anchors against the live DOM.
+    return comments.filter((c) => normalizePath(c.page) === PAGE
+      && Array.isArray(c.thread) && c.thread.some((r) => r.author === 'agent' && norm(r.text)));
+  }
+  function lastAgentReply(c) {
+    const rs = (c.thread || []).filter((r) => r.author === 'agent' && norm(r.text));
+    return rs.length ? rs[rs.length - 1].text : '';
+  }
+  // Epoch guard: every stop/step/speak bumps walkState.epoch, and each utterance's
+  // onend/onerror (or the no-TTS timer) only fires its callback if the epoch it was
+  // created under is still current. This neutralises the `onend` that the browser
+  // fires when TTS.cancel() aborts an in-flight utterance — otherwise a cancelled
+  // step could spuriously auto-advance the new one.
+  // Make a reply readable ALOUD: markup, code, file paths, URLs and code-ish
+  // punctuation would otherwise be spelled out ("less-than section id equals…").
+  // Strip them to plain, ear-friendly prose before handing it to the synthesiser.
+  // ---------- read a reply in ITS language, not the mic's ----------
+  // The agent's reply may be written in a different language than the one the mic
+  // was set to. Detect it — the browser's built-in LanguageDetector when present
+  // (Chrome, zero-dep), else a small stopword heuristic — so the walkthrough reads
+  // it in the right accent. Falls back to the selected voice language.
+  let _langDet = null, _langDetTried = false;
+  async function getLangDetector() {
+    if (_langDetTried) return _langDet;
+    _langDetTried = true;
+    try {
+      if (self.LanguageDetector?.create) _langDet = await self.LanguageDetector.create();
+      else if (self.translation?.createDetector) _langDet = await self.translation.createDetector();
+      else if (self.ai?.languageDetector?.create) _langDet = await self.ai.languageDetector.create();
+    } catch (e) { _langDet = null; }
+    return _langDet;
+  }
+  const LANG_HINTS = {
+    nl: /\b(de|het|een|en|is|dat|niet|van|ik|je|op|te|voor|met|aan|maar|deze|moet|naar|zijn)\b/gi,
+    de: /\b(der|die|das|und|ist|nicht|von|ich|ein|zu|auf|mit|für|aber|sich|werden|nach|sind)\b/gi,
+    fr: /\b(le|la|les|un|une|et|est|ne|pas|de|je|vous|pour|avec|mais|ce|que|dans|sur)\b/gi,
+    es: /\b(el|la|los|un|una|y|es|no|de|que|para|con|pero|este|más|se|por|como)\b/gi,
+    it: /\b(il|la|le|un|una|e|è|non|di|che|per|con|ma|questo|come|sono|del)\b/gi,
+    en: /\b(the|a|is|and|to|of|it|this|that|you|for|with|but|should|what|here|your)\b/gi,
+  };
+  function heuristicLang(text) {
+    const t = ' ' + String(text).toLowerCase() + ' ';
+    let best = null, bestN = 1; // need at least 2 hits to claim a language
+    for (const k in LANG_HINTS) { const n = (t.match(LANG_HINTS[k]) || []).length; if (n > bestN) { bestN = n; best = k; } }
+    return best;
+  }
+  async function detectLang(text) {
+    const d = await getLangDetector();
+    if (d) { try { const r = await d.detect(text); if (r && r[0] && r[0].detectedLanguage && (r[0].confidence == null || r[0].confidence > 0.5)) return r[0].detectedLanguage; } catch (e) {} }
+    return heuristicLang(text);
+  }
+  function voiceForLang(code) {
+    try { return ((TTS.getVoices && TTS.getVoices()) || []).find((v) => v.lang && v.lang.toLowerCase().slice(0, 2) === code.slice(0, 2)) || null; }
+    catch (e) { return null; }
+  }
+  function speakableText(text) {
+    return String(text == null ? '' : text)
+      .replace(/[\uFFFD\u0000-\u001F]/g, ' ')                    // replacement / control chars
+      .replace(/<[^>]*>/g, ' ')                                                   // HTML tags
+      .replace(/`[^`]*`/g, ' ')                                                   // `inline code`
+      .replace(/https?:\/\/\S+/gi, ' link ')                                      // URLs
+      .replace(/\b[\w./-]+\.(?:html?|css|jsx?|mjs|tsx?|json|md|py|rb|go|svg|png|jpe?g|webp|gif)\b/gi, ' ') // filenames
+      .replace(/[~#*_>{}()[\]|\\/=<>]+/g, ' ')                                     // code punctuation
+      .replace(/\s+([.,;:!?])/g, '$1')                                            // tidy space-before-punct
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  async function speakWalk(text, onDone) {
+    if (!walkState) return;
+    walkState.epoch = (walkState.epoch || 0) + 1;
+    const myEpoch = walkState.epoch;
+    const fire = () => { if (walkState && walkState.epoch === myEpoch && onDone) onDone(); };
+    const spoken = speakableText(text);
+    if (!TTS || !spoken) { walkState._t = setTimeout(fire, 1400); return; }
+    const detected = await detectLang(spoken);               // read it in the reply's own language
+    if (!walkState || walkState.epoch !== myEpoch) return;   // a newer step started during detection
+    try {
+      TTS.cancel();
+      const u = new SpeechSynthesisUtterance(spoken.slice(0, 500));
+      u.lang = detected || speechLang || 'en-US';
+      const v = voiceForLang(u.lang);
+      if (v) u.voice = v;
+      u.onend = fire;
+      u.onerror = fire;
+      TTS.speak(u);
+    } catch (e) { walkState._t = setTimeout(fire, 1400); }
+  }
+  function stopWalkSpeak() {
+    if (walkState) walkState.epoch = (walkState.epoch || 0) + 1; // invalidate any in-flight callback
+    if (TTS) { try { TTS.cancel(); } catch (e) {} }
+    if (walkState && walkState._t) { clearTimeout(walkState._t); walkState._t = 0; }
+  }
+
+  function startWalkthrough() {
+    if (narrating) { toast('Stop narrating first'); return; }
+    const list = walkComments();
+    if (!list.length) { toast('No changes to walk through yet — run “Please process feedback” first.'); return; }
+    getLangDetector(); // warm up the language detector so the first step isn't laggy
+    closeWalkthrough();
+    closeDraftTray(); // mutually exclusive bottom surfaces
+    if (mode) setMode(false);
+    walkState = { list, i: 0, playing: true, _t: 0, epoch: 0 };
+    setFabRaised(true); // keep buttons visible above the walk bar
+    walkBar = document.createElement('div');
+    walkBar.className = 'kbf-walk-bar';
+    walkBar.setAttribute('role', 'group');
+    walkBar.setAttribute('aria-label', 'Walkthrough of changes');
+    walkBar.innerHTML = `
+      <div class="kbf-walk-body">
+        <span class="kbf-walk-step"></span>
+        <span class="kbf-walk-text"></span>
+      </div>
+      <div class="kbf-walk-ctrls">
+        <button type="button" data-walk="prev" title="Previous" aria-label="Previous">${I.prev}</button>
+        <button type="button" data-walk="playpause" title="Play / pause" aria-label="Play or pause">${I.pause}</button>
+        <button type="button" data-walk="next" title="Next" aria-label="Next">${I.next}</button>
+        <button type="button" class="kbf-walk-x" data-walk="close" title="Close" aria-label="Close walkthrough">${I.close}</button>
+      </div>`;
+    root.appendChild(walkBar);
+    walkBar.addEventListener('click', (e) => {
+      const a = e.target.closest('[data-walk]')?.dataset.walk;
+      if (a === 'prev') walkGo(walkState.i - 1);
+      else if (a === 'next') walkGo(walkState.i + 1); // epoch guard makes this safe while playing
+      else if (a === 'playpause') walkTogglePlay();
+      else if (a === 'close') closeWalkthrough();
+    });
+    walkGo(0);
+  }
+  function walkGo(i) {
+    if (!walkState) return;
+    stopWalkSpeak();
+    if (i >= walkState.list.length) { closeWalkthrough(); toast('That’s everything I changed.'); return; }
+    if (i < 0) i = 0;
+    walkState.i = i;
+    const c = walkState.list[i];
+    const text = lastAgentReply(c);
+    walkBar.querySelector('.kbf-walk-step').textContent = (i + 1) + ' / ' + walkState.list.length;
+    walkBar.querySelector('.kbf-walk-text').textContent = text;
+    const el = resolveAnchor(c.anchor);
+    if (el) { try { el.scrollIntoView({ behavior: REDUCED_MOTION ? 'auto' : 'smooth', block: 'center' }); } catch (e) {} showHighlightFor(el); flashEl(el); }
+    else hideHighlight();
+    updateWalkIcon();
+    if (walkState.playing) speakWalk(text, () => { if (walkState && walkState.playing) walkGo(walkState.i + 1); });
+  }
+  function walkTogglePlay() {
+    if (!walkState) return;
+    walkState.playing = !walkState.playing;
+    updateWalkIcon();
+    if (walkState.playing) speakWalk(lastAgentReply(walkState.list[walkState.i]), () => { if (walkState && walkState.playing) walkGo(walkState.i + 1); });
+    else stopWalkSpeak();
+  }
+  function updateWalkIcon() {
+    const b = walkBar && walkBar.querySelector('[data-walk="playpause"]');
+    if (b) b.innerHTML = walkState && walkState.playing ? I.pause : I.play;
+  }
+  function closeWalkthrough() {
+    stopWalkSpeak();
+    hideHighlight();
+    if (walkBar) { try { walkBar.remove(); } catch (e) {} walkBar = null; }
+    walkState = null;
+    setFabRaised(false);
+  }
+
   // ---------- image replacement (swap an <img>/background for a local file) ----------
   // Reviewer picks an image element, chooses a local file, frames/crops it live
   // on the page. Everything is native (canvas + FileReader — no dependency): the
@@ -1738,6 +2278,17 @@
     box.style.left = left + 'px';
     box.style.top = top + 'px';
   }
+  // Used when the box merely CHANGES HEIGHT in place (e.g. expanding Tweak style):
+  // keep it fully on screen by nudging it up just enough — never flip it to the
+  // other side of the element, which was the jarring jump to the top and back.
+  function keepComposerInView(box) {
+    const pad = 12;
+    const h = box.offsetHeight;
+    let top = parseFloat(box.style.top) || 0;
+    if (top + h > window.innerHeight - pad) top = window.innerHeight - h - pad;
+    if (top < pad) top = pad;
+    box.style.top = top + 'px';
+  }
 
   function openComposer(opts) {
     closeComposer();
@@ -1763,7 +2314,7 @@
           ${TYPES.map((t) => `<button class="kbf-type${t.id === ctype ? ' is-active' : ''}" data-type="${t.id}" title="${escapeHtml(t.hint)}">${t.label}</button>`).join('')}
         </div>
         ${ROLE === 'comment' ? `<input class="kbf-name-input" maxlength="60" placeholder="Your name (shown with your comment)" value="${escapeHtml(LS.get('kbf-name') || '')}" aria-label="Your name">` : ''}
-        <textarea class="kbf-textarea" placeholder="${escapeHtml(PLACEHOLDER)}"></textarea>
+        <textarea class="kbf-textarea" placeholder="${escapeHtml(placeholderFor(ctype))}"></textarea>
         <div class="kbf-rec-hint" role="status" aria-live="polite"><span class="kbf-rec-dot"></span> <span class="kbf-rec-text">Listening…</span></div>
         <div class="kbf-composer-foot">
           <button class="kbf-mic" data-act="mic" aria-pressed="false" aria-label="Dictate (voice to text)" title="${SR ? 'Dictate (voice to text)' : 'Voice not supported in this browser'}">${I.mic}</button>
@@ -1854,7 +2405,7 @@
       const hooks = {
         validate,
         suggestType: opts.suggestType,
-        reposition: () => { if (!userMovedComposer) positionComposer(box, opts.rect); },
+        reposition: () => { if (!userMovedComposer) keepComposerInView(box); },
       };
       // Edit-in-place text: both modes (in --md it's the headline use).
       opts.textEditApi = setupTextEdit(box, opts, hooks);
@@ -1873,6 +2424,8 @@
         LS.set('kbf-ctype-' + MODE, ctype);
         if (opts.markTypePicked) opts.markTypePicked();
         box.querySelectorAll('.kbf-type').forEach((b) => b.classList.toggle('is-active', b.dataset.type === ctype));
+        const taEl = box.querySelector('.kbf-textarea'); // prompt matches the picked type
+        if (taEl && !taEl.value) taEl.placeholder = placeholderFor(ctype);
         return;
       }
       const act = e.target.closest('[data-act]')?.dataset.act;
@@ -1880,7 +2433,7 @@
       else if (act === 'mic') toggleRecognition(ta, micBtn, hint, hintText, validate, autoGrow);
       else if (act === 'save') doSave(opts, ta.value.trim());
     });
-    langSel.addEventListener('change', () => setVoiceLang(langSel.value, box, micBtn, hintText));
+    langSel.addEventListener('change', () => { setVoiceLang(langSel.value, box, micBtn, hintText); langSel.blur(); });
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); if (!saveBtn.disabled) doSave(opts, ta.value.trim()); }
     });
@@ -2152,7 +2705,7 @@
     SS.set('kbf-panel', open ? '1' : '0');
     panel.classList.toggle('is-open', open);
     const tb = $('kbf-toggle-panel');
-    if (tb) tb.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (tb) { tb.setAttribute('aria-expanded', open ? 'true' : 'false'); tb.classList.toggle('is-active', open); } // stay expanded while the panel is open
     if (open) renderPanel();
   }
   function setFilter(f) {
@@ -2526,6 +3079,10 @@
     renderPins();
     if (panelOpen) renderPanel();
     updateCount();
+    // Offer the "walk me through the changes" tour only once the agent has
+    // actually replied to something (i.e. there's a walkthrough to narrate).
+    const wb = $('kbf-walk');
+    if (wb) wb.style.display = walkComments().length ? '' : 'none';
   }
 
   // ---------- live updates (SSE) ----------
@@ -2569,7 +3126,10 @@
   // feels seamless. A brief delay lets the green-pin flip register first.
   let reloadPending = false;
   function reloadIsUnsafe() {
+    // Never yank the page out from under an in-progress flow — narration, the
+    // spoken-draft review tray, or a walkthrough would all lose unsaved state.
     if (activeComposer || variantPreview || pickChain.length) return true;
+    if (narrating || draftTray || walkState) return true;
     const a = root.activeElement || document.activeElement;
     if (a && (/^(input|textarea|select)$/i.test(a.nodeName) || a.isContentEditable)) return true;
     return false;
@@ -2642,9 +3202,17 @@
     if (cap) cap.style.display = 'none'; // "tell your agent PPF" is host guidance
   }
   let justDraggedFab = false; // set true on a FAB drag so the trailing click doesn't toggle
-  modeBtn.addEventListener('click', () => { if (justDraggedFab) return; setMode(!mode); });
+  modeBtn.addEventListener('click', () => { if (justDraggedFab) return; setMode(!mode, true); });
   $('kbf-toggle-panel').addEventListener('click', () => { if (justDraggedFab) return; setPanel(!panelOpen); });
   $('kbf-panel-close').addEventListener('click', () => setPanel(false));
+  // Narrate ("Talk me through it") — hidden when voice or the role can't support it.
+  const narrateBtn = $('kbf-narrate');
+  if (narrateBtn) {
+    if (!SR || !CAN_COMMENT) narrateBtn.style.display = 'none';
+    else narrateBtn.addEventListener('click', () => { if (justDraggedFab) return; startNarrate(); });
+  }
+  const walkBtn = $('kbf-walk');
+  if (walkBtn) walkBtn.addEventListener('click', () => startWalkthrough());
 
   // ---------- theme (light / dark) ----------
   // Light is the default. `data-kbf-theme` is ALWAYS set (light or dark) so a forced light
@@ -2760,15 +3328,26 @@
     const typing = e.target && /^(input|textarea|select)$/i.test(e.target.nodeName) || (e.target && e.target.isContentEditable);
     const inComposer = e.composedPath && e.composedPath().includes(host);
     if (e.key === 'Escape') {
+      if (walkState) { closeWalkthrough(); return; } // Stop the walkthrough tour
+      if (narrating) { stopNarrate(); return; } // Stop narration → draft tray
+      if (draftTray) { closeDraftTray(); return; }
       if (activeCropClose) { activeCropClose(); return; } // crop modal is topmost — close it first, keep the composer
       if (variantPreview) { closeVariantPreview(); return; }
       if (pickChain.length) { clearPick(); return; }
       if (activeComposer) { closeComposer(); return; }
       if (panelOpen) { setPanel(false); return; }
     }
-    // Bare C only: Ctrl/Cmd+C is the user copying page text, not a mode toggle
-    // (and Alt/AltGr+C types locale characters on some layouts).
-    if (!typing && !inComposer && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'c' || e.key === 'C')) { setMode(!mode); }
+    // Bare P: Point — toggle click-to-comment (P matches "Point", like T matches
+    // "Talk"). Bare only, so Ctrl/Cmd+P (print) and Alt+P are left alone.
+    if (!typing && !inComposer && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'p' || e.key === 'P')) { setMode(!mode, true); }
+    // Bare T: Talk — start / stop the mic. While narrating, T stops even if the
+    // narrate-bar language <select> has focus (otherwise its native single-letter
+    // type-ahead eats the key and jumps languages, e.g. to "Turkish").
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 't' || e.key === 'T')) {
+      const inRealText = e.target && (/^(input|textarea)$/i.test(e.target.nodeName) || e.target.isContentEditable);
+      if (narrating && !inRealText) { e.preventDefault(); stopNarrate(); }
+      else if (!narrating && !typing && !inComposer && SR && CAN_COMMENT) startNarrate();
+    }
   });
 
   // ---------- boot ----------

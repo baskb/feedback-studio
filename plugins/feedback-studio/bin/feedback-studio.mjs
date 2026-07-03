@@ -10,6 +10,9 @@
 //   --dir <path>     serve a static build directory (auto-detected if omitted)
 //   --proxy <url>    proxy a running dev server (e.g. http://localhost:5173)
 //   --md <path>      review a Markdown file or a folder of them
+//   --label <name>   name this session/site (shown in the overlay; for multi-site repos)
+//   --data-dir <p>   where to store this session's .feedback data (default <cwd>/.feedback;
+//                    give each site its own dir to run several sessions from one repo)
 //   --demo           serve the bundled sample page from a throwaway temp copy
 //   --no-seed        with --demo: start with no comments (add your own live)
 //   --share          mint view / comment / admin capability links (pairs well with --tunnel);
@@ -37,7 +40,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   ALLOWED_TYPES, STATUSES, AUTONOMY,
-  readComments, writeComments, mutate, makeComment, makeReply, exportMarkdown,
+  readComments, writeComments, writeJson, mutate, makeComment, makeReply, exportMarkdown,
   exportProcessInstructions, seedAgentsFile, sanitizeEdits, sanitizeTextEdit,
   coerceType, modeFor, schemeIsEvil, sanitizeImageReplace,
 } from '../lib/store.mjs';
@@ -88,8 +91,8 @@ const PROXY_PORT = PROXY_URL ? Number(PROXY_URL.port || (PROXY_URL.protocol === 
 // Demo mode: serve a bundled sample page (copied to a throwaway temp dir, so
 // processing the seeded comments edits the copy, never the user's project).
 const DEMO = !!args.demo;
-if (DEMO && (args.proxy || args.md || args.dir)) {
-  console.error('\n  --demo serves the bundled sample site; it cannot be combined with --dir, --proxy or --md.\n');
+if (DEMO && (args.proxy || args.md || args.dir || args['data-dir'])) {
+  console.error('\n  --demo serves the bundled sample site in a throwaway temp dir; it cannot be combined with --dir, --proxy, --md or --data-dir.\n');
   process.exit(1);
 }
 
@@ -115,6 +118,16 @@ const CWD = process.cwd();
 let DATA_DIR = path.join(CWD, '.feedback');
 let DATA_FILE = path.join(DATA_DIR, 'comments.json');
 let CERT_DIR = path.join(DATA_DIR, '.cert');
+// --data-dir: put THIS instance's data anywhere (default CWD/.feedback). Lets one
+// repo run a feedback session per site, each with its own isolated .feedback dir.
+if (args['data-dir'] && !args.demo) {
+  DATA_DIR = path.resolve(CWD, String(args['data-dir']));
+  DATA_FILE = path.join(DATA_DIR, 'comments.json');
+  CERT_DIR = path.join(DATA_DIR, '.cert');
+}
+// --label: a human name for this instance ("Marketing"), shown in the overlay and
+// written into the data dir + exports so the agent knows which site is which.
+const LABEL = args.label ? String(args.label).replace(/[\r\n]+/g, ' ').slice(0, 60).trim() : '';
 const GLOBAL_DATA = process.env.CLAUDE_PLUGIN_DATA || path.join(os.homedir(), '.feedback-studio');
 // Element screenshots at pin time (best-effort, lazy html-to-image). --no-shots turns them off.
 const SHOTS = !args['no-shots'];
@@ -1178,6 +1191,7 @@ async function handler(req, res) {
       let prefix = '';
       if (!SHOTS) prefix += 'window.__kbfShots=false;\n';
       if (SHARE) prefix += 'window.__kbfRole=' + JSON.stringify(roleFor(req, url) || 'none') + ';\n';
+      if (LABEL) prefix += 'window.__kbfLabel=' + JSON.stringify(LABEL) + ';\n'; // site name (multi-site)
       if (prefix) {
         const src = prefix + readFileSync(path.join(PUBLIC_DIR, 'overlay.js'), 'utf-8');
         res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -1186,6 +1200,9 @@ async function handler(req, res) {
       return serveAsset(res, path.join(PUBLIC_DIR, 'overlay.js'));
     }
     if (url.pathname === '/__feedback/overlay.css') return serveAsset(res, path.join(PUBLIC_DIR, 'overlay.css'));
+    // The narration correlation engine (pure ES module) — dynamic-imported by the
+    // overlay so the browser and the Node test suite share one tested source.
+    if (url.pathname === '/__feedback/lib/narration.mjs') return serveAsset(res, path.join(__dirname, '..', 'lib', 'narration.mjs'));
     // DNS-rebinding guard for the whole comment surface, reads included — a
     // rebound page could otherwise read the review data (API GETs, SSE stream).
     // The static overlay assets above stay public; they contain no data.
@@ -1253,11 +1270,22 @@ function warnIfFeedbackCommittable() {
   } catch (e) {
     console.log('\n  ! ' + rel + '/ is NOT gitignored. Comments — and element screenshots,');
     console.log('    which can capture whatever was on screen — would be committed with your');
-    console.log('    code. Add ".feedback/" to .gitignore (or run with --no-shots).');
+    console.log('    code. Add "**/.feedback/" to .gitignore (or run with --no-shots).');
   }
 }
 
 // ---------- banner ----------
+async function writeSiteMeta(url) {
+  await writeJson(path.join(DATA_DIR, 'meta.json'), {
+    label: LABEL || undefined,
+    url,
+    served: PROXY || (MD_MODE ? String(args.md) : (STATIC_DIR ? path.relative(CWD, STATIC_DIR).split(path.sep).join('/') : '')) || undefined,
+    mode: PROXY ? 'proxy' : (MD_MODE ? 'md' : 'static'),
+    port: PORT,
+    startedAt: new Date().toISOString(),
+  }).catch(() => {});
+}
+
 function banner(scheme, ips, publicUrl) {
   const src = DEMO ? `demo site (throwaway copy: ${STATIC_DIR})`
     : MD_MODE ? `reviewing markdown: ${path.relative(CWD, MD_SINGLE || MD_ROOT) || '.'}`
@@ -1265,8 +1293,9 @@ function banner(scheme, ips, publicUrl) {
     : `serving ${path.relative(CWD, STATIC_DIR) || '.'}/`;
   const shareBase = publicUrl || (EXPOSE_LAN && ips.length ? `${scheme}://${ips[0]}:${PORT}` : `${scheme}://localhost:${PORT}`);
   const tag = publicUrl ? '  (secure tunnel — voice works anywhere)' : USE_HTTPS ? '  (HTTPS — voice works on phones)' : '';
-  console.log(`\n  Feedback Studio${tag}`);
+  console.log(`\n  Feedback Studio${LABEL ? ` — ${LABEL}` : ''}${tag}`);
   console.log(`  ------------------------------------------`);
+  if (LABEL) console.log(`  Site             ->  ${LABEL}`);
   console.log(`  Source           ->  ${src}`);
   console.log(`  On this computer ->  ${scheme}://localhost:${PORT}/`);
   if (publicUrl) {
@@ -1277,7 +1306,7 @@ function banner(scheme, ips, publicUrl) {
   } else if (ips.length) {
     console.log(`  Phone/LAN        ->  off by default. Re-run with --tunnel (recommended) or --host 0.0.0.0.`);
   }
-  console.log(`  Comments         ->  ${DEMO ? DATA_FILE : '.feedback/comments.json'}  (+ FEEDBACK.md, HOW-TO-PROCESS.md)`);
+  console.log(`  Comments         ->  ${DEMO ? DATA_FILE : ((path.relative(CWD, DATA_DIR).split(path.sep).join('/') || '.feedback') + '/comments.json')}  (+ FEEDBACK.md, HOW-TO-PROCESS.md)`);
   if (!DEMO) {
     console.log(`  Agent setup      ->  optional: re-run with --seed-agents to teach CLAUDE.md / AGENTS.md the flow.`);
   }
@@ -1380,7 +1409,7 @@ async function main() {
   if (!existsSync(DATA_FILE)) await mutate(DATA_DIR, (list) => ({ comments: list }));
   // Drop the self-contained processing guide next to the data (regenerated each run,
   // like FEEDBACK.md) so any agent — plugin or not — has the workflow on hand.
-  await exportProcessInstructions(DATA_DIR).catch(() => {});
+  await exportProcessInstructions(DATA_DIR, LABEL).catch(() => {});
 
   const ips = lanIPs();
   populateAllowedHosts(ips);
@@ -1426,6 +1455,10 @@ async function main() {
       }
     }
     banner(scheme, ips, publicUrl);
+    // Self-identify this data dir (multi-site: one repo, a session + data dir per
+    // site) — written now so `url` reflects the real tunnel URL, `served` the
+    // resolved static dir (correct even when --dir was autodetected).
+    await writeSiteMeta(publicUrl ? publicUrl + '/' : `${scheme}://localhost:${PORT}/`);
     warnIfFeedbackCommittable();
     // Under strict share even localhost needs a key — open our own tab as admin.
     const openUrl = `${scheme}://localhost:${PORT}/` + (SHARE_STRICT ? `?key=${SHARE_KEYS.admin}` : '');

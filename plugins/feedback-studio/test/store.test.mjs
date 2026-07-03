@@ -13,8 +13,8 @@ import {
   makeComment, makeReply, coerceType, sanitizeAnchor, sanitizeEdits, sanitizeTextEdit,
   sanitizeVariants, sanitizeVariantHtml, sanitizePick, decodeEntities, schemeIsEvil,
   sanitizeImageReplace,
-  readComments, writeComments, mutate, exportMarkdown,
-  exportProcessInstructions, seedAgentsFile, AGENTS_SNIPPET_MARKER,
+  readComments, writeComments, writeJson, mutate, exportMarkdown,
+  exportProcessInstructions, seedAgentsFile, AGENTS_SNIPPET_MARKER, UNIVERSAL_TYPES,
 } from '../lib/store.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,7 +42,7 @@ test('coerceType respects the mode', () => {
 
 test('makeComment has a stable, complete schema and unique ids', () => {
   const c = makeComment({ page: '/p', text: '  hi  ', author: 'agent', authorName: 'bot' });
-  assert.equal(c.schemaVersion, 5);
+  assert.equal(c.schemaVersion, 6);
   assert.equal(c.text, 'hi');
   assert.equal(c.author, 'agent');
   assert.equal(c.status, 'open');
@@ -136,6 +136,40 @@ test('exportProcessInstructions writes a self-contained, MCP-first guide', async
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('writeJson writes valid JSON atomically', async () => {
+  const dir = freshDir();
+  try {
+    const f = path.join(dir, 'meta.json');
+    await writeJson(f, { label: 'Marketing', port: 4001 });
+    const back = JSON.parse(readFileSync(f, 'utf-8'));
+    assert.equal(back.label, 'Marketing');
+    assert.equal(back.port, 4001);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('multi-site: exports embed the site label + no hard-coded .feedback/ for a custom dir', async () => {
+  const dir = freshDir(); // a temp dir, NOT named .feedback
+  try {
+    await exportProcessInstructions(dir, 'Marketing');
+    const how = readFileSync(path.join(dir, 'HOW-TO-PROCESS.md'), 'utf-8');
+    assert.ok(how.includes('Marketing'), 'process guide names the site');
+    assert.ok(/each site/i.test(how), 'process guide has the multi-site framing');
+    // an image-replace comment: the FEEDBACK.md path must use the real dir, not `.feedback/`
+    // (media is server-set only, so attach it after makeComment strips it)
+    const c = makeComment({ imageReplace: { target: 'img' } });
+    c.imageReplace.media = 'media/c_x.webp';
+    await exportMarkdown(dir, [c]);
+    const fb = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf-8');
+    assert.ok(fb.includes('media/c_x.webp'), 'image path present');
+    assert.ok(!fb.includes('`.feedback/media/'), 'no hard-coded .feedback/ prefix on a custom dir');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('UNIVERSAL_TYPES models question; ALLOWED_TYPES has no duplicates', () => {
+  assert.deepEqual(UNIVERSAL_TYPES, ['question']);
+  assert.equal(new Set(ALLOWED_TYPES).size, ALLOWED_TYPES.length);
+});
+
 test('seedAgentsFile creates-if-absent, appends, and is idempotent', async () => {
   const dir = freshDir();
   try {
@@ -155,6 +189,19 @@ test('seedAgentsFile creates-if-absent, appends, and is idempotent', async () =>
     const body = readFileSync(fp, 'utf-8');
     assert.ok(body.includes('Existing notes.') && body.includes('Feedback Studio'));
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('coerceType: question is universal (Ask the page works in web + md)', () => {
+  assert.equal(coerceType('question', 'web'), 'question');
+  assert.equal(coerceType('question', 'md'), 'question');
+  assert.equal(coerceType('delete', 'web'), 'change'); // wrong-mode type still coerces to default
+  assert.equal(coerceType('fix', 'md'), 'comment');
+});
+
+test('makeComment: via provenance only accepts "narration"', () => {
+  assert.equal(makeComment({ text: 'x', via: 'narration' }).via, 'narration');
+  assert.equal(makeComment({ text: 'x', via: 'hacker' }).via, undefined);
+  assert.equal(makeComment({ text: 'x' }).via, undefined);
 });
 
 test('status + type constant invariants', () => {

@@ -43,7 +43,7 @@
     "plugins/feedback-studio/README.md"
   ],
   "scripts": {
-    "test": "node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs",
+    "test": "node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs plugins/feedback-studio/test/narration.test.mjs",
     "smoke": "node plugins/feedback-studio/test/smoke.mjs && node plugins/feedback-studio/test/mcp-smoke.mjs",
     "version": "node scripts/release-sync.mjs && git add -A",
     "release:patch": "npm version patch -m \"release v%s\" && git push --follow-tags",

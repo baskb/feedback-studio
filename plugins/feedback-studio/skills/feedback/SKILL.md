@@ -2,7 +2,7 @@
 name: feedback
 description: Visual feedback overlay for a local website or Markdown file. The user clicks or selects anything and leaves a typed or spoken comment (even from their phone); you later process those comments, and you can also pin your OWN review comments to elements for the user to approve. Use to review a site or `.md`, start it phone/mobile-ready, process the feedback, or leave AI review comments on a page.
 when_to_use: Use when the user wants to visually review or comment on a local website or a Markdown file (optionally from their phone, by voice); OR to process the comments they collected and apply them; OR to stay live during the review (watch mode - answer question pins in seconds, apply auto comments as they arrive); OR when you (or another skill, e.g. a design/copy/accessibility reviewer) should leave review comments pinned to specific elements for the user to approve. Trigger phrases include "review/open my site", "give feedback on this .md", "start it mobile-ready", "process the feedback", "watch the feedback / go live", and "leave review comments on this page".
-argument-hint: [start | process | watch | --dir <path> | --proxy <url> | --md <file> | --https | --tunnel]
+argument-hint: [start | process | watch | --dir <path> | --proxy <url> | --md <file> | --https | --tunnel | --label <name> | --data-dir <path>]
 user-invocable: true
 allowed-tools: Bash Read Edit Write Glob Grep
 ---
@@ -29,9 +29,35 @@ prints.
 - **Phone with voice:** add `--tunnel` (real-cert public URL, easiest) or `--https --host 0.0.0.0` (self-signed, same Wi-Fi; without `--host` the phone can't reach it). Plain http is fine for laptop, or for typing on a phone.
 
 Open it: `start <url>` (Windows) / `open <url>` (macOS) / `xdg-open <url>` (Linux). Tell the
-user: press **C** or hit **Comment** (bottom-right), click an element (on a phone, tap then
-▲/▼ to pick), or select text; the **mic** dictates. Comment mode persists across pages.
-Ensure `.feedback/` is gitignored.
+user (buttons are bottom-right): **Point** (shortcut **P**) to click an element and comment
+(on a phone, tap then ▲/▼ to pick), or select text; **Talk** (shortcut **T**) to narrate by
+voice; **List** for the overview. The **mic** also dictates inside the composer. Point mode
+persists across pages. Ensure `.feedback/` is gitignored.
+
+**Multiple sites in one repo.** Run one session per site — each on its own port, with a
+`--label` (its name) and its own `--data-dir` beside the site so the data lives with it. From
+the repo root:
+- `node "$FBS" --dir sites/marketing/dist --data-dir sites/marketing/.feedback --label Marketing --port 4001 --no-open`
+- `node "$FBS" --dir sites/docs/dist --data-dir sites/docs/.feedback --label Docs --port 4002 --no-open`
+- `node "$FBS" --dir sites/app/dist --data-dir sites/app/.feedback --label App --port 4003 --no-open`
+
+Each site gets its **own** `.feedback/` (comments + screenshots + replacement images + a
+`meta.json` naming it); the overlay shows the label so open tabs are told apart. Gitignore
+`**/.feedback/`. To **process**: handle each site against its own `.feedback/` (see below) — a
+comment/image belongs to the site whose dir it lives in; never mix them.
+
+**Or just talk: "Talk me through it".** Open the panel and hit the **🎙 Narrate** button, then
+walk the page by voice while moving the cursor ("this hero's too quiet… make this button
+orange… the footer year is wrong"). Feedback Studio times the speech and the pointer together
+and, on Stop, **pins each spoken comment to the element you were pointing at** (the
+"Put-That-There" idea) — just like a manual comment, so they appear immediately and PPF picks
+them up (marked `via:"narration"`). Only the ones it *couldn't confidently place* pop up in a
+small tray asking the user to point at the element (or save without a pin).
+When you process these, treat the wording as spoken (looser, may need a light interpretation),
+but honour the pinned element and the usual refuse-and-re-pin rule. **Privacy:** narration is a
+continuous, multi-minute capture — like the mic dictation, the audio is transcribed by the
+browser's cloud speech service (not local); only the resulting text + pointer data are kept
+locally. No audio is recorded or stored in this phase. Tell the user if that matters to them.
 
 **Sharing with a colleague or client:** add `--share` (pairs well with `--tunnel`). The
 server prints three capability links — **view** (read-only pins/panel), **comment** (add
@@ -59,6 +85,13 @@ The user's cue to start is **PPF** — *Please Process Feedback* (or just "proce
 feedback"). When you hear it, run the steps below. (The *please* is on purpose — Feedback
 Studio is polite to its agents. ;-)
 
+**Multi-site first:** if the repo has more than one `.feedback/` dir (one per site — check for
+`sites/*/.feedback/` or scan the repo), process **each independently, one at a time.** Read each
+dir's `meta.json` for the site's `label`, and run the steps below against that dir's
+`comments.json`. A comment, screenshot (`shot`) or replacement image (`imageReplace.media`)
+belongs to the site whose `.feedback/` it lives in, and its image paths resolve relative to
+**that** dir. Never move a comment or image between sites. Report results grouped by site label.
+
 1. Read `.feedback/comments.json` (the SOLE source of truth; `FEEDBACK.md` is a generated,
    possibly-stale mirror, never act off it). Each comment has `page`, `type`, `anchor`
    (selector / attr / xpath / quoted `snippet` / `tag`), `text`, `autonomy`, `status`.
@@ -81,6 +114,13 @@ Studio is polite to its agents. ;-)
      redesign; `improve` = rewrite with judgement in the project's voice. If a (spoken) comment
      is vague, propose a concrete interpretation. Keep the project's conventions (read any
      CLAUDE.md).
+   - **`question` = answer, don't edit ("Ask the page").** A `question` comment (now valid on
+     web elements too, not just Markdown) is the reviewer asking about the pinned thing — "what
+     does this do?", "why is this here?", "where's this defined?". Locate the element, then
+     **reply in its thread** (`POST /__feedback/api/comments/<id>/reply` or MCP `reply`) with a
+     real answer and, when they're asking where/why, a **source pointer** (the `file:line` in
+     the codebase that renders this element). Do NOT change code for a question; resolve it once
+     answered. If watching (below), these get answered live within seconds.
    - **For a vague `improve`, propose variants the user can TRY on the page.** Reply with
      `variants`: 2–3 self-contained alternatives of the pinned element's markup (outer element,
      styles inlined, real content — the overlay injects them as-is next to the original):
@@ -119,6 +159,11 @@ Studio is polite to its agents. ;-)
    PATCH `/__feedback/api/comments/<id>` with `{"status":"resolved"}` if the server is running,
    else set `"status":"resolved"` in the file. (If the server runs with `--share strict`, API
    calls 401/403 without a key — append `?key=<admin key from the startup banner>`.)
+   **Leave a short reply on each comment saying what you did** (one sentence, plain — "Bumped
+   the headline to 32px and bold." — no file paths or code). This narrates back to the reviewer:
+   the overlay's **"Walk me through the changes"** button plays a guided tour that scrolls to
+   each element, highlights it, and **reads your reply aloud**. Written for the ear — keep it a
+   human, spoken-sounding summary, not a changelog line.
 5. **Auto-refresh the open overlays** once the batch is applied, so the user sees the *updated*
    page under its now-green pins (a stale page under green pins looks like the edits didn't land).
    The pins flip green live over SSE, but page content does not reload itself — so after the batch:

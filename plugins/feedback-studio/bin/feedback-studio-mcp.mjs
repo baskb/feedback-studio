@@ -24,6 +24,13 @@ const FEEDBACK_DIR = process.env.FEEDBACK_DIR
   ? path.resolve(process.env.FEEDBACK_DIR)
   : path.join(process.cwd(), '.feedback');
 
+// The site's human label, if this data dir was created with --label (multi-site:
+// one repo, a .feedback dir per site). Lets tool output name which site it is.
+function siteLabel() {
+  try { const m = JSON.parse(readFileSync(path.join(FEEDBACK_DIR, 'meta.json'), 'utf8')); return m && m.label ? String(m.label) : ''; }
+  catch (e) { return ''; }
+}
+
 // Single-source the version from the plugin manifest (don't hand-maintain it here).
 const SERVER_VERSION = (() => {
   try {
@@ -55,6 +62,7 @@ function summarize(c) {
     textEdit: c.textEdit && c.textEdit.after ? c.textEdit : undefined,
     shot: c.shot || undefined, // pin-time screenshot, relative to .feedback/ — view it when unsure
     imageReplace: c.imageReplace && c.imageReplace.media ? c.imageReplace : undefined, // staged replacement image + framing
+    via: c.via || undefined, // 'narration' = auto-drafted from a spoken walkthrough (wording may be looser)
 
     anchor: { snippet: c.anchor && (c.anchor.snippet || c.anchor.rangeText), selector: c.anchor && c.anchor.selector },
     replies: Array.isArray(c.thread) ? c.thread.length : 0,
@@ -88,7 +96,7 @@ const TOOLS = [
       properties: {
         page: { type: 'string', description: 'Page path the comment is on (e.g. "/" or "/report").' },
         text: { type: 'string' },
-        type: { type: 'string', enum: ALLOWED_TYPES, description: `Web: ${WEB_TYPES.join('/')}. Markdown: ${MD_TYPES.join('/')}. A type that doesn't fit the page kind is coerced to the default.` },
+        type: { type: 'string', enum: ALLOWED_TYPES, description: `Web: ${WEB_TYPES.join('/')}. Markdown: ${MD_TYPES.join('/')}. \`question\` is universal (either mode) — answer it in a reply, don't edit. A type that doesn't fit the page kind is coerced to the default.` },
         anchor: {
           type: 'object',
           properties: { selector: { type: 'string' }, snippet: { type: 'string', description: 'Exact visible text of the element.' } },
@@ -156,6 +164,8 @@ async function callTool(name, rawArgs) {
     else if (status !== 'all') list = list.filter((c) => c.status === status);
     if (args.page) list = list.filter((c) => c.page === args.page);
     const out = { count: list.length, comments: list.map(summarize) };
+    const label = siteLabel();
+    if (label) out.site = label; // which site these comments belong to (multi-site repos)
     if (!existsSync(path.join(FEEDBACK_DIR, 'comments.json'))) {
       out.note = `no comments.json found at ${FEEDBACK_DIR} — is FEEDBACK_DIR / the working directory correct?`;
     }
@@ -277,5 +287,5 @@ process.stdin.on('data', (chunk) => {
 process.stdin.on('end', () => { queue.then(() => process.exit(0)); });
 // Drop a self-contained processing guide next to the data, so an agent driving us
 // without the Claude Code plugin (no skill) still has the workflow. Best-effort.
-exportProcessInstructions(FEEDBACK_DIR).catch(() => {});
-process.stderr.write(`feedback-studio MCP server ${SERVER_VERSION} ready (data: ${FEEDBACK_DIR})\n`);
+exportProcessInstructions(FEEDBACK_DIR, siteLabel()).catch(() => {});
+process.stderr.write(`feedback-studio MCP server ${SERVER_VERSION} ready (data: ${FEEDBACK_DIR}${siteLabel() ? `, site: ${siteLabel()}` : ''})\n`);

@@ -19,14 +19,17 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 // ---------- schema constants (the contract) ----------
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 export const FILE_VERSION = 1;
 
 // Comment types decide how much latitude the agent gets. Web pages and Markdown
-// documents use different verbs; the union is what the file may legally contain.
+// documents use different verbs; `question` is UNIVERSAL — valid in either mode
+// ("Ask the page": the agent answers, doesn't edit). The union (deduped) is what
+// the file may legally contain.
 export const WEB_TYPES = ['fix', 'change', 'improve'];
 export const MD_TYPES = ['comment', 'rephrase', 'expand', 'delete', 'question'];
-export const ALLOWED_TYPES = [...WEB_TYPES, ...MD_TYPES];
+export const UNIVERSAL_TYPES = ['question'];
+export const ALLOWED_TYPES = [...new Set([...WEB_TYPES, ...MD_TYPES, ...UNIVERSAL_TYPES])];
 export const STATUSES = ['open', 'approved', 'rejected', 'resolved'];
 export const AUTONOMY = ['auto', 'review'];
 
@@ -57,7 +60,10 @@ const mdFile = (dir) => path.join(dir, 'FEEDBACK.md');
 export function modeFor(sourceFile) { return sourceFile ? 'md' : 'web'; }
 
 // Coerce a requested type to one valid for the mode; fall back to the mode default.
+// `question` is UNIVERSAL — a reviewer can ask about any element or line in either
+// mode ("Ask the page"), and the agent answers in a thread reply rather than editing.
 export function coerceType(type, mode) {
+  if (UNIVERSAL_TYPES.includes(type)) return type;
   const set = mode === 'md' ? MD_TYPES : WEB_TYPES;
   if (set.includes(type)) return type;
   return mode === 'md' ? 'comment' : 'change';
@@ -180,6 +186,10 @@ export function makeComment(input = {}) {
     imageReplace: mode === 'web' ? sanitizeImageReplace(input.imageReplace) : null,
     author: input.author === 'agent' ? 'agent' : 'user',
     authorName: str(input.authorName, 60),
+    // Provenance: how the comment was created. 'narration' = auto-drafted from a
+    // "Talk me through it" session, so the agent can weight it (spoken, may be
+    // looser wording) and a replay can link back. Absent for a normal comment.
+    via: input.via === 'narration' ? 'narration' : undefined,
     thread: [],
     autonomy: AUTONOMY.includes(input.autonomy) ? input.autonomy : 'review',
     status: 'open',
@@ -325,6 +335,22 @@ export async function readComments(dir) {
   return parsed.comments;
 }
 
+// Atomic JSON write (temp file + rename) for any file — reused by writeComments
+// and by the per-site meta.json. No lock: callers that need read-modify-write use
+// `mutate`; meta.json is a whole-file overwrite owned by one server instance.
+export async function writeJson(filePath, obj) {
+  const dir = path.dirname(filePath);
+  await mkdir(dir, { recursive: true });
+  const tmp = filePath + '.tmp-' + process.pid + '-' + (_writeSeq++);
+  await writeFile(tmp, JSON.stringify(obj, null, 2));
+  try {
+    await rename(tmp, filePath); // atomic replace
+  } catch (e) {
+    await unlink(tmp).catch(() => {});
+    throw e;
+  }
+}
+
 export async function writeComments(dir, comments, opts = {}) {
   await mkdir(dir, { recursive: true });
   const body = JSON.stringify({ version: FILE_VERSION, updatedAt: new Date().toISOString(), comments }, null, 2);
@@ -406,6 +432,7 @@ const collapse = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
 const code = (s) => '`' + String(s == null ? '' : s).replace(/`/g, 'ˋ') + '`';
 
 export async function exportMarkdown(dir, comments) {
+  const d = dataDirDisplay(dir); // real data-dir path (e.g. sites/marketing/.feedback), not a literal
   const byPage = new Map();
   for (const c of comments) {
     const key = c.page || '/';
@@ -414,7 +441,7 @@ export async function exportMarkdown(dir, comments) {
   }
   const open = comments.filter((c) => c.status !== 'resolved').length;
   let md = `# Feedback export\n\n`;
-  md += `_Generated from \`.feedback/comments.json\` (the source of truth). Read-only, human-glance mirror: do not edit or act off this file, act off \`comments.json\` (or the MCP tools)._\n\n`;
+  md += `_Generated from \`${d}/comments.json\` (the source of truth). Read-only, human-glance mirror: do not edit or act off this file, act off \`comments.json\` (or the MCP tools)._\n\n`;
   md += `_Generated ${new Date().toISOString()} — ${comments.length} comment(s): ${open} open, ${comments.length - open} resolved._\n\n`;
   md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin.\n>\n> \`tweak\` lines are exact CSS deltas the user dialled in live on the element (Tweak Mode). Apply them near-verbatim, translated to the project's styling idiom (stylesheet rule, utility class, or design token) — the target values are not suggestions, the *representation* is yours to choose. \`text edit\` lines are the user retyping the element's text in place: apply the exact after-wording at the anchored location (whitespace-flexible match on the before-text; in Markdown edit the \`sourceFile\`). If the before-text no longer matches, do NOT guess — leave it open for a re-pin.\n>\n> Comments are a two-way conversation. Some are authored \`by user\`, some \`by agent\` (a proposal/annotation you or another skill left on a component). Each can have a reply thread (lines marked \`↳\`). Statuses: \`open\` (needs work/decision), \`approved\` (the user said go ahead — implement it), \`rejected\` (do not), \`resolved\` (done). Implement approved items, reply to ask questions, and set the status as you go.\n\n`;
   for (const page of [...byPage.keys()].sort()) {
@@ -428,7 +455,7 @@ export async function exportMarkdown(dir, comments) {
       const who = c.author === 'agent' ? `agent${c.authorName ? ' (' + collapse(c.authorName) + ')' : ''}` : 'user';
       const st = c.status && c.status !== 'open' ? ` · ${c.status}` : '';
       const box = (c.status === 'resolved' || c.status === 'rejected') ? '[x]' : '[ ]';
-      md += `- ${box} **#${i}** ${code(type)} — on a ${kind} · by ${who}${st}\n`;
+      md += `- ${box} **#${i}** ${code(type)} — on a ${kind} · by ${who}${c.via === 'narration' ? ' · spoken' : ''}${st}\n`;
       if (c.id) md += `  - id: ${code(c.id)}\n`;
       if (c.sourceFile) md += `  - file: ${code(c.sourceFile)}\n`;
       const quote = collapse(c.anchor?.snippet || c.anchor?.rangeText || '');
@@ -446,7 +473,7 @@ export async function exportMarkdown(dir, comments) {
       if (c.imageReplace && c.imageReplace.media) {
         const ir = c.imageReplace;
         const bits = [ir.fit ? `fit: ${ir.fit}` : '', ir.position ? `pos: ${ir.position}` : '', ir.w ? `${ir.w}×${ir.h || '?'}` : '', ir.crop ? 'cropped' : '', ir.alt ? `alt: "${collapse(ir.alt)}"` : ''].filter(Boolean).join(', ');
-        md += `  - image replace: ${ir.target === 'background' ? 'background of' : 'src of'} this element → new image at ${code('.feedback/' + ir.media)}${bits ? ` (${bits})` : ''}\n`;
+        md += `  - image replace: ${ir.target === 'background' ? 'background of' : 'src of'} this element → new image at ${code(d + '/' + ir.media)}${bits ? ` (${bits})` : ''}\n`;
       }
       if (c.text || !((Array.isArray(c.edits) && c.edits.length) || (c.textEdit && c.textEdit.after) || (c.imageReplace && c.imageReplace.media))) {
         md += `  - ${who}:\n${String(c.text || '').trim().split('\n').map((l) => `    ${l}`).join('\n')}\n`;
@@ -473,10 +500,26 @@ export async function exportMarkdown(dir, comments) {
 // MCP-first to match that setup. Regenerated on each server start, like FEEDBACK.md.
 const processFile = (dir) => path.join(dir, 'HOW-TO-PROCESS.md');
 
-export const PROCESS_INSTRUCTIONS = `# How to process this feedback
+// Display path for THIS data dir, relative to the agent's cwd (the repo root), so
+// the guide points at the real location — `.feedback` for the default single site,
+// `sites/marketing/.feedback` for a multi-site setup. Falls back to the absolute
+// path if the dir sits outside cwd.
+function dataDirDisplay(dir) {
+  let rel = path.relative(process.cwd(), dir);
+  if (!rel || rel.startsWith('..')) rel = dir;
+  return rel.split(path.sep).join('/');
+}
+
+function buildProcessInstructions(dir, label) {
+  const d = dataDirDisplay(dir);
+  return `# How to process this feedback
 
 _Generated by Feedback Studio. It explains how to apply the review comments in
-\`.feedback/comments.json\`. Safe to read; regenerated each run._
+\`${d}/comments.json\`. Safe to read; regenerated each run._
+${label ? `\n**This is the _${label}_ site.** Its feedback lives in \`${d}/\`. In a repo with several
+sites, each site has its OWN data dir like this one (with its own \`meta.json\` label) — a comment,
+screenshot or replacement image belongs to the site whose dir it lives in. Never mix them across
+sites; process each site against its own \`${d}/comments.json\` and resolve there.\n` : ''}
 
 **Trigger — PPF:** when the user says **PPF** (*Please Process Feedback*) — or plainly
 "process the feedback" — do the following. (And yes, the *please* is on purpose: Feedback
@@ -484,7 +527,7 @@ Studio is polite to its agents. Be nice to the bots and they'll be nice to your 
 
 ## 1. Read the comments
 
-\`.feedback/comments.json\` is the single source of truth. (\`.feedback/FEEDBACK.md\` is a
+\`${d}/comments.json\` is the single source of truth. (\`${d}/FEEDBACK.md\` is a
 read-only mirror — never act off it.) Prefer the **\`feedback-studio\` MCP tools** if they are
 configured: \`list_comments\` to read them all, \`get_comment\` for one. Otherwise read the JSON
 file directly.
@@ -499,7 +542,7 @@ also carries a \`sourceFile\`.
 with the \`selector\`. **If you cannot identify the exact element (or, in Markdown, the exact
 source line) with confidence, do NOT edit a guess** — leave the comment open and say it needs a
 re-pin. A confident wrong edit is the worst outcome; silence beats it. A comment with a \`shot\`
-field has a pin-time element screenshot at \`.feedback/<shot path>\` — view the image when unsure;
+field has a pin-time element screenshot at \`${d}/<shot path>\` — view the image when unsure;
 it is exactly what the reviewer saw, and a mismatch with the element you located means re-pin.
 
 **Act according to \`type\`:**
@@ -514,7 +557,7 @@ it is exactly what the reviewer saw, and a mismatch with the element you located
   the source may wrap lines or hold inline markup) and apply the exact \`after\` wording,
   preserving surrounding markup. In Markdown, edit the \`sourceFile\`. If \`before\` no longer
   matches there, do NOT guess — leave the comment open and ask for a re-pin.
-- A web comment may carry \`imageReplace\` — a staged new image at \`.feedback/<media path>\`
+- A web comment may carry \`imageReplace\` — a staged new image at \`${d}/<media path>\`
   (already downscaled) plus framing (\`target\`, \`fit\`, \`position\`, \`w\`/\`h\`, \`crop\`, \`alt\`).
   Copy the file into the project's image directory (infer from the element's current \`src\`,
   else \`public\`/\`assets\`/\`static\`/\`src\` under \`images\`/\`img\`/\`media\`), then repoint the
@@ -527,6 +570,9 @@ it is exactly what the reviewer saw, and a mismatch with the element you located
   arrives as a reply with \`pick: {of, index, label}\` (and often status \`approved\`).
   Implement the picked variant with judgement — translate its inline styles into the
   project's idiom — then resolve. Never auto-apply a variant nobody picked.
+- \`question\` (valid on web elements too, not only Markdown) — the reviewer is ASKING, not
+  requesting a change ("what does this do?", "where's this defined?"). Answer in a thread
+  reply, with a \`file:line\` source pointer when they ask where/why; don't edit, then resolve.
 - Markdown — \`comment\` (address the note), \`rephrase\`, \`expand\`, \`delete\`, \`question\`
   (answer in a reply). Edit the **\`sourceFile\`**, never the throwaway rendered HTML.
 
@@ -551,10 +597,11 @@ Rebuild a static \`--dir\` first if the project has a build step. No server? Tel
 Then report what changed, grouped by page (with \`file:line\` where you can), and list anything
 left open and why (low-confidence anchor → needs a re-pin, or needs a decision).
 `;
+}
 
-export async function exportProcessInstructions(dir) {
+export async function exportProcessInstructions(dir, label = '') {
   await mkdir(dir, { recursive: true });
-  await writeFile(processFile(dir), PROCESS_INSTRUCTIONS);
+  await writeFile(processFile(dir), buildProcessInstructions(dir, label));
 }
 
 // ---------- AGENTS.md / CLAUDE.md seeding (opt-in, idempotent) ----------
@@ -567,22 +614,31 @@ const AGENTS_SNIPPET_END = '<!-- /feedback-studio:agents-snippet -->';
 
 export const AGENTS_SNIPPET_BODY = `## Feedback Studio
 
-Visual review comments for this project live in \`.feedback/comments.json\` (readable mirror:
-\`.feedback/FEEDBACK.md\`; full how-to: \`.feedback/HOW-TO-PROCESS.md\`). They come from a local
-overlay where a human clicks/taps an element, or selects Markdown text, and leaves a typed or
-spoken note.
+Visual review comments for this project's site(s) live under a \`.feedback/\` dir —
+\`.feedback/comments.json\` is the source of truth (readable mirror \`.feedback/FEEDBACK.md\`; full
+how-to \`.feedback/HOW-TO-PROCESS.md\`). They come from a local overlay where a human clicks/taps
+an element, or selects Markdown text, and leaves a typed or spoken note.
+
+**Multi-site repos:** if this repo has several sites, each runs its own session and keeps its own
+\`.feedback/\` dir (one beside each site, each with a \`meta.json\` naming the site). Scan the repo
+for \`.feedback/\` dirs, read each \`meta.json\` label, and process each site against its OWN
+\`comments.json\` — a comment / screenshot / replacement image belongs to the site whose dir it
+lives in; image paths resolve relative to that dir. Never mix them across sites.
 
 When the user says **PPF** (*Please Process Feedback*) — or just "process the feedback":
 
 - **Read** the open comments — use the \`feedback-studio\` MCP tools (\`list_comments\`,
-  \`get_comment\`) if configured, else read \`.feedback/comments.json\` (the source of truth;
-  never act off \`FEEDBACK.md\`).
+  \`get_comment\`) if configured, else read the \`.feedback/comments.json\` for each site (the
+  source of truth; never act off \`FEEDBACK.md\`).
 - **Locate** each comment's target by its quoted anchor text, cross-checked with the selector,
   and **refuse rather than edit the wrong element.** Act per its \`type\` (web: \`fix\` / \`change\`
-  / \`improve\`; Markdown: edit the \`sourceFile\`, not the rendered HTML). Present a diff.
-- **Resolve** when done: \`set_status\` (MCP), else PATCH \`/__feedback/api/comments/<id>\`
-  \`{"status":"resolved"}\`, else edit the JSON. Use \`reply\` to ask/explain, \`add_comment\` to
-  leave your own pins for the human to approve.
+  / \`improve\`; Markdown: edit the \`sourceFile\`, not the rendered HTML). A \`question\` (either
+  mode) is the user ASKING — **answer it in a reply with a \`file:line\` pointer, don't edit.**
+  A comment with \`via:"narration"\` was spoken (wording may be looser). Present a diff.
+- **Resolve** when done, and **leave a short reply** on each saying what you changed (plain,
+  one sentence — the overlay's "walk me through the changes" reads it aloud): \`set_status\`
+  (MCP), else PATCH \`/__feedback/api/comments/<id>\` \`{"status":"resolved"}\`, else edit the
+  JSON. Use \`reply\` to answer/explain, \`add_comment\` to leave your own pins to approve.
 
 (The *please* in PPF is deliberate — we're courteous to our coding agents. ;-)`;
 

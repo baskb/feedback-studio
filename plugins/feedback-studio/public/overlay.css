@@ -130,6 +130,14 @@ button {
 .kbf-fab-wrap--bl { bottom: 22px; left: 22px; top: auto; right: auto; align-items: flex-start; }
 .kbf-fab-wrap--tr { top: 22px; right: 22px; bottom: auto; left: auto; align-items: flex-end; }
 .kbf-fab-wrap--tl { top: 22px; left: 22px; bottom: auto; right: auto; align-items: flex-start; }
+/* Lifted above a bottom bar (narrate / walk) ONLY on narrow/phone widths, where
+   the centered bar actually reaches the corner buttons. On desktop the bar is
+   centered and the buttons sit clear in the corner, so they stay put. */
+.kbf-fab-wrap { transition: bottom 0.3s cubic-bezier(0.32, 0.72, 0, 1); }
+@media (max-width: 767px) {
+  .kbf-fab-wrap--raised.kbf-fab-wrap--br,
+  .kbf-fab-wrap--raised.kbf-fab-wrap--bl { bottom: 100px; }
+}
 /* Picked up: the cluster lifts a touch and gives a live, springy little wobble so it
    feels grabbed. Position is driven by inline left/top while dragging; the wobble is a
    transform, so the two don't fight. */
@@ -159,47 +167,104 @@ button {
   .kbf-fab-wrap--dragging { cursor: grabbing; }
 }
 
-.kbf-fab {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  height: 48px;
-  padding: 0 18px 0 16px;
+/* Site label (multi-site): a badge in the panel header + an always-visible chip
+   above the FAB cluster so several open tabs are told apart at a glance. */
+.kbf-site {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
   border-radius: 999px;
-  background: var(--kbf-chip);
-  color: #fdfcf9;
-  font-size: 14px;
-  font-weight: 560;
-  letter-spacing: 0.005em;
-  box-shadow: var(--kbf-shadow-md);
-  transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.3, 1), background 0.18s, box-shadow 0.18s;
-}
-.kbf-fab:hover { transform: translateY(-1px); box-shadow: var(--kbf-shadow-lg); }
-.kbf-fab:active { transform: translateY(0); }
-.kbf-fab svg { width: 18px; height: 18px; }
-
-.kbf-fab.is-active {
   background: var(--kbf-clay);
   color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  vertical-align: middle;
 }
-.kbf-fab.is-active:hover { background: var(--kbf-clay-deep); }
+.kbf-fab-site {
+  align-self: flex-end;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--kbf-clay);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: var(--kbf-shadow-md);
+  pointer-events: none;
+}
+.kbf-fab-wrap--bl .kbf-fab-site,
+.kbf-fab-wrap--tl .kbf-fab-site { align-self: flex-start; }
 
-.kbf-fab--mini {
-  height: 44px;
-  width: 44px;
-  padding: 0;
-  justify-content: center;
-  background: var(--kbf-surface);
+/* Each FAB is a round, icon-only button by default. Hover it (or make it the
+   active tool) and ONLY that one plops open horizontally to reveal its label —
+   with a bouncy spring on the width. */
+.kbf-fab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 52px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--kbf-surface);      /* theme-aware: flips with dark/light */
   color: var(--kbf-ink);
   border: 1px solid var(--kbf-border);
-  position: relative;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+  box-shadow: var(--kbf-shadow-md);
+  transition: box-shadow 0.2s ease, background 0.2s ease, color 0.2s ease, transform 0.16s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-.kbf-fab--mini:hover { background: var(--kbf-surface-2); }
+.kbf-fab-ico {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.kbf-fab-ico svg { width: 20px; height: 20px; display: block; }
+.kbf-fab-label {
+  flex: none;
+  width: 0;
+  margin: 0;
+  opacity: 0;
+  overflow: hidden;
+  text-align: center;
+  /* the bounce: width/margin overshoot on open (cubic back-ease); opacity trails */
+  transition: width 0.42s cubic-bezier(0.34, 1.62, 0.5, 1), margin 0.42s cubic-bezier(0.34, 1.62, 0.5, 1), opacity 0.24s ease;
+}
+/* ONLY the hovered or active button opens — never the whole cluster */
+.kbf-fab:hover .kbf-fab-label,
+.kbf-fab.is-active .kbf-fab-label,
+.kbf-fab.is-live .kbf-fab-label {
+  width: 46px;         /* fits the widest label ("Point") with no clipping */
+  margin-right: 8px;   /* modest gap to the icon (not a big void) */
+  opacity: 1;
+}
+.kbf-fab:hover { box-shadow: var(--kbf-shadow-lg); }
+.kbf-fab:active { transform: scale(0.94); }
+
+.kbf-fab.is-active { background: var(--kbf-clay); color: #fff; border-color: transparent; }
+.kbf-fab.is-active:hover { background: var(--kbf-clay-deep); }
+
+/* Docked to a LEFT corner: icon hugs the screen edge, label grows inward → flip the gap. */
+.kbf-fab-wrap--bl .kbf-fab,
+.kbf-fab-wrap--tl .kbf-fab { flex-direction: row-reverse; }
+.kbf-fab-wrap--bl .kbf-fab:hover .kbf-fab-label,
+.kbf-fab-wrap--bl .kbf-fab.is-active .kbf-fab-label,
+.kbf-fab-wrap--bl .kbf-fab.is-live .kbf-fab-label,
+.kbf-fab-wrap--tl .kbf-fab:hover .kbf-fab-label,
+.kbf-fab-wrap--tl .kbf-fab.is-active .kbf-fab-label,
+.kbf-fab-wrap--tl .kbf-fab.is-live .kbf-fab-label { margin-right: 0; margin-left: 8px; }
 
 .kbf-count {
   position: absolute;
-  top: -4px;
-  right: -4px;
+  top: -7px;
+  right: -8px;
   min-width: 19px;
   height: 19px;
   padding: 0 5px;
@@ -1217,6 +1282,212 @@ button {
 }
 .kbf-vpicked svg { width: 12px; height: 12px; }
 
+/* ---------- narration ("Talk me through it") ---------- */
+
+/* Talk FAB while recording — clay fill + a soft pulse */
+.kbf-fab--talk.is-live { background: var(--kbf-clay); color: #fff; animation: kbf-pulse 1.4s ease-in-out infinite; }
+.kbf-fab--talk.is-live:hover { background: var(--kbf-clay-deep); }
+/* voice-language chip inside the (dark) narrate bar */
+.kbf-narr-lang .kbf-lang {
+  height: 34px;
+  min-width: 34px;
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fdfcf9;
+}
+.kbf-narr-lang:hover .kbf-lang { background: rgba(255, 255, 255, 0.22); }
+
+.kbf-narr-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 24px);
+  padding: 10px 12px 10px 16px;
+  background: var(--kbf-chip);
+  color: #fdfcf9;
+  border-radius: 999px;
+  box-shadow: var(--kbf-shadow-lg);
+  pointer-events: auto;
+  animation: kbf-pop 0.18s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.kbf-narr-dot {
+  flex: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #e5484d;
+  box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.6);
+  animation: kbf-pulse 1.4s ease-in-out infinite;
+}
+.kbf-narr-live { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.kbf-narr-ticker {
+  font-size: 13px;
+  max-width: 46ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kbf-narr-point {
+  font-size: 11px;
+  color: #a49e8f;
+  max-width: 46ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kbf-narr-stop {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--kbf-clay);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 650;
+  transition: background 0.14s, transform 0.1s;
+}
+.kbf-narr-stop svg { width: 13px; height: 13px; }
+.kbf-narr-stop:hover { background: var(--kbf-clay-deep); }
+.kbf-narr-stop:active { transform: scale(0.96); }
+@media (max-width: 560px) { .kbf-narr-point { display: none; } .kbf-narr-ticker { max-width: 30ch; } }
+
+/* draft review tray */
+.kbf-drafts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 7;
+  width: 380px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  background: var(--kbf-paper);
+  border: 1px solid var(--kbf-border);
+  border-radius: var(--kbf-radius);
+  box-shadow: var(--kbf-shadow-lg);
+  pointer-events: auto;
+  animation: kbf-pop 0.18s cubic-bezier(0.2, 0.7, 0.3, 1);
+  transition: opacity 0.2s ease;
+}
+.kbf-drafts-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 14px 11px;
+  border-bottom: 1px solid var(--kbf-border);
+}
+.kbf-drafts-head b { font-size: 14px; }
+.kbf-drafts-sub { flex: 1; font-size: 11.5px; color: var(--kbf-muted); }
+.kbf-drafts-list { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
+.kbf-drafts-foot { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--kbf-border); }
+
+.kbf-draft {
+  border: 1px solid var(--kbf-border);
+  border-radius: var(--kbf-radius-sm);
+  background: var(--kbf-surface);
+  padding: 9px 10px;
+}
+.kbf-draft.needs-pin { border-style: dashed; border-color: var(--kbf-border-strong); }
+.kbf-draft-top { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+.kbf-draft-conf { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.kbf-conf-high { background: var(--kbf-green); }
+.kbf-conf-medium { background: var(--kbf-amber); }
+.kbf-conf-low, .kbf-conf-none { background: var(--kbf-muted); }
+.kbf-draft-type-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--kbf-surface-2);
+  color: var(--kbf-ink-soft);
+}
+.kbf-draft-nopin { font-size: 11px; color: var(--kbf-amber); font-weight: 600; }
+.kbf-draft-text {
+  width: 100%;
+  min-height: 30px;
+  max-height: 120px;
+  resize: none;
+  border: 1px solid var(--kbf-border-strong);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--kbf-ink);
+  background: var(--kbf-surface);
+  outline: none;
+}
+.kbf-draft-text:focus { border-color: var(--kbf-clay); box-shadow: 0 0 0 3px rgba(217, 119, 87, 0.14); }
+.kbf-draft-foot { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
+.kbf-draft-accept { color: var(--kbf-green); }
+.kbf-draft-discard { color: var(--kbf-muted); }
+
+/* ---------- "Agent narrates back" — walkthrough player ---------- */
+.kbf-walk-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: min(560px, calc(100vw - 24px));
+  padding: 12px 12px 12px 18px;
+  background: var(--kbf-chip);
+  color: #fdfcf9;
+  border-radius: 16px;
+  box-shadow: var(--kbf-shadow-lg);
+  pointer-events: auto;
+  animation: kbf-pop 0.18s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.kbf-walk-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.kbf-walk-step {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #a49e8f;
+  font-variant-numeric: tabular-nums;
+}
+.kbf-walk-text {
+  font-size: 13.5px;
+  line-height: 1.4;
+  max-height: 3.9em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.kbf-walk-ctrls { flex: none; display: flex; align-items: center; gap: 2px; }
+.kbf-walk-ctrls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: #fdfcf9;
+  transition: background 0.14s, transform 0.1s;
+}
+.kbf-walk-ctrls button svg { width: 18px; height: 18px; }
+.kbf-walk-ctrls button:hover { background: rgba(255, 255, 255, 0.12); }
+.kbf-walk-ctrls button:active { transform: scale(0.92); }
+.kbf-walk-ctrls .kbf-walk-x svg { width: 15px; height: 15px; }
+.kbf-walk-btn svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: 3px; }
+@media (max-width: 560px) { .kbf-walk-text { -webkit-line-clamp: 2; } }
+
 /* ---------- agent presence (watch mode) ---------- */
 
 .kbf-agent-chip {
@@ -1749,8 +2020,8 @@ button {
 
 @media (max-width: 480px) {
   .kbf-panel { width: 100vw; }
-  .kbf-fab span.kbf-fab-label { display: none; }
-  .kbf-fab { padding: 0; width: 48px; justify-content: center; }
+  /* FABs are round icon-only by default already; on touch (no hover) the label
+     only appears while a button is the active tool (is-active / is-live). */
 }
 
 /* ---------- interaction states (tactile press + keyboard focus) ---------- */

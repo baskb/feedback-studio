@@ -2,7 +2,7 @@
 // surface (injection, API, CSRF guard, path-traversal guard). Not part of the
 // unit suite — run manually: node test/smoke.mjs
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
@@ -104,6 +104,13 @@ try {
 
   const asset = await fetch(ORIGIN + '/__feedback/overlay.js');
   check('serves overlay asset', asset.status === 200);
+
+  // narration correlation engine is served as an ES module the overlay imports
+  const narr = await fetch(ORIGIN + '/__feedback/lib/narration.mjs');
+  const narrBody = await narr.text();
+  check('serves narration engine module', narr.status === 200
+    && /javascript/.test(narr.headers.get('content-type') || '')
+    && narrBody.includes('export function correlate'));
 
   // the same-origin comment should have persisted
   const after = await (await fetch(ORIGIN + '/__feedback/api/comments')).json();
@@ -293,6 +300,28 @@ try {
   } finally {
     demoSrv.kill();
     emptySrv.kill();
+  }
+
+  // --data-dir + --label: multi-site isolation. Data lands in the custom dir (not
+  // cwd/.feedback), meta.json names the site, and the overlay carries the label.
+  const MS_PORT = PORT + 3;
+  const msCwd = path.join(root, 'mscwd');
+  mkdirSync(msCwd);
+  const msData = path.join(msCwd, 'sites', 'marketing', '.feedback');
+  const msSrv = spawn(process.execPath, [bin, '--dir', site, '--data-dir', msData, '--label', 'Marketing', '--port', String(MS_PORT), '--no-open'], { stdio: 'ignore', cwd: msCwd });
+  try {
+    await sleep(700);
+    const MS = `http://127.0.0.1:${MS_PORT}`;
+    let meta = {};
+    try { meta = JSON.parse(readFileSync(path.join(msData, 'meta.json'), 'utf-8')); } catch (e) {}
+    check('--label writes meta.json naming the site', meta.label === 'Marketing');
+    const ov = await (await fetch(`${MS}/__feedback/overlay.js`)).text();
+    check('--label injects window.__kbfLabel into the overlay', ov.includes('window.__kbfLabel="Marketing"'));
+    await fetch(`${MS}/__feedback/api/comments`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: MS }, body: JSON.stringify({ page: '/', anchor: { snippet: 'x' }, text: 'ms', type: 'change' }) });
+    check('--data-dir isolates comments to the custom dir (not cwd/.feedback)',
+      existsSync(path.join(msData, 'comments.json')) && !existsSync(path.join(msCwd, '.feedback')));
+  } finally {
+    msSrv.kill();
   }
 
   // --share strict: role enforcement end-to-end. Strict mode disables the

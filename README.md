@@ -177,6 +177,8 @@ Or `npm i -g feedback-studio`, or run `node plugins/feedback-studio/bin/feedback
 | `--dir <path>` | Serve a static build directory. |
 | `--proxy <url>` | Proxy a running dev server and inject the overlay (live reload). |
 | `--md <file\|dir>` | Render a Markdown file or folder to reviewable pages. Fetches a small renderer once. |
+| `--label <name>` | Name this session/site — shown in the overlay so you can tell several open tabs apart. |
+| `--data-dir <path>` | Where to store this session's `.feedback` data (default `<cwd>/.feedback`). Give each site its own dir to run **several sites from one repo** — see below. |
 | `--share` | Mint **view / comment / admin** capability links (printed at start; keys rotate every run). Your own machine keeps keyless access; `--share strict` requires a key even locally. |
 | `--no-shots` | Disable pin-time element screenshots. |
 | `--port <n>` | Listen port (default `4444`). |
@@ -189,6 +191,18 @@ Or `npm i -g feedback-studio`, or run `node plugins/feedback-studio/bin/feedback
 The overlay starts in **light theme** (panel toggle for dark, remembered per
 browser). Drag the **Comment button** to any corner; on desktop, drag a composer
 by its header. Use **Chrome or Edge** for voice.
+
+**Several sites in one repo?** Run a session per site — each on its own port, with a `--label`
+and its own `--data-dir` beside the site — and give feedback on all of them at once:
+
+```bash
+npx feedback-studio --dir sites/marketing/dist --data-dir sites/marketing/.feedback --label Marketing --port 4001
+npx feedback-studio --dir sites/docs/dist      --data-dir sites/docs/.feedback      --label Docs      --port 4002
+```
+
+Each site keeps its **own** `.feedback/` (comments, screenshots, a `meta.json` naming it), the
+overlay shows the label, and your agent processes each site against its own data — never mixing
+them up. Gitignore `**/.feedback/`.
 
 > **Requires Node 18+.** Runtime HTTP has zero dependencies; `--https`, `--md`,
 > `--tunnel`, and screenshots lazily install one helper each into

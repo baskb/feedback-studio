@@ -6,6 +6,41 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Multiple sites in one repo.** New `--label <name>` and `--data-dir <path>` flags let you run
+  a separate feedback session per site — each on its own port, with its own isolated `.feedback/`
+  beside the site (comments + screenshots + replacement images + a `meta.json` naming it). The
+  overlay shows the site **label** (panel header + an always-visible chip on the FAB cluster) so
+  several open tabs are told apart. The processing agent scans the repo for `.feedback/` dirs,
+  reads each `meta.json` label, and handles each site against its own data — a comment/image
+  belongs to the site whose dir it lives in, and image paths resolve relative to that dir. The
+  MCP `list_comments` output and startup line now name the site too. (Also fixes a latent bug:
+  `FEEDBACK.md` / `HOW-TO-PROCESS.md` and the startup banner previously hard-coded `.feedback/`
+  in their paths, which was wrong for any non-default data dir.)
+
+- **"Ask the page"** — the composer now offers an **Ask** type on web elements (not just
+  Markdown): pin a question on anything ("what does this do?", "why is this here?", "where's
+  this defined?") and the agent **answers in a thread reply** — with a `file:line` source
+  pointer when you ask where/why — instead of changing code. In watch mode the answer comes
+  back within seconds. (`question` is now a universal comment type.)
+- **"Walk me through the changes" (agent narrates back)** — after the agent processes your
+  feedback and leaves a note on each comment, a button in the panel plays a **guided tour**:
+  it scrolls to each changed element, highlights it, and **reads the agent's explanation
+  aloud** (native browser speech synthesis — **no new dependency**). The review becomes a
+  two-way conversation. Play/pause, previous/next, Escape to exit.
+- **"Talk me through it" (Narrate mode)** — hit the 🎙 Narrate button and walk the page by
+  voice while moving the cursor ("this hero's too quiet… make this button orange…"). Feedback
+  Studio timestamps the speech and the pointer together and, on Stop, **pins each spoken
+  comment to the element you were pointing at** — the "Put-That-There" grounding model (deictic
+  words like "this"/"that"/"here" are resolved by *where you point*). Confident ones save right
+  away just like a manual comment (PPF picks them up, no extra step, marked `via:"narration"`);
+  only the ones it can't confidently place pop up in a small tray asking you to point at the
+  element (or save without a pin). The correlation runs on-device in a pure, unit-tested
+  module (native Web Speech + pointer events, **no new dependency**); an utterance it can't
+  confidently ground asks for a pin rather than guessing. `schemaVersion` → 6 (new optional
+  `via` field). *(Phase 2 — desktop screen/audio recording, replay, and agent multimodal
+  refine — is planned separately.)*
+
 ## [0.6.0] - 2026-07-03
 
 ### Added

@@ -6,6 +6,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Replace an image** — pick an `<img>` (or an element with a CSS `background-image`) and the
+  composer offers **Replace image**: choose a local file, and it's decoded, **auto-downscaled**
+  (longest side ≤ 2048px, ~1.5 MB budget, quality-preserving stepped resample), and re-encoded
+  entirely in-browser (native canvas — **no new dependency**). Frame it live on the page with
+  object-fit (Cover/Contain/Fill), a 3×3 alignment grid, and width/height, or open the **crop**
+  modal to trim the source with a draggable box. On save the processed image is staged to
+  `.feedback/media/<id>` and the comment records `imageReplace` metadata; your agent copies the
+  file into the project's image folder and repoints the element (`src` or CSS `background`),
+  applying the framing in the project's idiom. Panel cards show the new-image thumbnail; the
+  on-page preview reverts on close like every other. Uploads are raster-only (PNG/JPEG/WebP —
+  **SVG rejected**), magic-byte validated, size-capped, role-gated, and GC'd with the comment.
+- Comment `schemaVersion` bumped to 5 (new optional `imageReplace` field; backward-compatible).
+
 ## [0.5.1] - 2026-07-03
 
 ### Security

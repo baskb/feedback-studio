@@ -54,6 +54,7 @@ function summarize(c) {
     edits: Array.isArray(c.edits) && c.edits.length ? c.edits : undefined,
     textEdit: c.textEdit && c.textEdit.after ? c.textEdit : undefined,
     shot: c.shot || undefined, // pin-time screenshot, relative to .feedback/ — view it when unsure
+    imageReplace: c.imageReplace && c.imageReplace.media ? c.imageReplace : undefined, // staged replacement image + framing
 
     anchor: { snippet: c.anchor && (c.anchor.snippet || c.anchor.rangeText), selector: c.anchor && c.anchor.selector },
     replies: Array.isArray(c.thread) ? c.thread.length : 0,

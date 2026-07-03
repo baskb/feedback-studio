@@ -897,6 +897,146 @@ button {
   border: 1px solid rgba(128, 128, 128, 0.4);
 }
 
+/* ---------- image replacement ---------- */
+
+.kbf-imgrep {
+  margin-bottom: 10px;
+  border: 1px solid var(--kbf-border);
+  border-radius: var(--kbf-radius-sm);
+  background: var(--kbf-surface);
+  overflow: hidden;
+}
+.kbf-imgrep-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  font-size: 12px;
+  color: var(--kbf-ink-soft);
+}
+.kbf-imgrep-head svg { width: 13px; height: 13px; flex: none; }
+.kbf-imgrep-kind {
+  margin-left: auto;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--kbf-muted);
+}
+.kbf-imgrep-choose {
+  width: calc(100% - 18px);
+  margin: 0 9px 9px;
+  height: 32px;
+  border: 1px dashed var(--kbf-border-strong);
+  border-radius: var(--kbf-radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--kbf-ink-soft);
+  transition: all 0.15s;
+}
+.kbf-imgrep-choose:hover { background: var(--kbf-hover); color: var(--kbf-ink); }
+.kbf-imgrep.is-active .kbf-imgrep-choose { display: none; }
+.kbf-imgrep-body { padding: 0 9px 9px; display: flex; flex-direction: column; gap: 8px; }
+
+.kbf-imgrep-info { display: flex; align-items: center; gap: 8px; }
+.kbf-imgrep-thumb {
+  width: 40px; height: 40px; flex: none;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--kbf-border);
+  background: var(--kbf-surface-2);
+}
+.kbf-imgrep-meta { flex: 1; font-size: 11px; color: var(--kbf-muted); }
+.kbf-imgrep-redo {
+  flex: none; width: 24px; height: 24px; border-radius: 6px;
+  color: var(--kbf-muted); font-size: 14px;
+}
+.kbf-imgrep-redo:hover { background: var(--kbf-hover); color: var(--kbf-ink); }
+
+.kbf-imgrep-row { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.kbf-imgrep-label { flex: none; width: 42px; font-size: 11.5px; color: var(--kbf-ink-soft); }
+.kbf-imgrep-seg {
+  display: inline-flex; height: 26px;
+  border: 1px solid var(--kbf-border-strong); border-radius: 7px; overflow: hidden;
+}
+.kbf-imgrep-seg button {
+  padding: 0 10px; font-size: 11.5px; color: var(--kbf-ink-soft); transition: all 0.12s;
+}
+.kbf-imgrep-seg button + button { border-left: 1px solid var(--kbf-border); }
+.kbf-imgrep-seg button:hover { background: var(--kbf-hover); color: var(--kbf-ink); }
+.kbf-imgrep-seg button.is-active { background: var(--kbf-clay-tint); color: var(--kbf-clay-deep); }
+
+.kbf-imgrep-grid {
+  display: grid; grid-template-columns: repeat(3, 16px); grid-template-rows: repeat(3, 16px); gap: 2px;
+  padding: 2px; border: 1px solid var(--kbf-border-strong); border-radius: 7px;
+}
+.kbf-imgrep-cell { border-radius: 3px; background: var(--kbf-surface-2); transition: background 0.12s; }
+.kbf-imgrep-cell:hover { background: var(--kbf-border-strong); }
+.kbf-imgrep-cell.is-active { background: var(--kbf-clay); }
+
+.kbf-imgrep-size { display: inline-flex; align-items: center; gap: 4px; }
+.kbf-imgrep-size input {
+  width: 52px; height: 26px; text-align: right;
+  border: 1px solid var(--kbf-border-strong); border-radius: 7px;
+  padding: 0 6px; font: inherit; font-size: 12px; color: var(--kbf-ink);
+  background: var(--kbf-surface); outline: none;
+  -moz-appearance: textfield; appearance: textfield;
+}
+.kbf-imgrep-size input::-webkit-outer-spin-button,
+.kbf-imgrep-size input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.kbf-imgrep-size input:focus { border-color: var(--kbf-clay); box-shadow: 0 0 0 2px rgba(217,119,87,.16); }
+.kbf-imgrep-size span { font-size: 11px; color: var(--kbf-muted); }
+
+.kbf-imgrep-foot { display: flex; gap: 8px; }
+.kbf-imgrep-crop, .kbf-imgrep-reset {
+  height: 28px; padding: 0 12px; border-radius: 999px;
+  font-size: 12px; font-weight: 500; color: var(--kbf-ink-soft);
+  border: 1px solid var(--kbf-border-strong); transition: all 0.14s;
+}
+.kbf-imgrep-crop:hover, .kbf-imgrep-reset:hover { background: var(--kbf-hover); color: var(--kbf-ink); }
+.kbf-imgrep-crop:active, .kbf-imgrep-reset:active { transform: scale(0.96); }
+
+/* crop modal */
+.kbf-crop {
+  position: fixed; inset: 0; z-index: 8;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 16, 10, 0.62);
+  pointer-events: auto;
+  animation: kbf-fade 0.15s ease;
+}
+@keyframes kbf-fade { from { opacity: 0; } }
+.kbf-crop-panel {
+  display: flex; flex-direction: column; gap: 12px;
+  max-width: min(92vw, 720px); max-height: 90vh;
+  padding: 16px; border-radius: var(--kbf-radius);
+  background: var(--kbf-surface); box-shadow: var(--kbf-shadow-lg);
+}
+.kbf-crop-stage { position: relative; line-height: 0; overflow: hidden; border-radius: var(--kbf-radius-sm); background: var(--kbf-surface-2); }
+.kbf-crop-img { max-width: 100%; max-height: 70vh; display: block; user-select: none; -webkit-user-drag: none; }
+.kbf-crop-box {
+  position: absolute; box-sizing: border-box;
+  border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 0 0 9999px rgba(20,16,10,.45);
+  cursor: move;
+  touch-action: none; /* dragging the crop box must not scroll/zoom the page */
+}
+.kbf-crop-box:focus-visible { outline: 2px solid var(--kbf-clay); outline-offset: 3px; }
+.kbf-crop-handle {
+  position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--kbf-clay); border: 2px solid #fff; cursor: nwse-resize;
+  touch-action: none;
+}
+.kbf-crop-bar { display: flex; align-items: center; gap: 10px; }
+.kbf-crop-hint { flex: 1; font-size: 11.5px; color: var(--kbf-muted); }
+
+/* card thumbnail for a replacement image */
+.kbf-card-imgrep { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+.kbf-card-newimg {
+  width: 48px; height: 48px; flex: none; object-fit: cover;
+  border-radius: 8px; border: 1px solid var(--kbf-border); background: var(--kbf-surface-2); cursor: zoom-in;
+}
+.kbf-card-newimg:hover { border-color: var(--kbf-border-strong); box-shadow: var(--kbf-shadow-sm); }
+.kbf-card-imglabel { font-size: 11.5px; color: var(--kbf-ink-soft); display: flex; align-items: center; gap: 5px; }
+.kbf-card-imglabel svg { width: 12px; height: 12px; }
+
 /* ---------- edit-in-place text ---------- */
 
 .kbf-editext {
@@ -1650,6 +1790,12 @@ button {
 .kbf-tweak-alignbtn:focus-visible,
 .kbf-editext-btn:focus-visible,
 .kbf-editext-undo:focus-visible,
+.kbf-imgrep-choose:focus-visible,
+.kbf-imgrep-crop:focus-visible,
+.kbf-imgrep-reset:focus-visible,
+.kbf-imgrep-cell:focus-visible,
+.kbf-imgrep-seg button:focus-visible,
+.kbf-card-newimg:focus-visible,
 .kbf-vchip:focus-visible,
 .kbf-vuse:focus-visible,
 .kbf-vx:focus-visible,

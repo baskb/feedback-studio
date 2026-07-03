@@ -202,6 +202,49 @@ try {
   await fetch(ORIGIN + '/__feedback/api/comments/' + shotOwner.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
   check('deleting the comment GCs its shot', !existsSync(shotFile));
 
+  // Image replace: media upload (jpeg) round-trips, format/id validated, GC on delete
+  const irOwner = (await (await fetch(ORIGIN + '/__feedback/api/comments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ page: '/', text: 'new pic', anchor: { snippet: 'Hi' }, imageReplace: { target: 'img', fit: 'cover', w: 2, h: 2 } }),
+  })).json()).comment;
+  check('imageReplace metadata stored web-only', irOwner.imageReplace && irOwner.imageReplace.target === 'img' && irOwner.imageReplace.media === undefined);
+  // PNG_1PX (declared above for the shot test) is a real 1×1 PNG ending in IEND.
+  const irUp = await fetch(ORIGIN + '/__feedback/api/media/' + irOwner.id, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ dataUrl: 'data:image/png;base64,' + PNG_1PX }),
+  });
+  const irC = (await irUp.json()).comment;
+  const irGet = await fetch(ORIGIN + '/__feedback/api/media/' + irOwner.id);
+  check('media uploads (png) + comment carries path + served as png + nosniff', irUp.status === 200
+    && irC.imageReplace.media === 'media/' + irOwner.id + '.png'
+    && irGet.status === 200 && irGet.headers.get('content-type') === 'image/png'
+    && irGet.headers.get('x-content-type-options') === 'nosniff');
+  const irFile = path.join(root, '.feedback', 'media', irOwner.id + '.png');
+  check('media file exists on disk', existsSync(irFile));
+  const irSvg = await fetch(ORIGIN + '/__feedback/api/media/' + irOwner.id, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ dataUrl: 'data:image/svg+xml;base64,' + Buffer.from('<svg onload="x()"/>').toString('base64') }),
+  });
+  const irFakePng = await fetch(ORIGIN + '/__feedback/api/media/' + irOwner.id, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ dataUrl: 'data:image/png;base64,' + Buffer.from('not a png').toString('base64') }),
+  });
+  const irEvilId = await fetch(ORIGIN + '/__feedback/api/media/..%2F..%2Fpwn', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ dataUrl: 'data:image/png;base64,' + PNG_1PX }),
+  });
+  // valid PNG magic header but with attacker bytes appended past IEND → rejected (trailer check)
+  const realPng = Buffer.from(PNG_1PX, 'base64');
+  const pngPlusScript = Buffer.concat([realPng, Buffer.from('<script>alert(1)</script>')]);
+  const irTail = await fetch(ORIGIN + '/__feedback/api/media/' + irOwner.id, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ dataUrl: 'data:image/png;base64,' + pngPlusScript.toString('base64') }),
+  });
+  check('media rejects SVG + fake-magic + traversal ids + appended-payload PNG',
+    irSvg.status === 400 && irFakePng.status === 400 && irEvilId.status === 400 && irTail.status === 400);
+  await fetch(ORIGIN + '/__feedback/api/comments/' + irOwner.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
+  check('deleting the comment GCs its media', !existsSync(irFile));
+
   // Watch mode: agent presence round-trips and rejects junk states
   const as1 = await fetch(ORIGIN + '/__feedback/api/agent-status', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },

@@ -75,7 +75,8 @@ Studio is polite to its agents. ;-)
    - **Use the screenshot when unsure.** A comment with a `shot` field has a pin-time element
      screenshot at `.feedback/<shot path>` — Read (view) the image; it is exactly what the
      reviewer saw. Compare it against the element you located before editing; a mismatch
-     means re-pin, not guess.
+     means re-pin, not guess. (A comment may likewise carry `imageReplace.media` — a staged
+     replacement image at `.feedback/<media path>`; see the apply rule below.)
    - **Act per `type`:** `fix` = reproduce then patch; `change` = apply near-verbatim, no
      redesign; `improve` = rewrite with judgement in the project's voice. If a (spoken) comment
      is vague, propose a concrete interpretation. Keep the project's conventions (read any
@@ -101,6 +102,18 @@ Studio is polite to its agents. ;-)
      flexible whitespace; source may wrap lines or contain inline markup) and apply the exact
      `after` wording, preserving surrounding markup. In Markdown edit the `sourceFile`. If
      `before` no longer matches there, do NOT guess — leave it open and ask for a re-pin.
+   - **Apply `imageReplace` (new image).** A web comment may carry `imageReplace` with a staged
+     image at `.feedback/<media path>` (already downscaled for you) plus framing metadata
+     (`target`, `fit`, `position`, `w`/`h`, `crop`, `alt`). Steps: (1) **place the file** —
+     copy it from `.feedback/media/…` into the project's image directory (infer it from the
+     target element's current `src`, else `public/` `assets/` `static/` `src/` under
+     `images/` `img/` `media/`), with a descriptive filename + the staged extension. (2)
+     **point the element at it** — `target: "img"` → set the `src` (drop or regenerate any
+     stale `srcset`; set `alt` if provided); `target: "background"` → update the CSS
+     `background-image: url(...)`. (3) **apply framing** in the project's idiom — `fit` →
+     `object-fit` (or `background-size`), `position` → `object-position` (or
+     `background-position`), `w`/`h` if the box should resize. Same confidence rule: if you
+     can't confidently locate the element, leave it open and ask for a re-pin.
 4. Present changes as **diffs grouped by page**. Honour `autonomy`: `review` (default) = show
    first; `auto` = apply directly. Mark each resolved when applied (the pin flips green live):
    PATCH `/__feedback/api/comments/<id>` with `{"status":"resolved"}` if the server is running,

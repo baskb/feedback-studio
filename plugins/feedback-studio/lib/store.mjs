@@ -19,7 +19,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 // ---------- schema constants (the contract) ----------
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 export const FILE_VERSION = 1;
 
 // Comment types decide how much latitude the agent gets. Web pages and Markdown
@@ -93,6 +93,44 @@ export function sanitizeTextEdit(t) {
   return { before, after };
 }
 
+// Image replacement (web only): the reviewer picked an <img> (or a background-
+// image element) and chose a new local file, framed live on the page. This is
+// the METADATA — target kind, fit/position/size, optional crop, alt. The actual
+// image bytes are staged separately via the media upload route, which sets
+// `.media` server-side (never client-trusted). Numbers are clamped and the
+// position string is char-blacklisted so nothing breaks out of FEEDBACK.md or a
+// CSS value the agent copies.
+const IMG_FITS = ['cover', 'contain', 'fill', 'none', 'scale-down'];
+export function sanitizeImageReplace(input) {
+  if (!input || typeof input !== 'object') return null;
+  const target = input.target === 'background' ? 'background' : 'img';
+  const num = (v, min, max) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.round(n))) : undefined;
+  };
+  const out = { target };
+  if (IMG_FITS.includes(input.fit)) out.fit = input.fit;
+  // e.g. "50% 20%", "center", "left top" — short, no CSS-breaking characters
+  const pos = str(input.position, 40).trim();
+  if (pos && !/[;{}<>"'`\\()]/.test(pos)) out.position = pos;
+  const w = num(input.w, 1, 20000); if (w !== undefined) out.w = w;
+  const h = num(input.h, 1, 20000); if (h !== undefined) out.h = h;
+  const nw = num(input.natW, 1, 100000); if (nw !== undefined) out.natW = nw;
+  const nh = num(input.natH, 1, 100000); if (nh !== undefined) out.natH = nh;
+  if (input.crop && typeof input.crop === 'object') {
+    const c = input.crop;
+    const cx = num(c.x, 0, 100000), cy = num(c.y, 0, 100000), cw = num(c.w, 1, 100000), ch = num(c.h, 1, 100000);
+    if (cx !== undefined && cy !== undefined && cw !== undefined && ch !== undefined) out.crop = { x: cx, y: cy, w: cw, h: ch };
+  }
+  // alt is written verbatim into an <img alt="…"> by the agent, so strip the
+  // characters that could break out of the attribute or inject a tag/handler
+  // (the same reason `position` is blacklisted above).
+  const alt = str(input.alt, 300).replace(/[\r\n]+/g, ' ').replace(/["'<>`\\]/g, '').trim();
+  if (alt) out.alt = alt;
+  // `media` is set only by the server upload route; ignore any client value here.
+  return out;
+}
+
 // Keep only well-formed {prop, from, to} deltas on whitelisted properties.
 // One entry per property, no unchanged/empty targets, and no characters that
 // could break out of the contexts the values are rendered into (FEEDBACK.md
@@ -137,6 +175,9 @@ export function makeComment(input = {}) {
     // Edit-in-place text works in BOTH modes (in md it's the killer feature:
     // the agent applies the exact wording to the sourceFile).
     textEdit: sanitizeTextEdit(input.textEdit),
+    // Image replacement is a web concept (swap an <img>/background); the media
+    // path is attached later by the upload route (like `shot`).
+    imageReplace: mode === 'web' ? sanitizeImageReplace(input.imageReplace) : null,
     author: input.author === 'agent' ? 'agent' : 'user',
     authorName: str(input.authorName, 60),
     thread: [],
@@ -402,7 +443,12 @@ export async function exportMarkdown(dir, comments) {
         md += `  - text edit: "${collapse(c.textEdit.before).replace(/"/g, '”')}" → "${collapse(c.textEdit.after).replace(/"/g, '”')}"\n`;
       }
       if (c.shot) md += `  - shot: ${code(c.shot)} (what the reviewer saw at pin time — view it before editing if unsure)\n`;
-      if (c.text || !((Array.isArray(c.edits) && c.edits.length) || (c.textEdit && c.textEdit.after))) {
+      if (c.imageReplace && c.imageReplace.media) {
+        const ir = c.imageReplace;
+        const bits = [ir.fit ? `fit: ${ir.fit}` : '', ir.position ? `pos: ${ir.position}` : '', ir.w ? `${ir.w}×${ir.h || '?'}` : '', ir.crop ? 'cropped' : '', ir.alt ? `alt: "${collapse(ir.alt)}"` : ''].filter(Boolean).join(', ');
+        md += `  - image replace: ${ir.target === 'background' ? 'background of' : 'src of'} this element → new image at ${code('.feedback/' + ir.media)}${bits ? ` (${bits})` : ''}\n`;
+      }
+      if (c.text || !((Array.isArray(c.edits) && c.edits.length) || (c.textEdit && c.textEdit.after) || (c.imageReplace && c.imageReplace.media))) {
         md += `  - ${who}:\n${String(c.text || '').trim().split('\n').map((l) => `    ${l}`).join('\n')}\n`;
       }
       for (const r of c.thread || []) {
@@ -468,6 +514,13 @@ it is exactly what the reviewer saw, and a mismatch with the element you located
   the source may wrap lines or hold inline markup) and apply the exact \`after\` wording,
   preserving surrounding markup. In Markdown, edit the \`sourceFile\`. If \`before\` no longer
   matches there, do NOT guess — leave the comment open and ask for a re-pin.
+- A web comment may carry \`imageReplace\` — a staged new image at \`.feedback/<media path>\`
+  (already downscaled) plus framing (\`target\`, \`fit\`, \`position\`, \`w\`/\`h\`, \`crop\`, \`alt\`).
+  Copy the file into the project's image directory (infer from the element's current \`src\`,
+  else \`public\`/\`assets\`/\`static\`/\`src\` under \`images\`/\`img\`/\`media\`), then repoint the
+  element: \`target:"img"\` set \`src\` (+\`alt\`, drop stale \`srcset\`); \`target:"background"\`
+  update the CSS \`background-image:url(...)\`. Apply \`fit\`/\`position\`/size as
+  \`object-fit\`/\`object-position\`/width (or \`background-size\`/\`-position\`).
 - For a vague \`improve\` ("make this pop", "give me options"), you may propose **variants**:
   reply with \`variants: [{label, html, note}]\` (2–3 self-contained alternatives of the
   element's markup, styles inlined). The user previews them ON the page and picks; the pick

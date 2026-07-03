@@ -39,7 +39,7 @@ import {
   ALLOWED_TYPES, STATUSES, AUTONOMY,
   readComments, writeComments, mutate, makeComment, makeReply, exportMarkdown,
   exportProcessInstructions, seedAgentsFile, sanitizeEdits, sanitizeTextEdit,
-  coerceType, modeFor, schemeIsEvil,
+  coerceType, modeFor, schemeIsEvil, sanitizeImageReplace,
 } from '../lib/store.mjs';
 import { exportMarkers as stampMarkers } from '../lib/markers.mjs';
 
@@ -417,6 +417,40 @@ function hostAllowed(req) {
 // filesystem as a shots/<id>.png path.
 const SAFE_SHOT_ID = /^c_[A-Za-z0-9-]{8,64}$/;
 
+// Staged replacement images (raster only). Stored as media/<id>.<ext>.
+const MEDIA_EXTS = ['png', 'jpg', 'webp'];
+const mediaMime = (f) => (f.endsWith('.webp') ? 'image/webp' : f.endsWith('.png') ? 'image/png' : 'image/jpeg');
+// Remove any staged image for a comment id (only one ever exists, but the format
+// can change between saves). SAFE_SHOT_ID-checked by every caller. keepExt lets a
+// successful write drop only the OTHER-format leftovers, never its own new file.
+async function gcMedia(id, keepExt) {
+  for (const ext of MEDIA_EXTS) {
+    if (ext === keepExt) continue;
+    await unlink(path.join(DATA_DIR, 'media', id + '.' + ext)).catch(() => {});
+  }
+}
+// Validate BOTH ends of the file, not just the leading magic bytes — a real
+// header with attacker bytes appended (e.g. PNG + <script>) would otherwise ride
+// to disk and be copied into the repo by the agent. The client always produces
+// well-formed images (canvas.toBlob), so legitimate uploads pass.
+function validImageBuffer(fmt, b) {
+  const n = b.length;
+  if (fmt === 'png') {
+    if (n < 8 || b.readUInt32BE(0) !== 0x89504e47) return false;
+    // must end with the IEND chunk: "IEND" + CRC 0xAE426082
+    return n >= 12 && b.toString('latin1', n - 8) === 'IEND\xae\x42\x60\x82';
+  }
+  if (fmt === 'jpeg') {
+    if (n < 4 || b[0] !== 0xff || b[1] !== 0xd8 || b[2] !== 0xff) return false;
+    return b[n - 2] === 0xff && b[n - 1] === 0xd9; // EOI, no trailing junk
+  }
+  if (fmt === 'webp') {
+    if (n < 12 || b.toString('ascii', 0, 4) !== 'RIFF' || b.toString('ascii', 8, 12) !== 'WEBP') return false;
+    return b.readUInt32LE(4) === n - 8; // declared RIFF size covers exactly the rest
+  }
+  return false;
+}
+
 // ---------- API ----------
 async function handleApi(req, res, url) {
   const parts = url.pathname.replace(/^\/__feedback\/api\/?/, '').split('/').filter(Boolean);
@@ -479,6 +513,12 @@ async function handleApi(req, res, url) {
           if (typeof body.text === 'string') c.text = body.text.trim().slice(0, 10000);
           if (Array.isArray(body.edits) && !c.sourceFile) c.edits = sanitizeEdits(body.edits);
           if ('textEdit' in body) c.textEdit = sanitizeTextEdit(body.textEdit);
+          if ('imageReplace' in body && !c.sourceFile) {
+            // preserve the server-set media path across a metadata re-save
+            const media = c.imageReplace && c.imageReplace.media;
+            c.imageReplace = sanitizeImageReplace(body.imageReplace);
+            if (c.imageReplace && media) c.imageReplace.media = media;
+          }
           if (STATUSES.includes(body.status)) c.status = body.status;
           // Coerce a recognized type to the comment's own mode (web vs md) so a
           // PATCH can't put a Markdown verb on a web comment or vice-versa — the
@@ -501,7 +541,10 @@ async function handleApi(req, res, url) {
           return { comments: next, value: { ok: true } };
         });
         if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
-        if (SAFE_SHOT_ID.test(id)) await unlink(path.join(DATA_DIR, 'shots', id + '.png')).catch(() => {}); // GC its screenshot
+        if (SAFE_SHOT_ID.test(id)) {
+          await unlink(path.join(DATA_DIR, 'shots', id + '.png')).catch(() => {}); // GC its screenshot
+          await gcMedia(id); // …and any staged replacement image
+        }
         broadcastSoon();
         return sendJSON(res, 200, { ok: true });
       }
@@ -515,7 +558,7 @@ async function handleApi(req, res, url) {
       const file = path.join(DATA_DIR, 'shots', id + '.png');
       if (req.method === 'GET') {
         if (!existsSync(file)) return sendJSON(res, 404, { error: 'no shot' });
-        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+        res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
         return res.end(readFileSync(file));
       }
       if (req.method === 'POST') {
@@ -534,6 +577,49 @@ async function handleApi(req, res, url) {
           await mkdir(path.join(DATA_DIR, 'shots'), { recursive: true });
           await writeFile(file, buf);
           c.shot = 'shots/' + id + '.png';
+          c.updatedAt = new Date().toISOString();
+          return { comments: list, value: { comment: c } };
+        });
+        if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
+        broadcastSoon();
+        return sendJSON(res, 200, out);
+      }
+    }
+
+    // Replacement image staged for an <img>/background element — the reviewer's
+    // chosen file, already downscaled client-side. Kept in .feedback/media/ until
+    // the agent moves it into the repo's image folder. Raster only (no SVG: it
+    // can carry script). Filename is the comment id, like screenshots.
+    if (resource === 'media' && parts[1]) {
+      const id = parts[1];
+      if (!SAFE_SHOT_ID.test(id)) return sendJSON(res, 400, { error: 'bad id' });
+      if (req.method === 'GET') {
+        const found = MEDIA_EXTS.map((ext) => path.join(DATA_DIR, 'media', id + '.' + ext)).find((f) => existsSync(f));
+        if (!found) return sendJSON(res, 404, { error: 'no media' });
+        // nosniff: never let a browser second-guess the declared image type.
+        res.writeHead(200, { 'Content-Type': mediaMime(found), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+        return res.end(readFileSync(found));
+      }
+      if (req.method === 'POST') {
+        if (!canComment) return deny();
+        const body = await readJson(req);
+        const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(body.dataUrl || ''));
+        if (!m) return sendJSON(res, 400, { error: 'expected a png/jpeg/webp data URL' });
+        const fmt = m[1];
+        const buf = Buffer.from(m[2], 'base64');
+        if (buf.length > 3_000_000) return sendJSON(res, 413, { error: 'image too large' });
+        // header AND trailer must match the declared format — no appended payload
+        if (!validImageBuffer(fmt, buf)) return sendJSON(res, 400, { error: 'not a valid ' + fmt + ' image' });
+        const ext = fmt === 'jpeg' ? 'jpg' : fmt;
+        const file = path.join(DATA_DIR, 'media', id + '.' + ext);
+        const out = await mutate(DATA_DIR, async (list) => {
+          const c = list.find((x) => x.id === id);
+          if (!c) return { comments: list, value: { notFound: true } };
+          await mkdir(path.join(DATA_DIR, 'media'), { recursive: true });
+          await writeFile(file, buf);       // write the new file first…
+          await gcMedia(id, ext);           // …then drop only stale other-format leftovers
+          c.imageReplace = c.imageReplace && typeof c.imageReplace === 'object' ? c.imageReplace : {};
+          c.imageReplace.media = 'media/' + id + '.' + ext;
           c.updatedAt = new Date().toISOString();
           return { comments: list, value: { comment: c } };
         });

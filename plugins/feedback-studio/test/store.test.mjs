@@ -12,6 +12,7 @@ import {
   WEB_TYPES, MD_TYPES, ALLOWED_TYPES, STATUSES, TWEAKABLE_PROPS,
   makeComment, makeReply, coerceType, sanitizeAnchor, sanitizeEdits, sanitizeTextEdit,
   sanitizeVariants, sanitizeVariantHtml, sanitizePick, decodeEntities, schemeIsEvil,
+  sanitizeImageReplace,
   readComments, writeComments, mutate, exportMarkdown,
   exportProcessInstructions, seedAgentsFile, AGENTS_SNIPPET_MARKER,
 } from '../lib/store.mjs';
@@ -41,7 +42,7 @@ test('coerceType respects the mode', () => {
 
 test('makeComment has a stable, complete schema and unique ids', () => {
   const c = makeComment({ page: '/p', text: '  hi  ', author: 'agent', authorName: 'bot' });
-  assert.equal(c.schemaVersion, 4);
+  assert.equal(c.schemaVersion, 5);
   assert.equal(c.text, 'hi');
   assert.equal(c.author, 'agent');
   assert.equal(c.status, 'open');
@@ -159,6 +160,45 @@ test('seedAgentsFile creates-if-absent, appends, and is idempotent', async () =>
 test('status + type constant invariants', () => {
   assert.deepEqual(ALLOWED_TYPES, [...WEB_TYPES, ...MD_TYPES]);
   assert.deepEqual(STATUSES, ['open', 'approved', 'rejected', 'resolved']);
+});
+
+test('sanitizeImageReplace: enums, clamped numbers, safe position, media never client-set', () => {
+  const r = sanitizeImageReplace({
+    target: 'background', fit: 'cover', position: '50% 20%', w: '800', h: 600.4,
+    natW: 4000, natH: 3000, crop: { x: 10, y: 20, w: 100, h: 80 }, alt: 'a photo',
+    media: 'shots/../evil', bogus: 1,
+  });
+  assert.equal(r.target, 'background');
+  assert.equal(r.fit, 'cover');
+  assert.equal(r.position, '50% 20%');
+  assert.equal(r.w, 800); assert.equal(r.h, 600);
+  assert.deepEqual(r.crop, { x: 10, y: 20, w: 100, h: 80 });
+  assert.equal(r.alt, 'a photo');
+  // alt is attribute-safe: quotes / angle brackets / backtick / backslash stripped
+  assert.equal(sanitizeImageReplace({ alt: 'x" onerror="alert(1)' }).alt, 'x onerror=alert(1)');
+  assert.ok(!/["'<>`\\]/.test(sanitizeImageReplace({ alt: `a<b>"c'\`d\\e` }).alt));
+  assert.equal(r.media, undefined);     // server-set only
+  assert.equal(r.bogus, undefined);
+  // bad enum + CSS-breaking position dropped; target defaults to img
+  const r2 = sanitizeImageReplace({ target: 'x', fit: 'evil', position: 'url(x);}' });
+  assert.equal(r2.target, 'img');
+  assert.equal(r2.fit, undefined);
+  assert.equal(r2.position, undefined);
+  assert.equal(sanitizeImageReplace(null), null);
+});
+
+test('makeComment: imageReplace kept web-only; exportMarkdown renders it', async () => {
+  const ir = { target: 'img', fit: 'cover', w: 800, h: 600 };
+  assert.equal(makeComment({ text: 'x', imageReplace: ir }).imageReplace.target, 'img');
+  assert.equal(makeComment({ text: 'x', imageReplace: ir, sourceFile: 'a.md' }).imageReplace, null);
+  const dir = freshDir();
+  try {
+    const c = makeComment({ imageReplace: ir });
+    c.imageReplace.media = 'media/' + c.id + '.jpg'; // as the upload route would set
+    await exportMarkdown(dir, [c]);
+    const md = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf-8');
+    assert.ok(md.includes('image replace:') && md.includes('media/' + c.id + '.jpg'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('sanitizeEdits: whitelists props, dedupes, drops no-ops and breakout characters', () => {

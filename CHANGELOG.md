@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-03
+
 ### Added
 - **Multiple sites in one repo.** New `--label <name>` and `--data-dir <path>` flags let you run
   a separate feedback session per site — each on its own port, with its own isolated `.feedback/`
@@ -467,7 +469,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.0
 [0.6.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.6.0
 [0.5.1]: https://github.com/baskb/feedback-studio/releases/tag/v0.5.1
 [0.5.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.5.0

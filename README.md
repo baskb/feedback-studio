@@ -115,7 +115,10 @@ and the `.md` gets patched.
 It's 9pm. The build is on your machine upstairs; you are not. Open the tunnel
 link on your phone, tap an element (▲/▼ picks the right nested one), hold the
 mic, and *talk*. Eighteen dictation languages, real HTTPS, no cert warnings.
-Tomorrow morning: **PPF**.
+And you needn't wait for morning: reach **Claude Code on that same machine** from
+your phone — a remote session into the box (many people tunnel to it) or
+[claude.ai/code](https://claude.ai/code) — and just say **PPF**. It works through
+the batch while you're still on the couch, and the pins flip green as it goes.
 → *"start Feedback Studio, mobile-ready"* · `npx feedback-studio --dir dist --tunnel`
 
 **5. The writer with a 40-page draft.**

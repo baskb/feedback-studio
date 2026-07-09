@@ -325,14 +325,17 @@ function sendJSON(res, status, obj) {
   res.end(body);
 }
 
-const BODY_LIMIT = 1_000_000; // 1 MB
-function readBody(req) {
+const BODY_LIMIT = 1_000_000; // 1 MB default
+// The media route accepts up to 3 MB of DECODED image; its JSON body carries
+// that as base64 (×4/3) plus envelope, so it needs its own higher cap.
+const MEDIA_BODY_LIMIT = 5_000_000;
+function readBody(req, limit = BODY_LIMIT) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > BODY_LIMIT) {
+      if (size > limit) {
         const e = new Error('request body too large');
         e.statusCode = 413;
         // Pause (don't destroy) so the 413 response can still be written; Node
@@ -347,8 +350,8 @@ function readBody(req) {
     req.on('error', reject);
   });
 }
-async function readJson(req) {
-  const raw = await readBody(req);
+async function readJson(req, limit) {
+  const raw = await readBody(req, limit);
   if (!raw) return {};
   try { return JSON.parse(raw); }
   catch (e) { const err = new Error('invalid JSON body'); err.statusCode = 400; throw err; }
@@ -520,6 +523,7 @@ async function handleApi(req, res, url) {
       if (req.method === 'PATCH' && id) {
         if (!canManage) return deny();
         const body = await readJson(req);
+        let clearedMedia = false; // a cleared imageReplace orphans its staged file — GC it below
         const out = await mutate(DATA_DIR, (list) => {
           const c = list.find((x) => x.id === id);
           if (!c) return { comments: list, value: { notFound: true } };
@@ -531,6 +535,8 @@ async function handleApi(req, res, url) {
             const media = c.imageReplace && c.imageReplace.media;
             c.imageReplace = sanitizeImageReplace(body.imageReplace);
             if (c.imageReplace && media) c.imageReplace.media = media;
+            // clearing the replacement drops the pointer — GC the staged file too
+            else if (!c.imageReplace && media) clearedMedia = true;
           }
           if (STATUSES.includes(body.status)) c.status = body.status;
           // Coerce a recognized type to the comment's own mode (web vs md) so a
@@ -542,6 +548,7 @@ async function handleApi(req, res, url) {
           return { comments: list, value: { comment: c } };
         });
         if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
+        if (clearedMedia && SAFE_SHOT_ID.test(id)) await gcMedia(id); // drop the now-orphaned staged image
         broadcastSoon();
         return sendJSON(res, 200, out);
       }
@@ -615,7 +622,7 @@ async function handleApi(req, res, url) {
       }
       if (req.method === 'POST') {
         if (!canComment) return deny();
-        const body = await readJson(req);
+        const body = await readJson(req, MEDIA_BODY_LIMIT); // base64 of up to 3 MB decoded
         const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(body.dataUrl || ''));
         if (!m) return sendJSON(res, 400, { error: 'expected a png/jpeg/webp data URL' });
         const fmt = m[1];
@@ -1039,7 +1046,11 @@ async function ensureMarked() {
 
 function htmlAttr(s) { return String(s || '').replace(/[<>&"]/g, (m) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[m])); }
 
-function mdDocShell(title, sourceRel, bodyHtml) {
+// `sourceRel` is the cwd-relative path stored on comments (`window.__kbfSource` →
+// comment.sourceFile — the agent resolves it against the cwd, so it must stay
+// exact even when ugly). `sourceDisplay` is only what the header SHOWS; callers
+// pass something short when the real path is a ../../ chain outside the cwd.
+function mdDocShell(title, sourceRel, sourceDisplay, bodyHtml) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${htmlAttr(title)}</title>
@@ -1058,13 +1069,15 @@ function mdDocShell(title, sourceRel, bodyHtml) {
   blockquote { margin:1.2em 0; padding:.4em 1.1em; border-left:3px solid var(--clay); color:var(--soft); background:rgba(196,98,63,.05); border-radius:0 8px 8px 0; }
   code { font:0.88em ui-monospace,"Fira Mono",monospace; background:var(--code); padding:.12em .4em; border-radius:5px; }
   pre { background:var(--code); padding:14px 16px; border-radius:10px; overflow:auto; } pre code { background:none; padding:0; }
-  table { border-collapse:collapse; width:100%; margin:1.3em 0; font:14px/1.5 ui-sans-serif,system-ui,sans-serif; }
+  /* A wide table scrolls INSIDE its own box — page-level horizontal overflow on
+     a phone strands the fixed overlay buttons off to the side. */
+  table { border-collapse:collapse; display:block; width:max-content; max-width:100%; overflow-x:auto; margin:1.3em 0; font:14px/1.5 ui-sans-serif,system-ui,sans-serif; }
   th,td { border:1px solid var(--rule); padding:8px 11px; text-align:left; } th { background:#f1eee6; font-weight:650; }
   img { max-width:100%; border-radius:8px; } hr { border:none; border-top:1px solid var(--rule); margin:2.4em 0; }
 </style></head>
 <body>
   <article class="doc">
-    <div class="doc-source">${htmlAttr(sourceRel || '')}</div>
+    <div class="doc-source">${htmlAttr(sourceDisplay || sourceRel || '')}</div>
     ${bodyHtml}
   </article>
   <script>window.__kbfMode="md";window.__kbfSource=${JSON.stringify(sourceRel || '').replace(/</g, '\\u003c')};</script>
@@ -1102,7 +1115,12 @@ async function renderMd(file) {
   const marked = await ensureMarked();
   const src = await readFile(file, 'utf-8');
   const body = sanitizeRenderedHtml(marked.parse(src, { gfm: true, breaks: false }));
-  return mdDocShell(path.basename(file), path.relative(CWD, file).split(path.sep).join('/'), body);
+  const rel = path.relative(CWD, file).split(path.sep).join('/');
+  // Header display: a file outside the cwd would show a ../../../ chain of
+  // machine internals — show it relative to the --md root instead (which for a
+  // single file is just its name). The STORED sourceFile stays `rel`, exact.
+  const disp = rel.startsWith('..') ? (path.relative(MD_ROOT, file).split(path.sep).join('/') || path.basename(file)) : rel;
+  return mdDocShell(path.basename(file), rel, disp, body);
 }
 
 async function listMdFiles(dir, base = dir) {
@@ -1125,7 +1143,8 @@ async function renderMdIndex() {
   const encPath = (p) => p.split('/').map(encodeURIComponent).join('/');
   const items = files.map((rel) => `<li><a href="/${htmlAttr(encPath(rel.replace(/\.md$/i, '')))}">${htmlAttr(rel)}</a></li>`).join('\n');
   const body = `<h1>Markdown files</h1><p>${files.length} document${files.length === 1 ? '' : 's'} to review.</p><ul>${items || '<li>(none found)</li>'}</ul>`;
-  return mdDocShell('Markdown files', path.relative(CWD, MD_ROOT).split(path.sep).join('/') || '.', body);
+  const rel = path.relative(CWD, MD_ROOT).split(path.sep).join('/') || '.';
+  return mdDocShell('Markdown files', rel, rel.startsWith('..') ? path.basename(MD_ROOT) : rel, body);
 }
 
 function sendHtml(res, html, status = 200) {

@@ -167,6 +167,24 @@
   root.appendChild(link);
 
   const ui = document.createElement('div');
+  // Boot invisibly until the stylesheet has actually applied: over a slow link
+  // (e.g. a tunnel) overlay.css lands well after first paint, so the raw
+  // panel/FAB markup flashes unstyled — and when the CSS then applies, the
+  // panel's closed-state transform TRANSITIONS to off-screen, a visible
+  // left→right slide on every load. kbf-preboot freezes transitions/animations
+  // for that first styled frame so state applies as a jump, not a slide.
+  ui.classList.add('kbf-preboot');
+  ui.style.visibility = 'hidden';
+  const bootReveal = () => requestAnimationFrame(() => {
+    ui.classList.remove('kbf-preboot');
+    ui.style.visibility = '';
+  });
+  if (link.sheet) bootReveal();
+  else {
+    link.addEventListener('load', bootReveal);
+    link.addEventListener('error', bootReveal); // unstyled beats invisible
+    setTimeout(bootReveal, 2000); // safety net (idempotent if load already fired)
+  }
   ui.innerHTML = `
     <div class="kbf-highlight" id="kbf-hl"><span class="kbf-tag" id="kbf-tag"></span></div>
     <div id="kbf-targets"></div>
@@ -1981,10 +1999,20 @@
       if (longest > IMG_MAX_DIM) { const k = IMG_MAX_DIM / longest; tw = Math.max(1, Math.round(sw * k)); th = Math.max(1, Math.round(sh * k)); }
       const canvas = drawScaled(img, sx, sy, sw, sh, tw, th);
       const hasAlpha = file.type === 'image/png' || /\.png$/i.test(file.name || '');
-      const mime = hasAlpha ? 'image/png' : (webpSupported() ? 'image/webp' : 'image/jpeg');
+      let mime = hasAlpha ? 'image/png' : (webpSupported() ? 'image/webp' : 'image/jpeg');
       let blob = await canvasToBlob(canvas, mime, 0.85);
+      // Over budget: a detailed PNG at 2048px is routinely several MB. WebP keeps
+      // the alpha channel, so an oversized PNG re-encodes to webp rather than
+      // shipping a blob the server would reject; lossy formats step quality down.
+      if (blob && blob.size > IMG_BYTE_BUDGET && mime === 'image/png' && webpSupported()) {
+        mime = 'image/webp';
+        blob = await canvasToBlob(canvas, mime, 0.85);
+      }
       if (blob && blob.size > IMG_BYTE_BUDGET && mime !== 'image/png') blob = await canvasToBlob(canvas, mime, 0.72);
       if (!blob) throw new Error('could not encode the image');
+      // Hard ceiling aligned with the server's media route (3 MB decoded): fail
+      // here with a clear message instead of a doomed upload.
+      if (blob.size > 3_000_000) throw new Error('still over 3 MB after downscaling — crop it or pick a smaller image');
       const dataUrl = await blobToDataUrl(blob);
       return { blob, dataUrl, mime, w: tw, h: th, natW, natH, cropRect: cropRect || null };
     } finally { URL.revokeObjectURL(url); }
@@ -2264,30 +2292,61 @@
     });
   }
 
+  // The VISIBLE viewport, not the layout one: on a phone the on-screen keyboard
+  // shrinks only the visual viewport, while window.innerHeight stays full-height.
+  // A composer clamped against innerHeight lands BEHIND the keyboard (fixed
+  // position, so scrolling can't reach its Save button). Clamp against this.
+  function vvBox() {
+    const vv = window.visualViewport;
+    return vv
+      ? { top: vv.offsetTop, left: vv.offsetLeft, width: vv.width, height: vv.height }
+      : { top: 0, left: 0, width: window.innerWidth, height: window.innerHeight };
+  }
   function positionComposer(box, rect) {
     const w = 340, pad = 12;
+    const vv = vvBox();
     let left = rect.left;
     let top = rect.bottom + 8;
-    if (left + w > window.innerWidth - pad) left = window.innerWidth - w - pad;
-    if (left < pad) left = pad;
+    if (left + w > vv.left + vv.width - pad) left = vv.left + vv.width - w - pad;
+    if (left < vv.left + pad) left = vv.left + pad;
     const h = box.offsetHeight || 230;
-    if (top + h > window.innerHeight - pad) {
+    if (top + h > vv.top + vv.height - pad) {
       top = rect.top - h - 8;
-      if (top < pad) top = pad;
+      if (top < vv.top + pad) top = vv.top + pad;
     }
     box.style.left = left + 'px';
     box.style.top = top + 'px';
   }
-  // Used when the box merely CHANGES HEIGHT in place (e.g. expanding Tweak style):
-  // keep it fully on screen by nudging it up just enough — never flip it to the
-  // other side of the element, which was the jarring jump to the top and back.
+  // Used when the box merely CHANGES HEIGHT in place (e.g. expanding Tweak style)
+  // or the visual viewport changes (keyboard opens): keep it fully in the VISIBLE
+  // viewport by nudging it just enough — never flip it to the other side of the
+  // element, which was the jarring jump to the top and back.
   function keepComposerInView(box) {
     const pad = 12;
+    const vv = vvBox();
     const h = box.offsetHeight;
     let top = parseFloat(box.style.top) || 0;
-    if (top + h > window.innerHeight - pad) top = window.innerHeight - h - pad;
-    if (top < pad) top = pad;
+    if (top + h > vv.top + vv.height - pad) top = vv.top + vv.height - h - pad;
+    if (top < vv.top + pad) top = vv.top + pad;
     box.style.top = top + 'px';
+  }
+  // Keyboard open/close and pinch-zoom fire visualViewport events — re-clamp the
+  // open composer so its Save row is never stranded behind the keyboard. This
+  // deliberately overrides a hand-dragged position too: an unreachable composer
+  // is worse than a nudged one.
+  if (window.visualViewport) {
+    let rafVV = 0;
+    const onVV = () => {
+      if (rafVV) return;
+      rafVV = requestAnimationFrame(() => {
+        rafVV = 0;
+        if (!activeComposer) return;
+        const box = composerSlot.querySelector('.kbf-composer');
+        if (box) keepComposerInView(box);
+      });
+    };
+    window.visualViewport.addEventListener('resize', onVV);
+    window.visualViewport.addEventListener('scroll', onVV);
   }
 
   function openComposer(opts) {
@@ -2572,15 +2631,35 @@
     recognition.continuous = true;
     let committed = ta.value;
     let lastApplied = ta.value;
+    // Mobile Web Speech re-emits a GROWING cumulative final in quick succession
+    // ("so" → "so explain" → "so explain me"…), so a plain append repeats the
+    // words over and over. Same collapse rule as the narration recognizer: a
+    // final arriving shortly after the previous one that extends it (or is a
+    // prefix of it) REPLACES it on the same base instead of appending. Compared
+    // case-insensitively — mobile recognisers re-capitalise the re-emit.
+    let lastFinal = null; // { text, t, base } — base = committed BEFORE this chain
     recognition.onresult = (e) => {
       // If the user typed into the box since our last write, adopt that as the
       // base so manual edits made while dictating aren't discarded.
-      if (ta.value !== lastApplied) committed = ta.value;
+      if (ta.value !== lastApplied) { committed = ta.value; lastFinal = null; }
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const seg = e.results[i][0].transcript;
-        if (e.results[i].isFinal) committed = appendSentence(committed, seg);
-        else interim += seg;
+        if (e.results[i].isFinal) {
+          const txt = norm(seg);
+          if (!txt) continue;
+          const now = Date.now();
+          const a = txt.toLowerCase(), b = lastFinal ? lastFinal.text.toLowerCase() : '';
+          if (lastFinal && (now - lastFinal.t) < 1400 && (a.startsWith(b) || b.startsWith(a))) {
+            if (txt.length >= lastFinal.text.length) { // grown — replace, don't append
+              committed = appendSentence(lastFinal.base, txt);
+              lastFinal = { text: txt, t: now, base: lastFinal.base };
+            } else lastFinal.t = now; // shorter re-emit of the same phrase — ignore
+          } else {
+            lastFinal = { text: txt, t: now, base: committed };
+            committed = appendSentence(committed, txt);
+          }
+        } else interim += seg;
       }
       const val = interim ? appendSentence(committed, interim) : committed;
       ta.value = val; lastApplied = val;
@@ -3004,12 +3083,17 @@
     } catch (e) { toastError('Reply failed — ' + e.message); }
   }
 
+  // Ids deleted locally whose server DELETE is still deferred (the Undo window).
+  // An SSE broadcast in that window still contains them server-side — filtering
+  // them out of applyComments stops the deleted card flickering back for 5s.
+  const pendingDeletes = new Set();
   function deleteComment(id) {
     const idx = comments.findIndex((c) => c.id === id);
     if (idx < 0) return;
     const removed = comments[idx];
     // Optimistic: drop locally now, defer the server delete so Undo can cancel it.
     comments.splice(idx, 1);
+    pendingDeletes.add(id);
     if (expandedId === id) expandedId = null;
     refresh();
     const timer = setTimeout(async () => {
@@ -3022,10 +3106,11 @@
           comments.splice(Math.min(idx, comments.length), 0, removed); refresh();
           toastError('Delete failed — ' + e.message);
         }
-      }
+      } finally { pendingDeletes.delete(id); }
     }, 5000);
     toast('Comment deleted', { actionLabel: 'Undo', duration: 5000, onAction: () => {
       clearTimeout(timer);
+      pendingDeletes.delete(id);
       if (!comments.some((c) => c.id === id)) { comments.splice(Math.min(idx, comments.length), 0, removed); refresh(); }
     } });
   }
@@ -3091,6 +3176,9 @@
     if (p) { p.pinEl.classList.add('kbf-just-resolved'); setTimeout(() => p.pinEl.classList.remove('kbf-just-resolved'), 1000); }
   }
   function applyComments(next) {
+    // Skip comments the user just deleted locally (server DELETE still deferred
+    // for Undo) — a broadcast mid-window must not resurrect the card.
+    if (pendingDeletes.size) next = next.filter((c) => !pendingDeletes.has(c.id));
     const prev = new Map(comments.map((c) => [c.id, c.status]));
     comments = next;
     refresh();

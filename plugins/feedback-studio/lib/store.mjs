@@ -335,6 +335,20 @@ export async function readComments(dir) {
   return parsed.comments;
 }
 
+// Atomic replace with a short retry: on Windows, rename() over a file an
+// antivirus scanner / OneDrive sync / directory watcher briefly holds open
+// fails with EPERM (or EACCES/EBUSY) even though nothing is wrong — retrying a
+// beat later succeeds. Non-transient errors still throw immediately.
+async function renameReplace(from, to) {
+  for (let i = 0; ; i++) {
+    try { return await rename(from, to); }
+    catch (e) {
+      if (i >= 4 || !['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) throw e;
+      await sleep(30 * (i + 1));
+    }
+  }
+}
+
 // Atomic JSON write (temp file + rename) for any file — reused by writeComments
 // and by the per-site meta.json. No lock: callers that need read-modify-write use
 // `mutate`; meta.json is a whole-file overwrite owned by one server instance.
@@ -344,7 +358,7 @@ export async function writeJson(filePath, obj) {
   const tmp = filePath + '.tmp-' + process.pid + '-' + (_writeSeq++);
   await writeFile(tmp, JSON.stringify(obj, null, 2));
   try {
-    await rename(tmp, filePath); // atomic replace
+    await renameReplace(tmp, filePath); // atomic replace
   } catch (e) {
     await unlink(tmp).catch(() => {});
     throw e;
@@ -357,7 +371,7 @@ export async function writeComments(dir, comments, opts = {}) {
   const tmp = path.join(dir, 'comments.json.tmp-' + process.pid + '-' + (_writeSeq++));
   await writeFile(tmp, body);
   try {
-    await rename(tmp, dataFile(dir)); // atomic replace
+    await renameReplace(tmp, dataFile(dir)); // atomic replace
   } catch (e) {
     await unlink(tmp).catch(() => {}); // don't leave orphan tmp files behind
     throw e;
@@ -377,12 +391,16 @@ const LOCK_STALE_MS = 15000;
 
 async function acquireLock(dir, { retries = 100, wait = 50, staleMs = LOCK_STALE_MS } = {}) {
   const lp = lockFile(dir);
+  // Unique per acquisition (not just the pid): release compares this before
+  // unlinking, so a process resumed after a long OS sleep — whose "stale" lock a
+  // waiter legitimately stole and re-created — can't delete the new holder's lock.
+  const token = process.pid + ':' + crypto.randomUUID();
   for (let i = 0; i < retries; i++) {
     try {
       const fh = await open(lp, 'wx');
-      await fh.writeFile(String(process.pid));
+      await fh.writeFile(token);
       await fh.close();
-      return lp;
+      return { lp, token };
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
       // Steal an abandoned lock (a process that crashed mid-write). Steal by
@@ -407,7 +425,7 @@ async function acquireLock(dir, { retries = 100, wait = 50, staleMs = LOCK_STALE
 // `{ comments, value }`: the array to persist and the value to return.
 export async function mutate(dir, fn) {
   await mkdir(dir, { recursive: true });
-  const lp = await acquireLock(dir);
+  const { lp, token } = await acquireLock(dir);
   // Heartbeat: keep the lock's mtime fresh so a slow hold isn't judged stale and
   // stolen. Best-effort (a missed bump never crashes — cf. proper-lockfile's
   // onCompromised, which misfires after sleep); unref'd so it can't hold the
@@ -422,7 +440,10 @@ export async function mutate(dir, fn) {
     return out ? out.value : undefined;
   } finally {
     clearInterval(beat);
-    await unlink(lp).catch(() => {});
+    // Release only OUR lock: after an OS sleep the lock may have been (rightly)
+    // stolen and re-created by a waiter — deleting that one would let a third
+    // writer in alongside them.
+    try { if (await readFile(lp, 'utf-8') === token) await unlink(lp); } catch (e) {}
   }
 }
 

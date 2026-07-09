@@ -6,6 +6,48 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Mobile dictation no longer repeats your words.** The composer mic appended every final
+  result, but mobile Web Speech re-emits a growing cumulative final ("so" → "so explain" →
+  "so explain me"…), producing long chains of repeated words. The composer now uses the same
+  collapse rule the narration recognizer got in 0.7.0: a final arriving shortly after the
+  previous one that extends it replaces it instead of appending (case-insensitive — phones
+  re-capitalise the re-emit). Manual edits typed mid-dictation are still preserved.
+- **The composer stays above the phone keyboard.** It was clamped against the layout viewport
+  (`window.innerHeight`); opening the on-screen keyboard shrinks only the *visual* viewport, so
+  the Save button could sit unreachable behind the keyboard (fixed position — scrolling can't
+  help). Positioning now clamps against `window.visualViewport`, and keyboard open/close
+  re-clamps the open composer live.
+- **Wide tables in `--md` mode scroll inside their own box** instead of making the whole page
+  scroll sideways — page-level horizontal overflow on a phone stranded the fixed
+  Point/Talk/List buttons off to the side.
+- **No more flash-and-slide on load over a slow link.** Over a tunnel the overlay stylesheet
+  lands after first paint: the raw panel markup flashed unstyled, then the panel's closed-state
+  transform visibly slid off-screen. The overlay now boots invisible with transitions frozen and
+  reveals itself one frame after the stylesheet applies (2 s safety net if it never loads).
+- **Composer type pills no longer overflow on narrow screens.** The five Markdown types can't
+  shrink below their labels, so "Question" jammed against the composer border on phones — the
+  row now wraps.
+- **`--md` header shows a readable source path.** Reviewing a file outside the working
+  directory showed a `../../../…` chain of machine internals; the header now shows the path
+  relative to the `--md` root (the stored `sourceFile` on comments is unchanged — still exact).
+- **Large image replacements no longer fail.** The global 1 MB request-body cap made the media
+  route's 3 MB image limit unreachable — any bigger upload died with "request body too large",
+  and the overlay exempted PNGs from its size budget entirely. The media route now accepts a
+  5 MB body (3 MB decoded image, as always intended); the overlay re-encodes an oversized PNG
+  to WebP (keeps transparency) and fails fast with a clear message above 3 MB.
+- **Clearing an image replacement deletes its staged file** — previously the file under
+  `.feedback/media/` was orphaned until the comment itself was deleted.
+- **Undoable delete no longer flickers.** During the 5-second Undo window, a live update from
+  the server could briefly resurrect the just-deleted comment's card and pin.
+- **Cross-process lock survives laptop sleep.** If the OS slept mid-write long enough for a
+  waiter to legitimately steal the "stale" lock, the resumed process could delete the new
+  holder's lock on release. The lockfile now carries a per-acquisition token and release only
+  removes its own.
+- **Atomic writes retry transient Windows errors.** `rename()` over a file briefly held open by
+  antivirus/OneDrive/a watcher fails with EPERM even though nothing is wrong — the store now
+  retries a few times before giving up.
+
 ## [0.7.1] - 2026-07-03
 
 ### Changed

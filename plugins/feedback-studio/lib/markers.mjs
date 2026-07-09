@@ -40,7 +40,9 @@ export function fbMarker(c) {
 //     several matches → the comment is skipped (counted in `notFound`), never
 //     appended at EOF and never stamped onto a first-of-many guess;
 //   - already-stamped markers are left alone (idempotent);
-//   - a `.bak` of the original file is saved before the first write;
+//   - a `.bak` of the file's pre-run content is saved before this run writes it
+//     (each stamping run refreshes the `.bak` — it is the previous state, not
+//     the state before the first-ever run);
 //   - a sourceFile that is missing, or that resolves outside every allowed
 //     root, is counted in `notFound` — never written, never silently dropped.
 // `roots` lists the directories comments may legitimately write into (the

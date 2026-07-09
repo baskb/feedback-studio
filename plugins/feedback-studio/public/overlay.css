@@ -1,5 +1,14 @@
 /* Feedback Studio — overlay styles (mounted inside a shadow root) */
 
+/* First styled frame: the overlay boots with this class (removed one frame
+   after this stylesheet lands) so persisted state — closed panel, corner FABs —
+   applies as a JUMP. Without it, a slow stylesheet (tunnel) arrives after first
+   paint and the panel's closed transform TRANSITIONS off-screen: a visible
+   left→right slide on every load. Entrance animations still play after the
+   class is removed (the animation property re-applies fresh). */
+.kbf-preboot,
+.kbf-preboot * { transition: none !important; animation: none !important; }
+
 :host {
   /* Claude.ai-flavoured palette */
   --kbf-paper: #faf9f5;
@@ -1817,11 +1826,14 @@ button {
 /* ---------- comment types ---------- */
 .kbf-types {
   display: flex;
+  /* The pills can't shrink below their labels (md mode has five) — wrap instead
+     of letting the last one overflow the composer's padding on narrow screens. */
+  flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 10px;
 }
 .kbf-type {
-  flex: 1;
+  flex: 1 0 auto;
   height: 30px;
   border-radius: 8px;
   border: 1px solid var(--kbf-border-strong);

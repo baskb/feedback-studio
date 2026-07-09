@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-07-09
+
 ### Fixed
 - **Mobile dictation no longer repeats your words.** The composer mic appended every final
   result, but mobile Web Speech re-emits a growing cumulative final ("so" → "so explain" →
@@ -518,7 +520,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.2
 [0.7.1]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.1
 [0.7.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.0
 [0.6.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.6.0

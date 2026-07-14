@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **`--md` review no longer shows comments from a different file.** When several Markdown files
+  were reviewed from the same project, they share one `.feedback/comments.json` — and in
+  single-file `--md` mode every file is served at the same path (`/`), so the overlay (which
+  scoped pins and the List by page only) showed every file's comments regardless of which file
+  was on screen. The overlay now scopes its whole view to the served source file, so a
+  single-file `--md` session shows only that file's comments; the others stay on disk, untouched.
+  (The comment API stays unfiltered — a processing agent still sees every file's comments.)
+
 ## [0.7.2] - 2026-07-09
 
 ### Fixed

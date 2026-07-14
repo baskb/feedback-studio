@@ -443,6 +443,62 @@ try {
   } finally {
     nsSrv.kill();
   }
+
+  // --md cross-file scoping (regression for the 2026-07-14 "cross-file bleed").
+  // In single-file --md mode EVERY file serves at '/', so the overlay can't tell
+  // one file's comments from another's by `page` — it scopes by the served
+  // sourceFile (carried on each page as window.__kbfSource, and on each comment
+  // as sourceFile). This proves the data contract that client-side scope relies
+  // on: two files sharing ONE .feedback dir keep an identical `page` ('/') but a
+  // DISTINCT sourceFile, and the shared API returns both (the API is deliberately
+  // unfiltered — the agent needs every file's comments; the overlay does the
+  // scoping). If page stopped colliding or sourceFile stopped distinguishing, the
+  // overlay could not separate them and the bleed would be back.
+  const mdCwd = path.join(root, 'mdcwd');
+  mkdirSync(path.join(mdCwd, 'docs'), { recursive: true });
+  writeFileSync(path.join(mdCwd, 'docs', 'a.md'), '# Alpha\n\nFirst doc paragraph.\n');
+  writeFileSync(path.join(mdCwd, 'docs', 'b.md'), '# Bravo\n\nSecond doc paragraph.\n');
+  const MDA_PORT = PORT + 7;
+  const MDB_PORT = PORT + 8;
+  const mdaSrv = spawn(process.execPath, [bin, '--md', 'docs/a.md', '--port', String(MDA_PORT), '--no-open'], { stdio: 'ignore', cwd: mdCwd });
+  const mdbSrv = spawn(process.execPath, [bin, '--md', 'docs/b.md', '--port', String(MDB_PORT), '--no-open'], { stdio: 'ignore', cwd: mdCwd });
+  try {
+    await sleep(700);
+    const MDA = `http://127.0.0.1:${MDA_PORT}`;
+    const MDB = `http://127.0.0.1:${MDB_PORT}`;
+    // Pin one comment from each session; both land in the SAME shared .feedback
+    // (same cwd), both with page '/', distinguished only by sourceFile. (POST/GET
+    // need no Markdown renderer, so this half runs even offline.)
+    await fetch(MDA + '/__feedback/api/comments', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: MDA },
+      body: JSON.stringify({ page: '/', text: 'note on A', type: 'comment', anchor: { snippet: 'Alpha' }, sourceFile: 'docs/a.md' }),
+    });
+    await fetch(MDB + '/__feedback/api/comments', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: MDB },
+      body: JSON.stringify({ page: '/', text: 'note on B', type: 'comment', anchor: { snippet: 'Bravo' }, sourceFile: 'docs/b.md' }),
+    });
+    const shared = await (await fetch(MDA + '/__feedback/api/comments')).json();
+    const bySrc = shared.comments.map((c) => c.sourceFile).sort().join(',');
+    const pages = [...new Set(shared.comments.map((c) => c.page))];
+    check('--md: two files share one data dir — page collides (/), sourceFile distinguishes',
+      shared.comments.length === 2 && bySrc === 'docs/a.md,docs/b.md' && pages.length === 1 && pages[0] === '/');
+
+    // The other half of the contract: each served page carries its OWN sourceFile
+    // as window.__kbfSource, so the overlay can scope to it. Rendering needs the
+    // lazily-installed `marked`; if it isn't available (offline runner), skip this
+    // sub-check rather than fail — the data-layer assertion above still stands.
+    const aRes = await fetch(MDA + '/');
+    const aHtml = await aRes.text();
+    if (aRes.status === 200 && aHtml.includes('Alpha')) {
+      const bHtml = await (await fetch(MDB + '/')).text();
+      check('--md: each page carries its own sourceFile as __kbfSource',
+        aHtml.includes('window.__kbfSource="docs/a.md"') && bHtml.includes('window.__kbfSource="docs/b.md"'));
+    } else {
+      console.log('SKIP  --md: __kbfSource render check (marked renderer unavailable)');
+    }
+  } finally {
+    mdaSrv.kill(); mdbSrv.kill();
+  }
 } catch (e) {
   console.log('FAIL  exception:', e.message);
   failures++;

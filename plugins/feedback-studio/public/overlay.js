@@ -119,6 +119,20 @@
     return p || '/';
   }
 
+  // The .md file this page renders (comment.sourceFile), '' in web mode.
+  const SOURCE = (typeof window !== 'undefined' && window.__kbfSource) || '';
+  // In Markdown mode the rendered HTML is throwaway and several .md files can
+  // share ONE .feedback dir — and in single-file `--md` mode they all serve at
+  // the same path ('/'), so filtering by `page` alone leaks another file's
+  // comments onto this view (the "cross-file bleed" bug). Scope the whole
+  // overlay's comment universe to the served source file. In web mode SOURCE is
+  // '' and this is a no-op; in md-index mode each file has its own sourceFile so
+  // it simply keeps each page to its own comments.
+  function scopeComments(list) {
+    if (MODE !== 'md') return list;
+    return list.filter((c) => (c.sourceFile || '') === SOURCE);
+  }
+
   // ---------- icons ----------
   const I = {
     comment: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
@@ -3179,6 +3193,7 @@
     // Skip comments the user just deleted locally (server DELETE still deferred
     // for Undo) — a broadcast mid-window must not resurrect the card.
     if (pendingDeletes.size) next = next.filter((c) => !pendingDeletes.has(c.id));
+    next = scopeComments(next);
     const prev = new Map(comments.map((c) => [c.id, c.status]));
     comments = next;
     refresh();
@@ -3442,7 +3457,7 @@
   async function load() {
     try {
       const data = await api('/comments');
-      comments = data.comments || [];
+      comments = scopeComments(data.comments || []);
     } catch (e) {
       comments = [];
       // A server-side error (e.g. a corrupt comments.json) must not look like

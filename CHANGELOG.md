@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-07-14
+
 ### Fixed
 - **`--md` review no longer shows comments from a different file.** When several Markdown files
   were reviewed from the same project, they share one `.feedback/comments.json` — and in
@@ -529,7 +531,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.3
 [0.7.2]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.2
 [0.7.1]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.1
 [0.7.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.0

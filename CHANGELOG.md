@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-07-18
+
 ### Fixed
 - **Voice input works again on proxied sites that send a `Permissions-Policy` header.** Many
   hardened sites (and PHP/nginx hardening templates) send `Permissions-Policy: microphone=()`,
@@ -540,7 +542,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.7.4...HEAD
+[0.7.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.4
 [0.7.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.3
 [0.7.2]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.2
 [0.7.1]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.1

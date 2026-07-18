@@ -751,6 +751,11 @@ function proxyRequest(req, res) {
         // Drop CSP so the injected overlay (shadow-root assets + inline) can load.
         delete headers['content-security-policy'];
         delete headers['content-security-policy-report-only'];
+        // Drop Permissions-Policy (and legacy Feature-Policy): an upstream
+        // `microphone=()` would silently forbid the overlay's voice input —
+        // the browser never shows a permission prompt at all.
+        delete headers['permissions-policy'];
+        delete headers['feature-policy'];
         headers['cache-control'] = 'no-store';
         res.writeHead(pres.statusCode || 200, headers);
         res.end(html);

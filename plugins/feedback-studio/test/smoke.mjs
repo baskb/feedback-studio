@@ -402,7 +402,15 @@ try {
   let upstreamCookie = 'UNSET';
   const upstream = http.createServer((ureq, ures) => {
     upstreamCookie = ureq.headers.cookie || '';
-    ures.writeHead(200, { 'Content-Type': 'text/html' }); ures.end('<html><body>up</body></html>');
+    ures.writeHead(200, {
+      'Content-Type': 'text/html',
+      // Hardened-upstream headers the proxy must strip: CSP blocks the injected
+      // overlay; Permissions-Policy microphone=() silently forbids voice input
+      // (the browser never even shows a mic permission prompt).
+      'Content-Security-Policy': "default-src 'self'",
+      'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    });
+    ures.end('<html><body>up</body></html>');
   });
   await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
   const upPort = upstream.address().port;
@@ -415,8 +423,13 @@ try {
       pxSrv.stdout.on('data', (d) => { out += d.toString(); const m = /\?key=(sa_[\w-]+)/.exec(out); if (m) { clearTimeout(t); resolve({ admin: m[1] }); } });
     });
     // request a page route carrying the admin key cookie; the upstream must not see kbf-key
-    await fetch(`http://127.0.0.1:${PX_PORT}/`, { headers: { Cookie: `kbf-key=${pkeys.admin}; other=keepme` } });
+    const pxRes = await fetch(`http://127.0.0.1:${PX_PORT}/`, { headers: { Cookie: `kbf-key=${pkeys.admin}; other=keepme` } });
     check('proxy: share key stripped from forwarded Cookie', !/kbf-key/.test(upstreamCookie) && /keepme/.test(upstreamCookie));
+    // regression (2026-07-18): upstream CSP / Permissions-Policy must not reach
+    // the browser on injected HTML — microphone=() would kill voice comments
+    // with no permission prompt at all.
+    check('proxy: upstream CSP + Permissions-Policy stripped from injected HTML',
+      pxRes.headers.get('content-security-policy') === null && pxRes.headers.get('permissions-policy') === null);
   } finally {
     pxSrv.kill(); upstream.close();
   }

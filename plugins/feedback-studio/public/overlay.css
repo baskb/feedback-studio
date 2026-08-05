@@ -24,6 +24,7 @@
   --kbf-clay: #d97757;
   --kbf-clay-deep: #c4623f;
   --kbf-clay-tint: #f6e9e2;
+  --kbf-sent-fill: rgba(217, 119, 87, 0.16);
   --kbf-green: #4f8a5b;
   --kbf-amber: #c98a2b;
   --kbf-agent: #4f6bce;
@@ -79,6 +80,7 @@
     --kbf-clay: #e08862;
     --kbf-clay-deep: #c4623f;
     --kbf-clay-tint: #3a2a22;
+    --kbf-sent-fill: rgba(224, 136, 98, 0.26);
     --kbf-green: #6fae7b;
     --kbf-amber: #d8a24a;
     --kbf-agent: #7d93e0;
@@ -104,6 +106,7 @@
   --kbf-clay: #e08862;
   --kbf-clay-deep: #c4623f;
   --kbf-clay-tint: #3a2a22;
+  --kbf-sent-fill: rgba(224, 136, 98, 0.26);
   --kbf-green: #6fae7b;
   --kbf-amber: #d8a24a;
   --kbf-agent: #7d93e0;
@@ -325,6 +328,15 @@ button {
 }
 .kbf-highlight.is-on { opacity: 1; }
 .kbf-target { z-index: 4; }
+/* Sentence-level aiming (md mode): soft fill over the sentence under the
+   cursor, inside the block outline — a click comments on just that sentence. */
+.kbf-sent {
+  position: fixed;
+  pointer-events: none;
+  z-index: 1;
+  border-radius: 4px;
+  background: var(--kbf-sent-fill);
+}
 @keyframes kbf-sheen {
   from { background-position: 120% 0; }
   to   { background-position: -120% 0; }

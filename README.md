@@ -122,10 +122,7 @@ the batch while you're still on the couch, and the pins flip green as it goes.
 → *"start Feedback Studio, mobile-ready"* · `npx feedback-studio --dir dist --tunnel`
 
 **5. The writer with a 40-page draft.**
-Reports, plans, research — Markdown renders as a clean page and every heading,
-paragraph, and table cell is commentable: `rephrase`, `expand`, `delete`,
-`question`. Comments carry the **source file path**, so the agent edits the
-`.md`, never the throwaway HTML. The **Stamp .md** button can also write
+Reports, plans, research — Markdown renders as a clean page and every heading, paragraph, and table cell is commentable: `rephrase`, `expand`, `delete`, `question`. Point mode aims **per sentence**: hover a paragraph and the sentence under your cursor lights up — click and the comment anchors to just that sentence (aim at the paragraph's edge, or drag a selection, for anything else). Comments carry the **source file path**, so the agent edits the `.md`, never the throwaway HTML. The **Stamp .md** button can also write
 portable `<!-- @FB ... -->` markers straight into the file for handoff through
 git or a PR.
 → *"review report.md with Feedback Studio"* · `npx feedback-studio --md report.md`

@@ -201,6 +201,7 @@
   }
   ui.innerHTML = `
     <div class="kbf-highlight" id="kbf-hl"><span class="kbf-tag" id="kbf-tag"></span></div>
+    <div id="kbf-sents"></div>
     <div id="kbf-targets"></div>
     <div id="kbf-pins"></div>
     <div class="kbf-picker" id="kbf-picker">
@@ -260,6 +261,7 @@
   const hlTag = $('kbf-tag');
   const pinsLayer = $('kbf-pins');
   const targetsLayer = $('kbf-targets');
+  const sentsLayer = $('kbf-sents');
   const picker = $('kbf-picker');
   const pickerTag = $('kbf-picker-tag');
   const composerSlot = $('kbf-composer-slot');
@@ -423,10 +425,11 @@
       snippet: norm(el.textContent).slice(0, 140) || ('<' + el.nodeName.toLowerCase() + '>'),
     };
   }
-  function buildRangeAnchor(sel) {
-    const range = sel.getRangeAt(0);
+  function buildRangeAnchor(sel) { return buildRangeAnchorFromRange(sel.getRangeAt(0)); }
+  function buildRangeAnchorFromRange(range) {
     let container = range.commonAncestorContainer;
     if (container.nodeType !== 1) container = container.parentElement;
+    const text = norm(range.toString());
     return {
       type: 'range',
       selector: cssPath(container),
@@ -434,8 +437,8 @@
       xpath: xPath(container),
       tag: container.nodeName.toLowerCase(),
       id: container.id || '',
-      rangeText: norm(sel.toString()).slice(0, 240),
-      snippet: norm(sel.toString()).slice(0, 140),
+      rangeText: text.slice(0, 240),
+      snippet: text.slice(0, 140),
     };
   }
 
@@ -475,7 +478,7 @@
     if (on && !was && announce) toast('Point mode — click any element, or select text, to comment');
   }
 
-  function hideHighlight() { hl.classList.remove('is-on'); }
+  function hideHighlight() { hl.classList.remove('is-on'); clearSentence(); }
   function showHighlightFor(el) {
     const r = el.getBoundingClientRect();
     if (!r.width && !r.height) { hideHighlight(); return; }
@@ -486,6 +489,120 @@
     hlTag.textContent = el.nodeName.toLowerCase() + (el.id ? '#' + el.id : '');
     hl.classList.add('is-on');
   }
+
+  // ---------- sentence-level aiming (md mode) ----------
+  // In --md review the natural unit is often ONE sentence inside a paragraph.
+  // Hovering a text block keeps the whole-block outline, but the sentence under
+  // the cursor gets its own soft fill and a click anchors the comment to just
+  // that sentence — the same range anchor a manual text selection produces, so
+  // resolution and .md stamping need no new machinery. Aiming at the block's
+  // padding (or past the end of a line) still comments on the whole block, and
+  // a block that IS a single sentence stays a plain element anchor.
+  const SENT_BLOCKS = 'p, li, blockquote, dd, dt, td, th, figcaption, h1, h2, h3, h4, h5, h6';
+  let sentEls = []; // fill boxes over the hovered sentence (one per line box)
+  let sentCache = null; // { block, pieces, text, segs } for the block under the cursor
+
+  function clearSentence() {
+    sentEls.forEach((d) => d.remove());
+    sentEls = [];
+  }
+  function caretFromPoint(x, y) {
+    if (document.caretPositionFromPoint) {
+      const p = document.caretPositionFromPoint(x, y);
+      return p ? { node: p.offsetNode, offset: p.offset } : null;
+    }
+    if (document.caretRangeFromPoint) {
+      const r = document.caretRangeFromPoint(x, y);
+      return r ? { node: r.startContainer, offset: r.startOffset } : null;
+    }
+    return null;
+  }
+  // The block's text as one flat string plus the text nodes that make it up.
+  // Text belonging to a NESTED block (li > ul > li) or to a pre is that block's
+  // text, not this one's — skip it so offsets line up with what the user reads.
+  function sentTextMap(block) {
+    const pieces = [];
+    let len = 0;
+    const w = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    for (let n = w.nextNode(); n; n = w.nextNode()) {
+      const p = n.parentElement;
+      if (!p || p.closest('pre') || p.closest(SENT_BLOCKS) !== block) continue;
+      pieces.push({ node: n, start: len, end: len + n.data.length });
+      len += n.data.length;
+    }
+    return { pieces, text: pieces.map((x) => x.node.data).join('') };
+  }
+  function sentSegments(text) {
+    const raw = [];
+    if (window.Intl && Intl.Segmenter) {
+      for (const s of new Intl.Segmenter(undefined, { granularity: 'sentence' }).segment(text)) {
+        raw.push({ start: s.index, end: s.index + s.segment.length });
+      }
+    } else {
+      const re = /[^.!?…]+[.!?…]*['")\]]*\s*/g;
+      let m;
+      while ((m = re.exec(text))) raw.push({ start: m.index, end: m.index + m[0].length });
+    }
+    const segs = [];
+    for (const s of raw) {
+      let a = s.start, b = s.end;
+      while (a < b && /\s/.test(text[a])) a++;
+      while (b > a && /\s/.test(text[b - 1])) b--;
+      if (b > a) segs.push({ start: a, end: b });
+    }
+    return segs;
+  }
+  // The sentence under (x, y) as a live Range — or null when whole-block
+  // behaviour should apply (not md mode, not a text block, cursor off the
+  // text, or the block is a single sentence anyway).
+  function sentenceRangeAt(x, y, target) {
+    if (MODE !== 'md') return null;
+    const block = target instanceof Element ? target.closest(SENT_BLOCKS) : null;
+    if (!block || block.closest('pre, code')) return null;
+    const caret = caretFromPoint(x, y);
+    if (!caret || !caret.node || caret.node.nodeType !== 3) return null;
+    let data = sentCache;
+    if (!data || data.block !== block || !block.isConnected) {
+      const { pieces, text } = sentTextMap(block);
+      data = sentCache = { block, pieces, text, segs: sentSegments(text) };
+    }
+    if (data.segs.length < 2) return null;
+    const piece = data.pieces.find((p) => p.node === caret.node);
+    if (!piece) return null;
+    const off = piece.start + Math.min(caret.offset, caret.node.data.length);
+    const seg = data.segs.find((s) => off >= s.start && off <= s.end);
+    if (!seg) return null;
+    const sp = data.pieces.find((p) => seg.start >= p.start && seg.start < p.end);
+    const ep = data.pieces.find((p) => seg.end > p.start && seg.end <= p.end);
+    if (!sp || !ep) return null;
+    const range = document.createRange();
+    range.setStart(sp.node, seg.start - sp.start);
+    range.setEnd(ep.node, seg.end - ep.start);
+    // Only when the cursor is really over the sentence's own line boxes: the
+    // caret snaps to the NEAREST text, so without this check, hovering the
+    // block's padding would steal the whole-block click.
+    const hit = [...range.getClientRects()].some((r) => x >= r.left - 3 && x <= r.right + 3 && y >= r.top - 3 && y <= r.bottom + 3);
+    return hit ? range : null;
+  }
+  function showSentence(range) {
+    const rects = [...range.getClientRects()].filter((r) => r.width || r.height);
+    while (sentEls.length > rects.length) sentEls.pop().remove();
+    while (sentEls.length < rects.length) {
+      const d = document.createElement('div');
+      d.className = 'kbf-sent';
+      sentsLayer.appendChild(d);
+      sentEls.push(d);
+    }
+    rects.forEach((r, i) => {
+      sentEls[i].style.cssText = `left:${r.left - 2}px;top:${r.top - 1}px;width:${r.width + 4}px;height:${r.height + 2}px`;
+    });
+  }
+  // Console hook (like __kbfBuildAnchor): the sentence a point would anchor to.
+  window.__kbfSentenceAt = (x, y) => {
+    const el = document.elementFromPoint(x, y);
+    const r = el && sentenceRangeAt(x, y, el);
+    return r ? r.toString() : null;
+  };
 
   function isInUI(e) {
     if (e.composedPath) {
@@ -502,8 +619,12 @@
     rafHover = requestAnimationFrame(() => {
       rafHover = 0;
       const el = e.target;
-      if (el && el instanceof Element && el !== document.documentElement && el !== document.body) showHighlightFor(el);
-      else hideHighlight();
+      if (el && el instanceof Element && el !== document.documentElement && el !== document.body) {
+        showHighlightFor(el);
+        const sent = sentenceRangeAt(e.clientX, e.clientY, el);
+        if (sent) { showSentence(sent); hlTag.textContent += ' · sentence'; }
+        else clearSentence();
+      } else hideHighlight();
     });
   }, true);
 
@@ -540,7 +661,9 @@
       // never anchor a comment to a variant-preview candidate — it's throwaway DOM
       if (target.closest('[data-kbf-variant]')) return;
       if (type === 'mouse') {
-        openComposer({ kind: 'new', anchor: buildElementAnchor(target), rect: target.getBoundingClientRect(), el: target });
+        const sent = sentenceRangeAt(e.clientX, e.clientY, target);
+        if (sent) openComposer({ kind: 'new', anchor: buildRangeAnchorFromRange(sent), rect: sent.getBoundingClientRect(), range: sent });
+        else openComposer({ kind: 'new', anchor: buildElementAnchor(target), rect: target.getBoundingClientRect(), el: target });
       } else {
         startPick(target); // touch / pen: confirm + adjust with the picker
       }

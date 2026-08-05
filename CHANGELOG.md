@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-08-05
+
 ### Added
 - **Sentence-level aiming in `--md` review.** In Point mode, hovering a paragraph now softly highlights the sentence under your cursor (label shows `p · sentence`); clicking anchors the comment to exactly that sentence instead of the whole block. Works in paragraphs, list items, quotes, and table cells — including sentences that wrap across lines or contain `inline code`. Whole-block commenting is still there: aim at the block's edge (off the text), or use a block that is a single sentence anyway; code blocks never get sentence targeting. Sentence comments are stored as the same text-range anchors a manual selection produces, so agent processing and "Stamp .md" work unchanged. New console helper: `window.__kbfSentenceAt(x, y)`.
 
@@ -545,7 +547,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.7.4...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.7.5...HEAD
+[0.7.5]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.5
 [0.7.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.4
 [0.7.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.3
 [0.7.2]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.2

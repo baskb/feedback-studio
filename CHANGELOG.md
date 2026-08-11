@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **The Point highlight no longer stays behind on screen when you scroll.** The hover outline (and, in `--md` review, the sentence fill) was drawn at a fixed screen position, and a scroll fires no mouse event — so after scrolling, the highlight sat over whatever content had moved underneath it, and a click would comment on something other than what looked selected. The overlay now re-aims the highlight from the cursor's last known position on every scroll, so it always shows exactly what a click would pick. On touch screens (where there is no resting cursor) the stale highlight is cleared instead.
+
 ## [0.7.5] - 2026-08-05
 
 ### Added

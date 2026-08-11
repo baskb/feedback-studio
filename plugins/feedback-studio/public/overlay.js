@@ -55,6 +55,7 @@
   let recognition = null;
   let voiceManualStop = false; // true when the user (not a pause) stopped dictation
   let rafHover = 0;
+  let lastMouse = null; // last known cursor position — lets a scroll re-aim the hover highlight
   // Voice dictation languages (BCP-47, the most widely spoken + common dev locales).
   // The UI is English by default; this only sets the speech-recognition language.
   const LANGS = [
@@ -612,21 +613,41 @@
     return !!(e.target && host.contains(e.target));
   }
 
+  // Aim the hover highlight at whatever sits under (x, y) — shared by mousemove
+  // and the scroll re-aim, so the preview always matches what a click would pick.
+  function aimHoverAt(el, x, y) {
+    if (el && el instanceof Element && el !== document.documentElement && el !== document.body) {
+      showHighlightFor(el);
+      const sent = sentenceRangeAt(x, y, el);
+      if (sent) { showSentence(sent); hlTag.textContent += ' · sentence'; }
+      else clearSentence();
+    } else hideHighlight();
+  }
+
   document.addEventListener('mousemove', (e) => {
+    lastMouse = { x: e.clientX, y: e.clientY };
     if (!mode || activeComposer) return;
     if (isInUI(e)) { hideHighlight(); return; }
     if (rafHover) return;
     rafHover = requestAnimationFrame(() => {
       rafHover = 0;
-      const el = e.target;
-      if (el && el instanceof Element && el !== document.documentElement && el !== document.body) {
-        showHighlightFor(el);
-        const sent = sentenceRangeAt(e.clientX, e.clientY, el);
-        if (sent) { showSentence(sent); hlTag.textContent += ' · sentence'; }
-        else clearSentence();
-      } else hideHighlight();
+      aimHoverAt(e.target, e.clientX, e.clientY);
     });
   }, true);
+
+  // Scrolling moves the page under a stationary cursor without firing mousemove,
+  // so the fixed-position highlight used to stay glued to the screen and ride
+  // over content it never belonged to. Re-aim from the last known cursor
+  // position instead — but only while plain Point-mode hovering owns the
+  // highlight (not the touch picker or the walkthrough, which place it
+  // deliberately), and never from a touch point (no cursor to re-aim from).
+  function reaimHover() {
+    if (!mode || activeComposer || !lastMouse || walkState) return;
+    if (pickChain.length && picker.style.display !== 'none') return;
+    const el = document.elementFromPoint(lastMouse.x, lastMouse.y);
+    if (!el || el === host || host.contains(el)) { hideHighlight(); return; }
+    aimHoverAt(el, lastMouse.x, lastMouse.y);
+  }
 
   document.addEventListener('click', (e) => {
     if (!mode || isInUI(e)) return;
@@ -639,6 +660,9 @@
   // picker to walk up/down the DOM, because phones have no hover to preview with.
   let pdown = null;
   document.addEventListener('pointerdown', (e) => {
+    // A touch has no resting cursor — forget the mouse point so a touch scroll
+    // can't resurrect a hover highlight at a stale position.
+    if (e.pointerType && e.pointerType !== 'mouse') lastMouse = null;
     if (!mode || isInUI(e)) return;
     pdown = { x: e.clientX, y: e.clientY, type: e.pointerType };
   }, true);
@@ -2885,6 +2909,7 @@
       rafPos = 0;
       positionPins();
       positionTarget();
+      reaimHover();
       if (pickChain.length && picker.style.display !== 'none') renderPick();
       if (variantPreview) positionVariantBar();
     });

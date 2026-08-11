@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-08-11
+
 ### Fixed
 - **The Point highlight no longer stays behind on screen when you scroll.** The hover outline (and, in `--md` review, the sentence fill) was drawn at a fixed screen position, and a scroll fires no mouse event — so after scrolling, the highlight sat over whatever content had moved underneath it, and a click would comment on something other than what looked selected. The overlay now re-aims the highlight from the cursor's last known position on every scroll, so it always shows exactly what a click would pick. On touch screens (where there is no resting cursor) the stale highlight is cleared instead.
 
@@ -550,7 +552,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.7.5...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.7.6...HEAD
+[0.7.6]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.6
 [0.7.5]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.5
 [0.7.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.4
 [0.7.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.3

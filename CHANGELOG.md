@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-12
+
 ### Fixed
 - **A spoken comment can no longer auto-anchor on a cursor graze.** In "Talk me through it", any hover overlap — even a millisecond of the cursor passing through an element — counted as a "dwell", and a dwell plus a common pointing word ("this", "that", "it") on a single candidate earned high confidence with no score check, silently pinning the comment to an element the reviewer never meant. A hover now has to last at least 250ms to count as pointing; anything shorter asks for a pin instead of guessing. Deliberate brief points (speak-then-point) still anchor as before. (Found by ultra review.)
 - **Share links can no longer post as the agent.** The HTTP API accepted a client-supplied `author: "agent"` on comments and replies, so anyone with a comment-role share link could post notes that rendered with the agent's bot pin and blue styling and exported as "by agent" — spoofed agent authority on a shared review. The agent author is now reserved for the host side (the keyless local session and admin links); a share reviewer claiming it is recorded as a normal user comment. The real agent workflow is unchanged. (Found by ultra review.)
@@ -565,7 +567,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.0
 [0.8.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.8.0
 [0.7.6]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.6
 [0.7.5]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.5

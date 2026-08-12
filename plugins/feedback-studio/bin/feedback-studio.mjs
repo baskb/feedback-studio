@@ -1079,6 +1079,19 @@ function mdDocShell(title, sourceRel, sourceDisplay, bodyHtml) {
   table { border-collapse:collapse; display:block; width:max-content; max-width:100%; overflow-x:auto; margin:1.3em 0; font:14px/1.5 ui-sans-serif,system-ui,sans-serif; }
   th,td { border:1px solid var(--rule); padding:8px 11px; text-align:left; } th { background:#f1eee6; font-weight:650; }
   img { max-width:100%; border-radius:8px; } hr { border:none; border-top:1px solid var(--rule); margin:2.4em 0; }
+  /* Collapsible chapters (H1–H3). Folding only sets [hidden] on the EXISTING
+     sibling elements — nothing is wrapped or moved — so comment anchors
+     (nth-of-type paths, XPath) keep pointing at the same nodes. */
+  .doc > h1, .doc > h2, .doc > h3 { position:relative; cursor:pointer; }
+  .doc > h1::before, .doc > h2::before, .doc > h3::before {
+    content:'▸'; position:absolute; left:-1.15em; top:50%; transform:translateY(-50%) rotate(90deg);
+    font-size:.62em; color:var(--muted); opacity:.45; transition:transform .15s ease, opacity .15s ease; }
+  .doc > h1:hover::before, .doc > h2:hover::before, .doc > h3:hover::before { opacity:1; color:var(--clay); }
+  .doc > h1.is-folded::before, .doc > h2.is-folded::before, .doc > h3.is-folded::before { transform:translateY(-50%) rotate(0); opacity:.85; }
+  .doc > .is-folded::after { content:'…'; margin-left:.45em; font-size:.7em; font-weight:400; color:var(--muted); }
+  /* The author-origin "table { display:block }" above outranks the browser's
+     built-in [hidden] rule — restate it so folded tables actually hide. */
+  .doc > [hidden] { display:none !important; }
 </style></head>
 <body>
   <article class="doc">
@@ -1086,6 +1099,70 @@ function mdDocShell(title, sourceRel, sourceDisplay, bodyHtml) {
     ${bodyHtml}
   </article>
   <script>window.__kbfMode="md";window.__kbfSource=${JSON.stringify(sourceRel || '').replace(/</g, '\\u003c')};</script>
+  <script>
+  // Collapsible chapters. Clicking an H1/H2/H3 hides everything below it up to
+  // the next heading of the same or higher level, by toggling [hidden] on the
+  // existing siblings — the DOM keeps its exact shape, so comment anchors stay
+  // valid (a hidden target simply has no box; the overlay keeps its pin hidden
+  // until the chapter reopens). The overlay announces 'kbf:reveal' before it
+  // scrolls to a comment target; any folded chapter hiding that target reopens.
+  (() => {
+    const doc = document.querySelector('.doc');
+    if (!doc) return;
+    const isHead = (el) => /^H[1-3]$/.test(el.tagName);
+    const level = (el) => +el.tagName[1];
+    const heads = [...doc.children].filter(isHead);
+    if (!heads.length) return;
+    const KEY = 'kbf-md-fold:' + (window.__kbfSource || location.pathname);
+    const folded = new Set();
+    try { for (const i of JSON.parse(sessionStorage.getItem(KEY) || '[]')) if (heads[i]) folded.add(heads[i]); } catch (e) {}
+
+    function apply() {
+      let hideAt = Infinity; // level of the folded heading whose chapter we're inside
+      for (const el of doc.children) {
+        if (isHead(el) && level(el) <= hideAt) {
+          el.hidden = false;
+          el.classList.toggle('is-folded', folded.has(el));
+          hideAt = folded.has(el) ? level(el) : Infinity;
+        } else {
+          el.hidden = hideAt !== Infinity;
+        }
+      }
+      try { sessionStorage.setItem(KEY, JSON.stringify(heads.flatMap((h, i) => (folded.has(h) ? [i] : [])))); } catch (e) {}
+      window.dispatchEvent(new Event('resize')); // overlay re-measures pins now, not on the next scroll
+    }
+
+    doc.addEventListener('click', (e) => {
+      const h = e.target.closest && e.target.closest('h1,h2,h3');
+      if (!h || h.parentElement !== doc) return;
+      if (e.target.closest('a')) return; // a link inside a heading still navigates
+      const sel = window.getSelection && window.getSelection();
+      if (sel && !sel.isCollapsed) return; // selecting heading text, not toggling
+      if (folded.has(h)) folded.delete(h); else folded.add(h);
+      apply();
+    });
+
+    function chapterHas(h, node) {
+      let top = node;
+      while (top && top.parentElement !== doc) top = top.parentElement;
+      if (!top) return false;
+      for (let sib = h.nextElementSibling; sib; sib = sib.nextElementSibling) {
+        if (isHead(sib) && level(sib) <= level(h)) return false;
+        if (sib === top) return true;
+      }
+      return false;
+    }
+    document.addEventListener('kbf:reveal', (e) => {
+      const t = e.detail && e.detail.el;
+      if (!t || !folded.size) return;
+      let changed = false;
+      for (const h of heads) if (folded.has(h) && chapterHas(h, t)) { folded.delete(h); changed = true; }
+      if (changed) apply();
+    });
+
+    if (folded.size) apply(); // restore this tab's fold state from before a reload
+  })();
+  </script>
 </body></html>`;
 }
 

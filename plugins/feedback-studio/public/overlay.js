@@ -1554,6 +1554,7 @@
     });
 
     variantPreview = { comment, reply, el, prevDisplay: el.style.display, container, bar, index: -1, scrubbed: [] };
+    revealEl(el);
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     showVariant(-1);
     setTimeout(positionVariantBar, 300); // after the scroll settles
@@ -2056,7 +2057,7 @@
     walkBar.querySelector('.kbf-walk-step').textContent = (i + 1) + ' / ' + walkState.list.length;
     walkBar.querySelector('.kbf-walk-text').textContent = text;
     const el = resolveAnchor(c.anchor);
-    if (el) { try { el.scrollIntoView({ behavior: REDUCED_MOTION ? 'auto' : 'smooth', block: 'center' }); } catch (e) {} showHighlightFor(el); flashEl(el); }
+    if (el) { revealEl(el); try { el.scrollIntoView({ behavior: REDUCED_MOTION ? 'auto' : 'smooth', block: 'center' }); } catch (e) {} showHighlightFor(el); flashEl(el); }
     else hideHighlight();
     updateWalkIcon();
     if (walkState.playing) speakWalk(text, () => { if (walkState && walkState.playing) walkGo(walkState.i + 1); });
@@ -3177,9 +3178,18 @@
     }
   }
 
+  // Before scrolling to a host element, let the host page un-hide it: the --md
+  // doc shell listens for this and reopens a folded chapter that contains the
+  // target. On pages without a listener it's a no-op.
+  function revealEl(el) {
+    if (!el) return;
+    try { document.dispatchEvent(new CustomEvent('kbf:reveal', { detail: { el } })); } catch (e) {}
+  }
+
   function focusComment(id, openPanel) {
     const p = placed.find((x) => x.comment.id === id);
     if (p) {
+      revealEl(p.el);
       p.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       flashEl(p.el);
       root.querySelectorAll('.kbf-pin').forEach((pin) => pin.classList.remove('is-active'));
@@ -3209,7 +3219,7 @@
   function editFromCard(c) {
     const el = resolveAnchor(c.anchor);
     const rect = el ? el.getBoundingClientRect() : { left: window.innerWidth / 2 - 170, right: 0, top: 120, bottom: 140 };
-    if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    if (el) { revealEl(el); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
     setTimeout(() => openComposer({ kind: 'edit', anchor: c.anchor, rect: (el ? el.getBoundingClientRect() : rect), comment: c, el }), el ? 260 : 0);
   }
 

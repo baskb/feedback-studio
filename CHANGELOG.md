@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Collapsible chapters in `--md` review.** Click any H1–H3 heading to fold everything below it up to the next heading of the same or higher level; click again to expand. A chevron next to the heading shows the state, a folded heading gets a trailing "…", and fold state survives a reload of that tab (per file). Folding never touches the document structure — it only hides the existing elements — so every comment anchor keeps pointing at the same nodes, and pins on folded content simply hide until the chapter reopens. A fold can also never hide a comment from you: jumping to a comment (from the List, the walkthrough, or editing from a card) automatically reopens any folded chapter containing its target.
+
 ## [0.7.6] - 2026-08-11
 
 ### Fixed

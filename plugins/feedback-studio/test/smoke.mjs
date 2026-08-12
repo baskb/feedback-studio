@@ -506,6 +506,11 @@ try {
       const bHtml = await (await fetch(MDB + '/')).text();
       check('--md: each page carries its own sourceFile as __kbfSource',
         aHtml.includes('window.__kbfSource="docs/a.md"') && bHtml.includes('window.__kbfSource="docs/b.md"'));
+      // Collapsible chapters ship with the doc shell: the fold script (keyed
+      // per file via sessionStorage), the reveal hook the overlay talks to, and
+      // the CSS that makes [hidden] win over the table display override.
+      check('--md: doc shell includes the chapter-fold script and reveal hook',
+        aHtml.includes('kbf-md-fold') && aHtml.includes('kbf:reveal') && aHtml.includes('.doc > [hidden]'));
     } else {
       console.log('SKIP  --md: __kbfSource render check (marked renderer unavailable)');
     }

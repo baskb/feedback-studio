@@ -88,7 +88,7 @@ Every story below is one sentence to your agent (or one `npx` line) away.
 
 **1. The builder with a half-finished landing page.**
 You squint at your dev build and see eleven small things wrong. Instead of
-writing a novel in the chat box, you press **C**, click each thing, and type a
+writing a novel in the chat box, you press **P**, click each thing, and type a
 line: *"this should say beans, not beens"*, *"make this button do something"*.
 Then: **PPF**. Your agent fixes each one at the exact element you pointed at,
 shows you the diffs, and the pins flip green as it goes.
@@ -101,7 +101,7 @@ colors, corners, opacity — and watch the page respond **live** until it looks
 right. Save, and the exact values (`padding: 16px → 24px`) travel to your agent,
 which writes them into your real CSS, Tailwind classes, or design tokens. The
 preview reverts; the source gets the truth. No more "a bit more air maybe?".
-→ press **C**, click the element, open *Tweak style*
+→ press **P**, click the element, open *Tweak style*
 
 **3. The copy editor at heart.**
 Why describe a wording change when you can just… type it? **Double-click** any
@@ -234,7 +234,7 @@ Or `npm i -g feedback-studio`, or run `node plugins/feedback-studio/bin/feedback
 | `--seed-agents` | Append the processing workflow to this project's `CLAUDE.md` + `AGENTS.md` (idempotent), then exit — so any agent knows the flow without the plugin. |
 
 The overlay starts in **light theme** (panel toggle for dark, remembered per
-browser). Drag the **Comment button** to any corner; on desktop, drag a composer
+browser). Drag the **Point button** to any corner; on desktop, drag a composer
 by its header. Use **Chrome or Edge** for voice.
 
 ### Several sites in one repo

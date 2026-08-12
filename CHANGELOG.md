@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **A spoken comment can no longer auto-anchor on a cursor graze.** In "Talk me through it", any hover overlap — even a millisecond of the cursor passing through an element — counted as a "dwell", and a dwell plus a common pointing word ("this", "that", "it") on a single candidate earned high confidence with no score check, silently pinning the comment to an element the reviewer never meant. A hover now has to last at least 250ms to count as pointing; anything shorter asks for a pin instead of guessing. Deliberate brief points (speak-then-point) still anchor as before. (Found by ultra review.)
+- **Share links can no longer post as the agent.** The HTTP API accepted a client-supplied `author: "agent"` on comments and replies, so anyone with a comment-role share link could post notes that rendered with the agent's bot pin and blue styling and exported as "by agent" — spoofed agent authority on a shared review. The agent author is now reserved for the host side (the keyless local session and admin links); a share reviewer claiming it is recorded as a normal user comment. The real agent workflow is unchanged. (Found by ultra review.)
+- **Onboarding text no longer says "Press C".** The demo banner, the README, the demo skill, and the overlay's own empty-state hint all still referenced the old C shortcut and "Comment button" — the shortcut is P and the button is labeled Point. All six spots now match the product. (Found by ultra review.)
+
 ## [0.8.0] - 2026-08-12
 
 ### Changed

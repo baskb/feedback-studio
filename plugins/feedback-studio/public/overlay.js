@@ -2976,7 +2976,7 @@
 
     const view = filtered(comments);
     if (!view.length) {
-      listEl.innerHTML = `<div class="kbf-empty">${I.empty}<p>${comments.length ? 'Nothing in this filter.' : 'No comments yet.<br>Turn on comment mode and click anything on the page.<br><span class="kbf-empty-kbd">Press <kbd>C</kbd> to toggle comment mode.</span>'}</p></div>`;
+      listEl.innerHTML = `<div class="kbf-empty">${I.empty}<p>${comments.length ? 'Nothing in this filter.' : 'No comments yet.<br>Turn on Point mode and click anything on the page.<br><span class="kbf-empty-kbd">Press <kbd>P</kbd> to toggle Point mode.</span>'}</p></div>`;
       return;
     }
 
@@ -3565,7 +3565,7 @@
           fabWrap.addEventListener('transitionend', landHandler);
           landTimer = setTimeout(settleLanding, 320); // safety net if transitionend is missed
         }
-        toast('Comment button moved to ' + CORNER_NAME[corner]);
+        toast('Buttons moved to ' + CORNER_NAME[corner]);
         justDraggedFab = true; // swallow the click that fires right after this pointerup
         setTimeout(() => { justDraggedFab = false; }, 0);
       }

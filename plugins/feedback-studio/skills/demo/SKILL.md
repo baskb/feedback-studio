@@ -43,7 +43,7 @@ Pass through any extra flags the user asked for (`--tunnel` for phone voice, `--
 Open the URL (`start <url>` Windows / `open <url>` macOS / `xdg-open <url>` Linux), then
 tell the user, briefly:
 
-1. The page starts empty — press **C** (or the Comment button), then click any element or
+1. The page starts empty — press **P** (or the Point button), then click any element or
    select text to leave a comment; the **mic** dictates. (If they ran `--seeded`, three
    example pins are already there to click and read.)
 2. Two flaws are hidden on the page — a bland say-nothing headline and a stale footer year —

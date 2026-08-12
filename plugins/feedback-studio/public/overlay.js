@@ -109,8 +109,10 @@
   const TYPES = TYPE_SETS[MODE] || TYPE_SETS.web;
   const TYPE_IDS = TYPES.map((t) => t.id);
   const placeholderFor = (id) => (TYPES.find((t) => t.id === id) || {}).placeholder || PLACEHOLDER;
-  let ctype = LS.get('kbf-ctype-' + MODE) || TYPES[0].id;
-  if (!TYPE_IDS.includes(ctype)) ctype = TYPES[0].id;
+  // Every new comment starts at the mode default (web: fix, md: comment); the
+  // type is NOT remembered between comments — a leftover "delete" on a note
+  // that was meant as a plain comment is an error waiting to happen.
+  let ctype = TYPES[0].id;
 
   function normalizePath(p) {
     // '/x' and '/x/' serve the same content here — collapse to one key so pins
@@ -2516,6 +2518,7 @@
     activeComposer = opts;
     hideHighlight();
     const isEdit = opts.kind === 'edit';
+    if (!isEdit) ctype = TYPES[0].id; // new comment: back to the mode default, never the previous pick
     const anchor = opts.anchor;
     const kindLabel = anchor.type === 'range' ? 'text' : (anchor.tag || 'element');
     const snippet = norm(anchor.snippet || anchor.rangeText) || ('<' + (anchor.tag || 'element') + '>');
@@ -2642,7 +2645,6 @@
       const typeBtn = e.target.closest('[data-type]');
       if (typeBtn) {
         ctype = typeBtn.dataset.type;
-        LS.set('kbf-ctype-' + MODE, ctype);
         if (opts.markTypePicked) opts.markTypePicked();
         box.querySelectorAll('.kbf-type').forEach((b) => b.classList.toggle('is-active', b.dataset.type === ctype));
         const taEl = box.querySelector('.kbf-textarea'); // prompt matches the picked type

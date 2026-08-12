@@ -86,6 +86,9 @@ const W = {
   click: 5.0,        // a click/tap is a deliberate, unambiguous "this one"
   dwellPerSec: 1.33, // per hover-second on an element, capped (idle hover ≠ intent)
   dwellCapSec: 1.5,  // beyond this a hover is likely idle/background, not pointing
+  dwellMinMs: 250,   // below this an overlap is a graze (cursor passing through),
+                     // not a point — it scores, but never counts as a dwell SIGNAL,
+                     // so it can never combine with a deictic word into 'high'
   deixisMult: 1.5,   // multiply pointer scores when the utterance is deictic
   textMatch: 3.0,    // element's visible text is named in the utterance
   cursorAtEnd: 0.6,  // where the cursor sat as the phrase finalised
@@ -120,7 +123,7 @@ function pickTarget(utterance, hovers, clicks, win) {
     if (!c) { c = { key, anchor, text: text || '', score: 0, signals: new Set() }; cand.set(key, c); }
     if (anchor && !c.anchor) c.anchor = anchor;
     if (text && !c.text) c.text = text;
-    c.score += amt; c.signals.add(sig);
+    c.score += amt; if (sig) c.signals.add(sig);
   };
 
   // Pointer signals first, so the deixis boost applies to POINTER evidence only:
@@ -131,7 +134,10 @@ function pickTarget(utterance, hovers, clicks, win) {
   //    of intent and — crucially — must never by itself earn 'high'.
   for (const h of hovers || []) {
     const overlap = Math.max(0, Math.min(h.t1, win.hi) - Math.max(h.t0, win.lo));
-    if (overlap > 0) bump(h.key, h.anchor, h.text, Math.min(overlap / 1000, W.dwellCapSec) * W.dwellPerSec, 'dwell');
+    // An overlap under dwellMinMs is a graze — the cursor passing through, not a
+    // point. It still scores (negligibly) but earns NO dwell signal, so it can
+    // never reach the dwell+deixis 'high' branch below.
+    if (overlap > 0) bump(h.key, h.anchor, h.text, Math.min(overlap / 1000, W.dwellCapSec) * W.dwellPerSec, overlap >= W.dwellMinMs ? 'dwell' : null);
     if (win.end != null && h.t0 <= win.end && h.t1 >= win.end) bump(h.key, h.anchor, h.text, W.cursorAtEnd, 'cursorEnd');
   }
   if (deictic) for (const c of cand.values()) c.score *= W.deixisMult;
@@ -151,8 +157,9 @@ function pickTarget(utterance, hovers, clicks, win) {
   // intent, never coincidental cursor rest:
   //  - a click or a named-text match (strong, unambiguous), and no competing
   //    strong candidate is beating it; OR
-  //  - a real hover DWELL while the reviewer was actually pointing (deictic
-  //    "this/that/here"), and a clear winner (no coin-flip).
+  //  - a real hover DWELL (>= dwellMinMs — a millisecond graze never counts)
+  //    while the reviewer was actually pointing (deictic "this/that/here"),
+  //    and a clear winner (no coin-flip).
   // Everything else is 'medium'/'low' → the draft asks for a pin rather than
   // anchoring on where the cursor happened to be.
   const strong = best.signals.has('click') || best.signals.has('text');

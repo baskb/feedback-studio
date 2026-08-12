@@ -99,6 +99,25 @@ test('ambient cursor rest never earns high (no deixis, no click, no text-match)'
   assert.equal(d.needsPin, true);
 });
 
+test('a millisecond cursor graze plus a deictic word never earns high', () => {
+  // The cursor merely passed through #x for 10ms as the phrase finalised, and
+  // "it" is deictic — a graze is not a point, so this must ask for a pin, not
+  // auto-anchor (the ultrareview bug_003 regression: any overlap > 0 used to
+  // count as a dwell, and dwell+deixis+single-candidate skipped every score gate).
+  const [d] = correlate([seg(3000, 'make it work')], { hovers: [hover('#x', 'X', 2990, 3000)], clicks: [] });
+  assert.notEqual(d.confidence, 'high');
+  assert.equal(d.needsPin, true);
+  assert.equal(d.anchor, null);
+});
+
+test('a brief but deliberate point (400ms) still anchors high', () => {
+  // Guard the other side of the dwellMinMs floor: speak-then-point with a short
+  // real dwell is a designed high-confidence case and must survive the graze fix.
+  const [d] = correlate([seg(3000, 'this here')], { hovers: [hover('#y', 'Y', 3100, 3500)], clicks: [] });
+  assert.equal(d.confidence, 'high');
+  assert.equal(d.anchor && d.anchor.selector, '#y');
+});
+
 test('a click still wins over a long ambient hover on a different element', () => {
   // regression guard: the deixis/scoring reorder must not let an ambient dwell
   // block a deliberate click (a click is never "contested" by a mere hover).

@@ -498,7 +498,11 @@ async function handleApi(req, res, url) {
           const c = list.find((x) => x.id === id);
           if (!c) return { comments: list, value: { notFound: true } };
           if (!Array.isArray(c.thread)) c.thread = [];
-          const reply = makeReply({ author: body.author, authorName: body.authorName, text: body.text, variants: body.variants, pick: body.pick });
+          // The agent voice belongs to the host side (full/admin — the local
+          // agent runs keyless as 'full'; MCP hard-codes it). A share-link
+          // reviewer claiming author:"agent" would render with the agent's
+          // visual authority and export "by agent" — downgrade, don't trust.
+          const reply = makeReply({ author: canManage ? body.author : 'user', authorName: body.authorName, text: body.text, variants: body.variants, pick: body.pick });
           c.thread.push(reply);
           c.updatedAt = new Date().toISOString();
           return { comments: list, value: { comment: c, reply } };
@@ -512,7 +516,8 @@ async function handleApi(req, res, url) {
         if (!canComment) return deny();
         const body = await readJson(req);
         const comment = await mutate(DATA_DIR, (list) => {
-          const c = makeComment(body);
+          // Same rule as replies: only full/admin may author as the agent.
+          const c = makeComment(canManage ? body : { ...body, author: 'user' });
           list.push(c);
           return { comments: list, value: c };
         });
@@ -1412,11 +1417,11 @@ function banner(scheme, ips, publicUrl) {
     console.log(`  Agent setup      ->  optional: re-run with --seed-agents to teach CLAUDE.md / AGENTS.md the flow.`);
   }
   if (DEMO && args['no-seed']) {
-    console.log(`\n  Starting empty — no comments yet. Press C, click anything, leave a comment;`);
+    console.log(`\n  Starting empty — no comments yet. Press P, click anything, leave a comment;`);
     console.log(`  then let your agent process ${path.join(DATA_DIR, 'comments.json')}.`);
   } else if (DEMO) {
     console.log(`\n  3 comments are pre-seeded (one fix, one change, one improve) — and the page`);
-    console.log(`  hides a couple more flaws to find. Press C, click anything, leave a comment;`);
+    console.log(`  hides a couple more flaws to find. Press P, click anything, leave a comment;`);
     console.log(`  then let your agent process ${path.join(DATA_DIR, 'comments.json')}.`);
   }
   if (SHARE) {

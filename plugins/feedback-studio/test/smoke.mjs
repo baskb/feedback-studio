@@ -381,6 +381,21 @@ try {
       method: 'POST', headers: J, body: JSON.stringify({ state: 'online' }),
     });
     check('share: comment role cannot impersonate the agent', asDeny.status === 403);
+    // Author spoofing (ultrareview bug_001): a comment-role reviewer claiming
+    // author:"agent" in the body must be downgraded to "user" (the agent voice
+    // renders with visual authority and exports "by agent"); full/admin — the
+    // host side, where the real agent posts over HTTP — keeps it.
+    const spoofC = await (await fetch(SH + `/__feedback/api/comments?key=${keys.comment}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ page: '/', text: 'spoofed', author: 'agent', authorName: 'Claude', anchor: { snippet: 'Hi' } }),
+    })).json();
+    const spoofR = await (await fetch(SH + `/__feedback/api/comments/${spoofC.comment.id}/reply?key=${keys.comment}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ author: 'agent', authorName: 'Claude', text: 'approved' }),
+    })).json();
+    const realA = await (await fetch(SH + `/__feedback/api/comments/${spoofC.comment.id}/reply?key=${keys.admin}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ author: 'agent', authorName: 'agent', text: 'actual agent reply' }),
+    })).json();
+    check('share: comment role cannot spoof author:"agent" on comments or replies (admin can)',
+      spoofC.comment.author === 'user' && spoofR.reply.author === 'user' && realA.reply.author === 'agent');
     const page = await fetch(SH + `/?key=${keys.view}`, { redirect: 'manual' });
     const cookie = page.headers.get('set-cookie') || '';
     check('share: page key exchanges into an HttpOnly cookie + clean redirect',

@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-12
+
 ### Changed
 - **Every new comment starts at the default type again** (web: `fix`, md: `comment`) instead of remembering the type you picked last time. A leftover "delete" or "improve" from a previous note silently changing what the agent is allowed to do to the next one was an error waiting to happen.
 
@@ -558,7 +560,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.7.6...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.8.0
 [0.7.6]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.6
 [0.7.5]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.5
 [0.7.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.4

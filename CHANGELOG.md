@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-18
+
 ### Changed
 - **The List panel now shows the newest activity on top.** Comments used to appear in the order they were created, so a new comment — or an agent reply on an old one — landed at the bottom of a long list and took a lot of scrolling to find. The list is now sorted by last activity (created, edited, replied to, or status changed), newest first, and a fresh reply floats its comment back to the top. Pages other than the current one are ordered the same way, by their newest activity. Pin numbers on the page are untouched: they keep the stable creation order, so sorting the list never renumbers a pin.
 
@@ -570,7 +572,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.1
 [0.9.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.0
 [0.8.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.8.0
 [0.7.6]: https://github.com/baskb/feedback-studio/releases/tag/v0.7.6

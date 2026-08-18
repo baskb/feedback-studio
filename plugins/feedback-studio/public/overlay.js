@@ -2974,7 +2974,16 @@
     subEl.textContent = `${comments.length} comment${comments.length === 1 ? '' : 's'} · ${open} open`
       + (agentOpen ? ` · ${agentOpen} from your agent to review` : '');
 
-    const view = filtered(comments);
+    // Newest activity first: a fresh comment OR a fresh reply/status change
+    // floats its card to the top, so a long list never needs scrolling to find
+    // what just happened. Sorts a copy — the `comments` array keeps creation
+    // order because pin numbers (pageIndex below) are derived from it.
+    const lastTouch = (c) => {
+      let t = (c.updatedAt && c.updatedAt > (c.createdAt || '')) ? c.updatedAt : (c.createdAt || '');
+      for (const r of (Array.isArray(c.thread) ? c.thread : [])) if (r.createdAt && r.createdAt > t) t = r.createdAt;
+      return t;
+    };
+    const view = filtered(comments).slice().sort((a, b) => lastTouch(b).localeCompare(lastTouch(a)));
     if (!view.length) {
       listEl.innerHTML = `<div class="kbf-empty">${I.empty}<p>${comments.length ? 'Nothing in this filter.' : 'No comments yet.<br>Turn on Point mode and click anything on the page.<br><span class="kbf-empty-kbd">Press <kbd>P</kbd> to toggle Point mode.</span>'}</p></div>`;
       return;
@@ -2987,7 +2996,10 @@
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(c);
     }
-    const keys = [...groups.keys()].sort((a, b) => (a === PAGE ? -1 : b === PAGE ? 1 : a.localeCompare(b)));
+    // Current page first; other pages by their newest activity (each group's
+    // first card is its newest, because `view` is already sorted).
+    const keys = [...groups.keys()].sort((a, b) => (a === PAGE ? -1 : b === PAGE ? 1
+      : lastTouch(groups.get(b)[0]).localeCompare(lastTouch(groups.get(a)[0]))));
 
     // index map per page for pin numbers (based on full page list, not filtered)
     const pageIndex = new Map();

@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **The List panel now shows the newest activity on top.** Comments used to appear in the order they were created, so a new comment — or an agent reply on an old one — landed at the bottom of a long list and took a lot of scrolling to find. The list is now sorted by last activity (created, edited, replied to, or status changed), newest first, and a fresh reply floats its comment back to the top. Pages other than the current one are ordered the same way, by their newest activity. Pin numbers on the page are untouched: they keep the stable creation order, so sorting the list never renumbers a pin.
+
 ## [0.9.0] - 2026-08-12
 
 ### Fixed

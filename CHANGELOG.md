@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Links in a reviewed Markdown document now open in a new tab.** Clicking a link in a `--md` document used to navigate the review tab itself, losing your scroll position, folded chapters, and any half-written comment. External links and links to other documents now open in a new tab (with `rel="noopener noreferrer"`); in-page `#anchor` links still jump within the document, and the file-index page keeps its normal same-tab navigation.
+
 ## [0.9.1] - 2026-08-18
 
 ### Changed

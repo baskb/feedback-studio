@@ -484,7 +484,7 @@ try {
   // overlay could not separate them and the bleed would be back.
   const mdCwd = path.join(root, 'mdcwd');
   mkdirSync(path.join(mdCwd, 'docs'), { recursive: true });
-  writeFileSync(path.join(mdCwd, 'docs', 'a.md'), '# Alpha\n\nFirst doc paragraph.\n');
+  writeFileSync(path.join(mdCwd, 'docs', 'a.md'), '# Alpha\n\nFirst doc paragraph.\n\nSee [the site](https://example.com/x), [chapter](#alpha), [doc B](b.md).\n');
   writeFileSync(path.join(mdCwd, 'docs', 'b.md'), '# Bravo\n\nSecond doc paragraph.\n');
   const MDA_PORT = PORT + 7;
   const MDB_PORT = PORT + 8;
@@ -526,6 +526,14 @@ try {
       // the CSS that makes [hidden] win over the table display override.
       check('--md: doc shell includes the chapter-fold script and reveal hook',
         aHtml.includes('kbf-md-fold') && aHtml.includes('kbf:reveal') && aHtml.includes('.doc > [hidden]'));
+      // Links in the doc body open in a new tab (external AND relative-to-
+      // another-doc, so following a reference never replaces the review page);
+      // in-page #anchors keep jumping within the doc. The folder-index page is
+      // rendered by renderMdIndex, which deliberately skips this rewrite.
+      const blank = (h, hrefPart) => new RegExp(`<a[^>]*href="[^"]*${hrefPart}[^"]*"[^>]*target="_blank"[^>]*rel="noopener noreferrer"`).test(h);
+      check('--md: doc links open in a new tab; in-page #anchors do not',
+        blank(aHtml, 'example\\.com/x') && blank(aHtml, 'b\\.md')
+        && !/<a[^>]*href="#alpha"[^>]*target=/.test(aHtml));
     } else {
       console.log('SKIP  --md: __kbfSource render check (marked renderer unavailable)');
     }

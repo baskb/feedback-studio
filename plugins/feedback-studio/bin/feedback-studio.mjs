@@ -1198,10 +1198,27 @@ function sanitizeRenderedHtml(html) {
     .replace(/\b(href|src)\s*=\s*'([^']*)'/gi, (m, attr, val) => (schemeIsEvil(val) ? attr + "='#'" : m));
 }
 
+// Links in a reviewed document open in a NEW tab: following a reference must
+// not replace the review page (losing scroll position, fold state, and any
+// half-written comment). In-page #anchors keep jumping within the doc, and the
+// file-index page is untouched — that's the app's own navigation, not content.
+// rel="noopener noreferrer" cuts the opened page's window.opener handle back to
+// the review tab. Any target=/rel= already present (raw HTML in the .md) is
+// replaced, not doubled.
+function linksOpenNewTab(html) {
+  return String(html).replace(/<a\b([^>]*)>/gi, (m, attrs) => {
+    const href = /\bhref\s*=\s*("([^"]*)"|'([^']*)')/i.exec(attrs);
+    const url = href ? (href[2] != null ? href[2] : href[3]) : '';
+    if (!url || url.startsWith('#')) return m;
+    const cleaned = attrs.replace(/\s+(target|rel)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+    return '<a' + cleaned + ' target="_blank" rel="noopener noreferrer">';
+  });
+}
+
 async function renderMd(file) {
   const marked = await ensureMarked();
   const src = await readFile(file, 'utf-8');
-  const body = sanitizeRenderedHtml(marked.parse(src, { gfm: true, breaks: false }));
+  const body = linksOpenNewTab(sanitizeRenderedHtml(marked.parse(src, { gfm: true, breaks: false })));
   const rel = path.relative(CWD, file).split(path.sep).join('/');
   // Header display: a file outside the cwd would show a ../../../ chain of
   // machine internals — show it relative to the --md root instead (which for a

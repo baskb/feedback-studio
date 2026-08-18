@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-08-18
+
 ### Changed
 - **Links in a reviewed Markdown document now open in a new tab.** Clicking a link in a `--md` document used to navigate the review tab itself, losing your scroll position, folded chapters, and any half-written comment. External links and links to other documents now open in a new tab (with `rel="noopener noreferrer"`); in-page `#anchor` links still jump within the document, and the file-index page keeps its normal same-tab navigation.
 
@@ -575,7 +577,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.2
 [0.9.1]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.1
 [0.9.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.0
 [0.8.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.8.0

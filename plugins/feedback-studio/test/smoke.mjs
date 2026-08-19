@@ -326,6 +326,27 @@ try {
     msSrv.kill();
   }
 
+  // Serving a source that lives OUTSIDE the cwd without --data-dir keeps the
+  // data in the cwd — the banner must say so (the silent version of this cost a
+  // real debugging session: agent processed an empty file, comments sat elsewhere).
+  const FW_PORT = PORT + 9;
+  const fwSrv = spawn(process.execPath, [bin, '--dir', site, '--port', String(FW_PORT), '--no-open'],
+    { stdio: ['ignore', 'pipe', 'ignore'], cwd: msCwd });
+  try {
+    const fwOut = await new Promise((resolve) => {
+      let out = '';
+      const t = setTimeout(() => resolve(out), 6000);
+      fwSrv.stdout.on('data', (d) => {
+        out += d.toString();
+        if (out.includes('--data-dir')) { clearTimeout(t); resolve(out); }
+      });
+    });
+    check('warns when the served source is outside the cwd and no --data-dir is given',
+      fwOut.includes('outside this folder') && fwOut.includes('--data-dir'));
+  } finally {
+    fwSrv.kill();
+  }
+
   // --share strict: role enforcement end-to-end. Strict mode disables the
   // localhost bypass, so these loopback requests exercise the real matrix.
   // Keys are parsed from the banner the server prints — the honest interface.

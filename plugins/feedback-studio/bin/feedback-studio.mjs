@@ -1397,6 +1397,24 @@ function warnIfFeedbackCommittable() {
   }
 }
 
+// The reviewed source can live anywhere (--dir ../other-project/dist, --md
+// ../report.md), but the data dir defaults to the folder the command RUNS in.
+// Run from the wrong folder and the comments land away from the project, with
+// nothing saying so — the agent then processes an empty file while the real
+// comments sit elsewhere. When the source is outside the cwd and no --data-dir
+// was given, say where the data goes and how to keep it with the project.
+function warnIfDataFarFromSource() {
+  if (DEMO || PROXY || args['data-dir']) return;
+  const src = MD_MODE ? (MD_SINGLE ? path.dirname(MD_SINGLE) : MD_ROOT) : STATIC_DIR;
+  if (!src) return;
+  const rel = path.relative(CWD, src);
+  if (!rel.startsWith('..') && !path.isAbsolute(rel)) return; // source inside the cwd — fine
+  console.log(`\n  ! The reviewed ${MD_MODE ? 'markdown' : 'site'} is outside this folder; comments will be stored`);
+  console.log(`    HERE, in ${path.relative(CWD, DATA_DIR).split(path.sep).join('/') || '.feedback'}/ — not next to what you're reviewing. If you meant to`);
+  console.log(`    keep them with that project, re-run from its root, or pass`);
+  console.log(`    --data-dir <that-project>/.feedback`);
+}
+
 // ---------- banner ----------
 async function writeSiteMeta(url) {
   await writeJson(path.join(DATA_DIR, 'meta.json'), {
@@ -1583,6 +1601,7 @@ async function main() {
     // resolved static dir (correct even when --dir was autodetected).
     await writeSiteMeta(publicUrl ? publicUrl + '/' : `${scheme}://localhost:${PORT}/`);
     warnIfFeedbackCommittable();
+    warnIfDataFarFromSource();
     // Under strict share even localhost needs a key — open our own tab as admin.
     const openUrl = `${scheme}://localhost:${PORT}/` + (SHARE_STRICT ? `?key=${SHARE_KEYS.admin}` : '');
     if (!args['no-open']) openBrowser(openUrl);

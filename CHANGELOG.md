@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **A warning when comments would land away from the project.** Serving a site or Markdown file that lives outside the folder you ran the command from (`--dir ../other-project/dist`) keeps the `.feedback/` data in the folder you ran from — which is easy to miss: the agent then processes an empty comments file while the real comments sit elsewhere. The startup banner now says so explicitly and shows the fix (run from the project's root, or pass `--data-dir <that-project>/.feedback`). The `--data-dir` flag itself already existed; the trap was that nothing told you when you needed it.
+
 ## [0.9.2] - 2026-08-18
 
 ### Changed

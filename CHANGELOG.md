@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-08-19
+
 ### Added
 - **A warning when comments would land away from the project.** Serving a site or Markdown file that lives outside the folder you ran the command from (`--dir ../other-project/dist`) keeps the `.feedback/` data in the folder you ran from — which is easy to miss: the agent then processes an empty comments file while the real comments sit elsewhere. The startup banner now says so explicitly and shows the fix (run from the project's root, or pass `--data-dir <that-project>/.feedback`). The `--data-dir` flag itself already existed; the trap was that nothing told you when you needed it.
 
@@ -580,7 +582,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.3
 [0.9.2]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.2
 [0.9.1]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.1
 [0.9.0]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.0

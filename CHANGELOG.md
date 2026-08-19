@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-08-19
+
 ### Added
 - **Weak pins are now visible — and fixable — before the agent trips over them.** The tool's core rule is that the agent refuses to edit an element it can't confidently re-find; until now you only learned a pin had gone weak when the agent refused. A pin whose element re-resolves with weak confidence now shows amber with a dashed ring, its List card gets a "pin unsure" tag (or "pin lost" when the element can't be found at all), and the card offers **Re-pin on the page**: click it, click the right element, done — the anchor is rebuilt exactly like a fresh comment's. Resolved and rejected comments never warn (their element changing is usually the fix having landed). The API now accepts an anchor update on PATCH to carry this.
 
@@ -585,7 +587,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.4
 [0.9.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.3
 [0.9.2]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.2
 [0.9.1]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.1

@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Weak pins are now visible — and fixable — before the agent trips over them.** The tool's core rule is that the agent refuses to edit an element it can't confidently re-find; until now you only learned a pin had gone weak when the agent refused. A pin whose element re-resolves with weak confidence now shows amber with a dashed ring, its List card gets a "pin unsure" tag (or "pin lost" when the element can't be found at all), and the card offers **Re-pin on the page**: click it, click the right element, done — the anchor is rebuilt exactly like a fresh comment's. Resolved and rejected comments never warn (their element changing is usually the fix having landed). The API now accepts an anchor update on PATCH to carry this.
+
 ## [0.9.3] - 2026-08-19
 
 ### Added

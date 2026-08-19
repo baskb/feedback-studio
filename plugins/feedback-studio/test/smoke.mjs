@@ -139,6 +139,15 @@ try {
     body: JSON.stringify({ type: 'delete' }), // 'delete' is a Markdown verb
   });
   check('PATCH type coerced to web mode', twt.status === 200 && (await twt.json()).comment.type === 'change');
+  // Re-pin: PATCH anchor replaces the stored anchor, sanitized (whitelisted
+  // keys only) — the overlay's shaky/lost re-pin flow depends on this.
+  const twa = await fetch(ORIGIN + '/__feedback/api/comments/' + twc.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
+    body: JSON.stringify({ anchor: { selector: '#new-spot', snippet: 'Repinned', evil: 'x' } }),
+  });
+  const twa2 = (await twa.json()).comment;
+  check('PATCH anchor re-pins (sanitized)', twa.status === 200
+    && twa2.anchor && twa2.anchor.selector === '#new-spot' && twa2.anchor.snippet === 'Repinned' && !('evil' in twa2.anchor));
   await fetch(ORIGIN + '/__feedback/api/comments/' + twc.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
 
   // Edit-in-place: textEdit round-trips on POST (collapsed), PATCH null clears it

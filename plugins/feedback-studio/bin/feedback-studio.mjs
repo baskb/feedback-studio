@@ -42,7 +42,7 @@ import {
   ALLOWED_TYPES, STATUSES, AUTONOMY,
   readComments, writeComments, writeJson, mutate, makeComment, makeReply, exportMarkdown,
   exportProcessInstructions, seedAgentsFile, sanitizeEdits, sanitizeTextEdit,
-  coerceType, modeFor, schemeIsEvil, sanitizeImageReplace,
+  coerceType, modeFor, schemeIsEvil, sanitizeImageReplace, sanitizeAnchor,
 } from '../lib/store.mjs';
 import { exportMarkers as stampMarkers } from '../lib/markers.mjs';
 
@@ -543,6 +543,9 @@ async function handleApi(req, res, url) {
             // clearing the replacement drops the pointer — GC the staged file too
             else if (!c.imageReplace && media) clearedMedia = true;
           }
+          // Re-pin: the overlay rebuilds the anchor from a freshly clicked
+          // element when the stored one resolves shakily (or not at all).
+          if (body.anchor && typeof body.anchor === 'object') c.anchor = sanitizeAnchor(body.anchor);
           if (STATUSES.includes(body.status)) c.status = body.status;
           // Coerce a recognized type to the comment's own mode (web vs md) so a
           // PATCH can't put a Markdown verb on a web comment or vice-versa — the

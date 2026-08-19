@@ -452,6 +452,10 @@ button {
 .kbf-pin.is-resolved { background: var(--kbf-green); }
 .kbf-pin.is-rejected { background: var(--kbf-muted); }
 .kbf-pin.is-active { transform: scale(1.18); opacity: 1; box-shadow: var(--kbf-shadow-md), 0 0 0 3px var(--kbf-clay-tint); }
+/* A pin whose anchor only re-resolved with weak confidence. The agent will
+   refuse to edit that element, so the risk is made visible here first: amber +
+   a dashed ring, with the List card offering the re-pin. */
+.kbf-pin.is-shaky { background: var(--kbf-amber); outline: 2px dashed var(--kbf-amber); outline-offset: 2px; opacity: 0.85; }
 
 /* ---------- composer popover ---------- */
 
@@ -1925,6 +1929,13 @@ button {
 }
 .kbf-status-approved { color: var(--kbf-green); background: #e9f1ec; }
 .kbf-status-rejected { color: var(--kbf-muted); background: var(--kbf-surface-2); }
+/* Anchor-health tag on a card: the pin re-resolved weakly (unsure) or not at
+   all (lost). Same shape as the status tags; amber/red-ish to read as warning. */
+.kbf-pinstate { flex: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 6px; border-radius: 4px; }
+.kbf-pinstate.is-shaky { color: var(--kbf-amber); background: rgba(201, 138, 43, 0.14); }
+.kbf-pinstate.is-lost { color: #b3452e; background: rgba(179, 69, 46, 0.12); }
+.kbf-repin { margin-top: 6px; align-self: flex-start; }
+.kbf-repin svg { width: 13px; height: 13px; }
 
 .kbf-thread-toggle {
   display: inline-flex;

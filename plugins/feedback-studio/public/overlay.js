@@ -43,6 +43,10 @@
   let theme = LS.get('kbf-theme') === 'dark' ? 'dark' : 'light'; // light (default) | dark; legacy 'auto'/unset -> light
   let activeComposer = null; // { kind:'new'|'edit', anchor, rect, comment? }
   let placed = []; // [{ comment, el, pinEl }]
+  // How each current-page comment's anchor resolved on the LAST renderPins pass:
+  // id → 'high' | 'medium' | 'low' | 'lost'. The List reads this to warn the
+  // reviewer (and offer a re-pin) BEFORE the agent hits a refuse-and-ask.
+  const pinConf = new Map();
   let targetEls = []; // rainbow highlight boxes over the element/text being commented on
   let expandedId = null; // which comment's conversation thread is open in the panel
   let focusReplyNext = false; // focus the reply box on the next render (after an explicit expand)
@@ -2862,18 +2866,22 @@
     placed = [];
     const list = pageComments();
     const pool = makePool();
+    pinConf.clear();
     list.forEach((c, idx) => {
-      const el = resolveAnchor(c.anchor, pool);
+      const { el, confidence } = resolveWithConfidence(c.anchor, pool);
+      pinConf.set(c.id, el ? confidence : 'lost');
       if (!el) return;
+      const shaky = confidence === 'medium' || confidence === 'low';
       const pin = document.createElement('div');
       pin.className = 'kbf-pin'
         + (c.author === 'agent' ? ' is-agent' : '')
         + (c.status === 'resolved' ? ' is-resolved' : '')
         + (c.status === 'approved' ? ' is-approved' : '')
-        + (c.status === 'rejected' ? ' is-rejected' : '');
+        + (c.status === 'rejected' ? ' is-rejected' : '')
+        + (shaky ? ' is-shaky' : '');
       pin.innerHTML = c.author === 'agent' ? I.bot : String(idx + 1);
       const gist = c.text || (c.textEdit && c.textEdit.after ? '“' + c.textEdit.after + '”' : editsSummary(c));
-      pin.title = (c.author === 'agent' ? '[agent] ' : '') + gist;
+      pin.title = (shaky ? '[pin may be off — re-pin from the List] ' : '') + (c.author === 'agent' ? '[agent] ' : '') + gist;
       pin.setAttribute('role', 'button');
       pin.tabIndex = 0;
       // Hidden until positionPins() gives it real coordinates — a fixed-position
@@ -3026,6 +3034,12 @@
         const who = isAgent ? (c.authorName || 'agent') : (c.authorName || (ROLE === 'full' ? 'you' : 'host'));
         const thread = Array.isArray(c.thread) ? c.thread : [];
         const expanded = c.id === expandedId;
+        // Anchor health, from the last pin pass (current page only — other
+        // pages' anchors can't be resolved from here). Only comments still
+        // awaiting action warn: a resolved comment's element USUALLY changed —
+        // that's the fix having landed, not a bad pin.
+        const pc = here && (st === 'open' || st === 'approved') ? pinConf.get(c.id) : undefined;
+        const pinState = pc === 'lost' ? 'lost' : (pc === 'medium' || pc === 'low') ? 'shaky' : null;
         const stateClass = [
           st === 'resolved' ? 'is-resolved' : '', st === 'approved' ? 'is-approved' : '',
           st === 'rejected' ? 'is-rejected' : '', isAgent ? 'is-agent' : '', expanded ? 'is-expanded' : '',
@@ -3037,6 +3051,7 @@
               <span class="kbf-type-tag kbf-type-${ct}">${ct}</span>
               <span class="kbf-author ${isAgent ? 'is-agent' : ''}">${escapeHtml(who)}</span>
               ${st === 'approved' || st === 'rejected' ? `<span class="kbf-status kbf-status-${st}">${st}</span>` : ''}
+              ${pinState ? `<span class="kbf-pinstate is-${pinState}" title="${pinState === 'lost' ? 'The pinned element could not be found on this page.' : 'The pinned element was only found with weak confidence — the agent will refuse to edit it.'}">${pinState === 'lost' ? 'pin lost' : 'pin unsure'}</span>` : ''}
               <span class="kbf-card-anchor" title="${escapeHtml(anchorTxt)}">${escapeHtml(anchorTxt)}</span>
             </div>
             ${c.text ? `<div class="kbf-card-text">${escapeHtml(c.text)}</div>` : ''}
@@ -3063,6 +3078,7 @@
                 ${st !== 'rejected' ? `<button class="kbf-chip-btn kbf-rejectb" data-act="reject">${I.reject} Reject</button>` : ''}
               </div>` : ''}
             ` : (thread.length ? `<button class="kbf-thread-toggle" data-act="thread">${I.comment}<span>${thread.length} repl${thread.length === 1 ? 'y' : 'ies'}</span></button>` : '')}
+            ${pinState && CAN_MANAGE ? `<button type="button" class="kbf-chip-btn kbf-repin" data-act="repin">${I.jump}<span>Re-pin on the page</span></button>` : ''}
             <div class="kbf-card-foot">
               <span class="kbf-time">${timeAgo(c.createdAt)}</span>
               <button class="kbf-mini" data-act="jump" title="Go to element">${I.jump}</button>
@@ -3150,6 +3166,7 @@
     if (act === 'approve') return setStatus(c, 'approved');
     if (act === 'reject') return setStatus(c, 'rejected');
     if (act === 'jump') return goToComment(c);
+    if (act === 'repin') return startRepin(c);
     if (act === 'shot') { window.open(API + '/shot/' + c.id, '_blank', 'noopener'); return; }
     if (act === 'newimg') { window.open(API + '/media/' + c.id, '_blank', 'noopener'); return; }
     if (act === 'variants') {
@@ -3240,6 +3257,46 @@
   async function toggleResolve(c) {
     await setStatus(c, c.status === 'resolved' ? 'open' : 'resolved');
   }
+  // Re-anchor an existing comment on a freshly clicked element. This is the
+  // fix for a 'shaky'/'lost' pin: the REVIEWER points again, the anchor is
+  // rebuilt from scratch (same path a new comment takes), and the agent gets a
+  // trustworthy target instead of hitting a refuse-and-ask later.
+  function startRepin(c) {
+    setPanel(false);
+    toast('Click the element this comment is about (Esc cancels)', { duration: 5000 });
+    const onPick = async (e) => {
+      if (isInUI(e)) return;
+      e.preventDefault(); e.stopPropagation();
+      const el = e.target;
+      cleanup();
+      if (el instanceof Element && el !== document.body) {
+        try {
+          const data = await api('/comments/' + c.id, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ anchor: buildElementAnchor(el) }),
+          });
+          const i = comments.findIndex((x) => x.id === c.id);
+          if (i >= 0) comments[i] = data.comment;
+          renderPins();
+          toast('Pin moved.');
+        } catch (err) { toastError('Could not move the pin — ' + err.message); }
+      }
+      setPanel(true);
+    };
+    const onMove = (e) => { if (!isInUI(e) && e.target instanceof Element) showHighlightFor(e.target); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); cleanup(); setPanel(true); } };
+    function cleanup() {
+      document.removeEventListener('click', onPick, true);
+      document.removeEventListener('pointermove', onMove, true);
+      document.removeEventListener('keydown', onKey, true);
+      document.documentElement.style.cursor = '';
+      hideHighlight();
+    }
+    document.documentElement.style.cursor = 'crosshair';
+    document.addEventListener('click', onPick, true);
+    document.addEventListener('pointermove', onMove, true);
+    document.addEventListener('keydown', onKey, true);
+  }
+
   async function setStatus(c, status) {
     try {
       const data = await api('/comments/' + c.id, {

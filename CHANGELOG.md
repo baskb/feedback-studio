@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-08-26
+
 ### Added
 - **The page now shows what the agent is actually doing.** Watch mode used to rely on the agent sending a heartbeat every 60 seconds; while it was busy editing files it sent nothing, so the "agent online" light went dark exactly when the most work was happening — and it never said *which* comment was being worked on. Now the agent claims a comment before working on it: that pin pulses amber, its card reads "Claude is on this · 1m 20s · edited src/Header.jsx", comments queued behind it read "next up", the panel chip says "Claude · working on #3", and the browser tab title reads `⚙ #3` (with `✓` when something finished while you were in another tab). A new **Activity** drawer in the panel keeps the history (claimed, edited file, replied, resolved, with how long each took) and every line jumps to its pin. Presence no longer decays on a timer: every call the agent makes counts as a heartbeat, resolving or answering the claimed comment releases it by itself, and silence is shown as "quiet for 3m" rather than guessed as offline.
 - **Plugin hooks report file edits to the page.** The Claude Code plugin now registers three small hooks (after a file edit, on a new message, at the end of a turn) that find the running server through the new `.feedback/session.json` and post a one-line activity entry. Without a session file they exit immediately. See *What the plugin's hooks do* in the README.
@@ -593,7 +595,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.5
 [0.9.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.4
 [0.9.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.3
 [0.9.2]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.2

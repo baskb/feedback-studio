@@ -35,7 +35,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { exec, execSync, spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, stat, readdir, chmod, unlink, mkdtemp, cp } from 'node:fs/promises';
-import { existsSync, readFileSync, statSync, watch, createWriteStream } from 'node:fs';
+import { existsSync, readFileSync, statSync, watch, createWriteStream, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -481,6 +481,10 @@ async function handleApi(req, res, url) {
   const canComment = role !== 'view';
   const canManage = role === 'full' || role === 'admin';
   const deny = () => sendJSON(res, 403, { error: 'your share link does not allow this' });
+  // Implicit heartbeat: the agent's own calls (its poll loop, replies, PATCHes)
+  // prove it is alive — no separate heartbeat discipline needed from an LLM.
+  const fromAgent = canManage && isAgentRequest(req);
+  if (fromAgent && resource !== 'agent-status' && resource !== 'activity') touchPresence();
 
   try {
     if (resource === 'comments') {
@@ -509,6 +513,14 @@ async function handleApi(req, res, url) {
         });
         if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
         broadcastSoon();
+        if (fromAgent && out.reply.author === 'agent') {
+          const t = String(out.reply.text || '');
+          const line = out.reply.variants ? 'proposed variants' : 'replied: ' + t.slice(0, 120);
+          // "Queued — I'll show you…" parks the item; any other answer finishes it.
+          const finishes = !/\bqueued\b/i.test(t) && !out.reply.variants && agentStatus.state === 'working' && agentStatus.commentId === id;
+          if (finishes) releasePresence(id, line, 'reply');
+          else logActivity({ kind: 'reply', commentId: id, text: line });
+        }
         return sendJSON(res, 201, out);
       }
 
@@ -558,6 +570,14 @@ async function handleApi(req, res, url) {
         if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
         if (clearedMedia && SAFE_SHOT_ID.test(id)) await gcMedia(id); // drop the now-orphaned staged image
         broadcastSoon();
+        if (fromAgent && STATUSES.includes(body.status) && body.status !== 'open') {
+          if (body.status === 'resolved' || body.status === 'rejected') {
+            // One line per event: the release logs "done · took 2m" for the
+            // claimed comment; anything else gets a plain "resolved" line.
+            if (agentStatus.state === 'working' && agentStatus.commentId === id) releasePresence(id, body.status);
+            else logActivity({ kind: 'resolve', commentId: id, text: body.status });
+          }
+        }
         return sendJSON(res, 200, out);
       }
 
@@ -662,19 +682,27 @@ async function handleApi(req, res, url) {
     // Deliberately SINGLE-agent (last write wins): one watching agent per
     // session is the v1 model; a second watcher's heartbeat replaces the chip.
     if (resource === 'agent-status') {
-      if (req.method === 'GET') return sendJSON(res, 200, { agent: agentStatus });
+      if (req.method === 'GET') return sendJSON(res, 200, { agent: agentStatus, activity: activityLog });
       if (req.method === 'POST') {
         if (!canManage) return deny(); // presence is the host agent's voice, not a reviewer's
         const body = await readJson(req);
-        const state = ['online', 'working', 'offline'].includes(body.state) ? body.state : 'offline';
-        agentStatus = {
-          state,
-          name: String(body.name == null ? '' : body.name).slice(0, 60),
-          commentId: typeof body.commentId === 'string' ? body.commentId.slice(0, 80) : '',
-          ts: Date.now(),
-        };
-        broadcastAgentStatus();
+        setPresence(body);
         return sendJSON(res, 200, { agent: agentStatus });
+      }
+    }
+    // A line in the activity log ("edited src/Header.jsx", "verifying…") —
+    // posted by the plugin hooks after every file edit and by the agent at
+    // natural steps. Untagged entries attach to the comment being worked on.
+    if (resource === 'activity') {
+      if (req.method === 'GET') return sendJSON(res, 200, { activity: activityLog });
+      if (req.method === 'POST') {
+        if (!canManage) return deny();
+        const body = await readJson(req);
+        touchPresence();
+        // A hook's "turn ended" means the agent is between tasks, not gone.
+        if (body.kind === 'idle' && agentStatus.state === 'working') releasePresence(agentStatus.commentId, 'turn ended', 'idle');
+        const entry = body.kind === 'idle' ? null : logActivity(body);
+        return sendJSON(res, 200, { entry, agent: agentStatus });
       }
     }
     // After applying a batch, the agent calls this so open overlays reload
@@ -847,6 +875,7 @@ function handleSSE(req, res) {
   sseClients.add(res);
   // Late joiners see the current agent presence straight away.
   writeSse(res, 'event: agent-status\ndata: ' + JSON.stringify({ agent: agentStatus }) + '\n\n');
+  writeSse(res, 'event: activity-log\ndata: ' + JSON.stringify({ activity: activityLog }) + '\n\n');
   const ping = setInterval(() => writeSse(res, ': ping\n\n'), 25000);
   let cleaned = false;
   const cleanup = () => {
@@ -880,10 +909,118 @@ async function broadcastFromDisk() {
     }
   }
 }
-let agentStatus = { state: 'offline', name: '', commentId: '', ts: 0 };
+// ---------- agent presence + activity ----------
+// What the agent is doing right now, so open overlays can mirror the terminal:
+// which comment it is on (`commentId`, since `since`), its latest `note`, what
+// is queued, and when it was last heard from (`lastSeen`). In-memory only —
+// presence is ephemeral by nature. Deliberately SINGLE-agent (last write
+// wins): one working agent per session is the model; a second one's calls
+// replace the chip. Fed by three sources: explicit POST /agent-status calls
+// from the skill, implicit heartbeats (any non-browser manage call — the poll
+// loop IS the heartbeat), and .feedback/presence.json for agents without HTTP.
+const PRESENCE_STALE_MS = 10 * 60 * 1000; // no request at all for 10 min → offline
+const HEARTBEAT_BROADCAST_MS = 5000;      // pure heartbeats rebroadcast at most this often
+const ACTIVITY_MAX = 100;
+let agentStatus = { state: 'offline', name: '', commentId: '', since: 0, note: '', lastSeen: 0, queue: [], ts: 0 };
+const activityLog = [];
+let _presenceTimer = null;
+let _lastHeartbeatBroadcast = 0;
 function broadcastAgentStatus() {
   const payload = 'event: agent-status\ndata: ' + JSON.stringify({ agent: agentStatus }) + '\n\n';
   for (const res of [...sseClients]) writeSse(res, payload);
+  _lastHeartbeatBroadcast = Date.now();
+  clearTimeout(_presenceTimer);
+  if (agentStatus.state !== 'offline') {
+    _presenceTimer = setTimeout(() => {
+      if (Date.now() - agentStatus.lastSeen < PRESENCE_STALE_MS) return;
+      setPresence({ state: 'offline' });
+    }, PRESENCE_STALE_MS + 500);
+    _presenceTimer.unref();
+  }
+}
+// A browser's fetch carries Sec-Fetch-* headers AND a Mozilla user-agent;
+// curl, node (whose fetch also sends sec-fetch-mode, but as "node"), and the
+// hooks don't look like that. That is how a reviewer's overlay (also role
+// "full" when keyless) is told apart from the agent — only the agent's own
+// calls count as heartbeats. `X-Feedback-Agent: 1` says so explicitly.
+function isAgentRequest(req) {
+  if (req.headers['x-feedback-agent']) return true;
+  const ua = String(req.headers['user-agent'] || '');
+  return !(req.headers['sec-fetch-mode'] && /^Mozilla\//.test(ua));
+}
+function touchPresence() {
+  const now = Date.now();
+  agentStatus.lastSeen = now;
+  if (agentStatus.state === 'offline') {
+    agentStatus = { ...agentStatus, state: 'online', ts: now };
+    broadcastAgentStatus();
+  } else if (now - _lastHeartbeatBroadcast > HEARTBEAT_BROADCAST_MS) {
+    broadcastAgentStatus();
+  }
+}
+const cleanId = (v) => (typeof v === 'string' ? v.slice(0, 80) : '');
+function setPresence(body) {
+  const now = Date.now();
+  // No `state` at all = a note/queue-only update that keeps the current state;
+  // an unknown state is junk and coerces to offline (never invent presence).
+  const state = body.state == null ? agentStatus.state : (['online', 'working', 'offline'].includes(body.state) ? body.state : 'offline');
+  const commentId = state === 'working' ? (cleanId(body.commentId) || agentStatus.commentId) : (state === 'offline' ? '' : cleanId(body.commentId));
+  const next = {
+    state,
+    name: body.name == null ? agentStatus.name : String(body.name).slice(0, 60),
+    commentId,
+    // `since` = when work on THIS comment started; a re-claim of the same id keeps it.
+    since: state === 'working' ? (commentId && commentId === agentStatus.commentId && agentStatus.since ? agentStatus.since : now) : 0,
+    note: body.note == null ? (state === 'working' && commentId === agentStatus.commentId ? agentStatus.note : '') : String(body.note).slice(0, 120),
+    lastSeen: state === 'offline' ? agentStatus.lastSeen : now,
+    queue: Array.isArray(body.queue) ? body.queue.map(cleanId).filter(Boolean).slice(0, 20) : (state === 'offline' ? [] : agentStatus.queue),
+    ts: now,
+  };
+  const claimed = next.state === 'working' && next.commentId && (agentStatus.state !== 'working' || agentStatus.commentId !== next.commentId);
+  agentStatus = next;
+  if (claimed) logActivity({ kind: 'claim', commentId: next.commentId, text: next.note || 'started on this comment' });
+  else if (state === 'offline' && agentStatus.ts) logActivity({ kind: 'idle', text: 'agent left the session' });
+  broadcastAgentStatus();
+}
+// The agent finished (resolved / rejected / answered) the comment it had
+// claimed: drop back to "online" so a forgotten `{state:"online"}` can never
+// leave a stale "working on #3" behind.
+function releasePresence(commentId, text, kind = 'done') {
+  if (agentStatus.state !== 'working' || agentStatus.commentId !== commentId) return;
+  const took = agentStatus.since ? Date.now() - agentStatus.since : 0;
+  logActivity({ kind, commentId, text: text || 'done', took });
+  agentStatus = { ...agentStatus, state: 'online', commentId: '', since: 0, note: '', lastSeen: Date.now(), queue: agentStatus.queue.filter((q) => q !== commentId), ts: Date.now() };
+  broadcastAgentStatus();
+}
+let _activitySeq = 0;
+function logActivity(entry) {
+  const e = {
+    id: 'a' + (++_activitySeq),
+    at: Date.now(),
+    kind: ['edit', 'note', 'reply', 'resolve', 'claim', 'done', 'idle'].includes(entry.kind) ? entry.kind : 'note',
+    text: String(entry.text == null ? '' : entry.text).slice(0, 200),
+    file: entry.file ? String(entry.file).slice(0, 200) : '',
+    // An untagged entry (a hook's "edited file X") belongs to whatever is being worked on now.
+    commentId: cleanId(entry.commentId) || (agentStatus.state === 'working' ? agentStatus.commentId : ''),
+    took: entry.took > 0 ? Math.round(entry.took) : undefined,
+  };
+  activityLog.push(e);
+  if (activityLog.length > ACTIVITY_MAX) activityLog.splice(0, activityLog.length - ACTIVITY_MAX);
+  const payload = 'event: activity\ndata: ' + JSON.stringify({ entry: e }) + '\n\n';
+  for (const res of [...sseClients]) writeSse(res, payload);
+  return e;
+}
+// Agents without HTTP (an MCP-only client) write .feedback/presence.json;
+// the data-dir watch merges it as if it had been POSTed.
+async function applyPresenceFile() {
+  try {
+    const raw = await readFile(path.join(DATA_DIR, 'presence.json'), 'utf8');
+    const p = JSON.parse(raw);
+    if (!p || typeof p !== 'object') return;
+    if (p.activity && typeof p.activity === 'object') logActivity(p.activity);
+    if (p.state) setPresence(p);
+    else touchPresence();
+  } catch (e) { /* missing or half-written — the next write will land */ }
 }
 function broadcastReload() {
   const payload = 'event: reload\ndata: ' + JSON.stringify({ at: Date.now() }) + '\n\n';
@@ -899,8 +1036,11 @@ function broadcastSoon() { clearTimeout(_bcTimer); _bcTimer = setTimeout(broadca
 function watchComments() {
   let timer = null;
   try {
+    let ptimer = null;
     watch(DATA_DIR, (ev, fn) => {
-      if (fn && String(fn) !== 'comments.json') return; // ignore .tmp / .lock / FEEDBACK.md
+      const name = fn ? String(fn) : '';
+      if (name === 'presence.json') { clearTimeout(ptimer); ptimer = setTimeout(applyPresenceFile, 120); return; }
+      if (name && name !== 'comments.json') return; // ignore .tmp / .lock / FEEDBACK.md
       clearTimeout(timer);
       timer = setTimeout(broadcastFromDisk, 120);
     });
@@ -1430,6 +1570,25 @@ async function writeSiteMeta(url) {
   }).catch(() => {});
 }
 
+// How the plugin hooks and the skill find this server without guessing a
+// port: `.feedback/session.json` lives while the process runs (removed on a
+// clean exit; readers also check `pid` is alive so a crash can't leave a lie).
+const SESSION_FILE = () => path.join(DATA_DIR, 'session.json');
+async function writeSessionFile(scheme) {
+  await writeJson(SESSION_FILE(), {
+    pid: process.pid,
+    port: PORT,
+    apiBase: `${scheme}://localhost:${PORT}/__feedback/api`,
+    adminKey: SHARE ? SHARE_KEYS.admin : undefined,
+    cwd: CWD,
+    dataDir: DATA_DIR,
+    startedAt: new Date().toISOString(),
+  }).catch(() => {});
+}
+function removeSessionFile() {
+  try { if (existsSync(SESSION_FILE())) unlinkSync(SESSION_FILE()); } catch (e) {}
+}
+
 function banner(scheme, ips, publicUrl) {
   const src = DEMO ? `demo site (throwaway copy: ${STATIC_DIR})`
     : MD_MODE ? `reviewing markdown: ${path.relative(CWD, MD_SINGLE || MD_ROOT) || '.'}`
@@ -1576,12 +1735,14 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     if (tunnelProc) { try { tunnelProc.kill(); } catch (e) {} }
+    removeSessionFile();
     for (const res of sseClients) { try { res.end(); } catch (e) {} }
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref(); // don't hang on a stuck socket
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  process.on('exit', removeSessionFile);
 
   const scheme = USE_HTTPS ? 'https' : 'http';
   server.listen(PORT, HOST, async () => {
@@ -1603,6 +1764,7 @@ async function main() {
     // site) — written now so `url` reflects the real tunnel URL, `served` the
     // resolved static dir (correct even when --dir was autodetected).
     await writeSiteMeta(publicUrl ? publicUrl + '/' : `${scheme}://localhost:${PORT}/`);
+    await writeSessionFile(scheme);
     warnIfFeedbackCommittable();
     warnIfDataFarFromSource();
     // Under strict share even localhost needs a key — open our own tab as admin.

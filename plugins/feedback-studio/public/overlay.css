@@ -2121,3 +2121,110 @@ button {
 /* The transparent native <select>/<input type=color> sits over its chip; show the ring on the chip. */
 .kbf-langselect:focus-visible,
 .kbf-tweak-color:focus-visible { outline: none; }
+
+/* ---------- agent presence + activity (watch mode) ---------- */
+/* The chip says WHAT the agent is on ("Claude · working on #3 · 1m 20s"), the
+   note line under it the latest step, and the Activity drawer the history.
+   "quiet" dims the dot when nothing was heard for a while — the state stays
+   what the server last said; staleness is shown, never guessed. */
+.kbf-agent-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.kbf-agent-chip { cursor: default; max-width: 100%; }
+.kbf-agent-chip.is-working { cursor: pointer; }
+.kbf-agent-chip.is-quiet .kbf-agent-dot { opacity: 0.45; animation: none; }
+.kbf-agent-actbtn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--kbf-muted);
+  background: transparent;
+  border: 1px solid var(--kbf-border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  cursor: pointer;
+}
+.kbf-agent-actbtn:hover, .kbf-agent-actbtn[aria-expanded="true"] { color: var(--kbf-ink); background: var(--kbf-hover); }
+.kbf-agent-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--kbf-clay);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.kbf-agent-note { margin-top: 4px; font-size: 11.5px; color: var(--kbf-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kbf-activity {
+  margin-top: 8px;
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--kbf-border);
+  border-radius: var(--kbf-radius-sm);
+  background: var(--kbf-surface);
+  font-size: 11.5px;
+}
+.kbf-activity-empty { padding: 10px; color: var(--kbf-muted); }
+.kbf-act { display: flex; align-items: baseline; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--kbf-border); }
+.kbf-act:last-child { border-bottom: 0; }
+.kbf-act-time { flex: none; font-variant-numeric: tabular-nums; color: var(--kbf-muted); font-size: 10.5px; }
+.kbf-act-icon { flex: none; width: 12px; text-align: center; color: var(--kbf-muted); }
+.kbf-act.is-done .kbf-act-icon, .kbf-act.is-resolve .kbf-act-icon { color: var(--kbf-green); }
+.kbf-act.is-claim .kbf-act-icon, .kbf-act.is-edit .kbf-act-icon { color: var(--kbf-amber); }
+.kbf-act-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--kbf-ink-soft); }
+.kbf-act-link {
+  flex: none;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--kbf-agent-deep);
+  background: var(--kbf-agent-tint);
+  border: 0;
+  border-radius: 4px;
+  padding: 1px 5px;
+  cursor: pointer;
+}
+
+/* The pin the agent is working on right now: an amber pulsing ring. Queued
+   pins get a quiet dotted ring. Both stack with .is-shaky (dashed outline). */
+.kbf-pin.is-working { opacity: 1; box-shadow: var(--kbf-shadow-sm), 0 0 0 2px #fff, 0 0 0 5px rgba(201, 138, 43, 0.55); animation: kbf-workring 1.4s ease-out infinite; }
+.kbf-pin.is-queued { opacity: 0.85; outline: 2px dotted var(--kbf-amber); outline-offset: 3px; }
+@keyframes kbf-workring {
+  0% { box-shadow: var(--kbf-shadow-sm), 0 0 0 2px #fff, 0 0 0 4px rgba(201, 138, 43, 0.7); }
+  100% { box-shadow: var(--kbf-shadow-sm), 0 0 0 2px #fff, 0 0 0 12px rgba(201, 138, 43, 0); }
+}
+
+/* Card strip: "Claude is on this · 1m 20s · edited src/Header.jsx". */
+.kbf-card.is-working { border-color: var(--kbf-amber); box-shadow: 0 0 0 1px rgba(201, 138, 43, 0.35); }
+.kbf-card-work {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 6px 0 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: #7a5314;
+  background: rgba(201, 138, 43, 0.12);
+}
+.kbf-card-work .kbf-agent-dot { flex: none; background: var(--kbf-amber); animation: kbf-blink 1s steps(2, start) infinite; }
+.kbf-card-work.is-queued { color: var(--kbf-muted); background: var(--kbf-hover); }
+.kbf-card-work.is-queued .kbf-agent-dot { background: var(--kbf-muted); animation: none; }
+.kbf-card-work.is-done { color: var(--kbf-green); background: rgba(47, 158, 106, 0.12); }
+.kbf-card-work.is-done .kbf-agent-dot { background: var(--kbf-green); animation: none; }
+.kbf-card-work span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kbf-elapsed { font-variant-numeric: tabular-nums; }
+/* FAB dot goes amber while the agent is busy on a comment. */
+.kbf-fab-wrap.kbf-agent-busy .kbf-fab--mini::after { background: var(--kbf-amber); animation: kbf-blink 1s steps(2, start) infinite; }
+@media (prefers-color-scheme: dark) {
+  :host(:not([data-kbf-theme="light"])) .kbf-card-work { color: #e6b76a; }
+}
+:host([data-kbf-theme="dark"]) .kbf-card-work { color: #e6b76a; }
+@media (prefers-reduced-motion: reduce) {
+  .kbf-pin.is-working, .kbf-card-work .kbf-agent-dot, .kbf-fab-wrap.kbf-agent-busy .kbf-fab--mini::after { animation: none !important; }
+}

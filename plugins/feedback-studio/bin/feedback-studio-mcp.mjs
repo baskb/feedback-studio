@@ -17,7 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   STATUSES, ALLOWED_TYPES, WEB_TYPES, MD_TYPES,
-  readComments, mutate, makeComment, makeReply, exportProcessInstructions,
+  readComments, mutate, makeComment, makeReply, exportProcessInstructions, writeJson,
 } from '../lib/store.mjs';
 
 const FEEDBACK_DIR = process.env.FEEDBACK_DIR
@@ -131,6 +131,19 @@ const TOOLS = [
       properties: { id: { type: 'string' }, status: { type: 'string', enum: STATUSES } },
     },
   },
+  {
+    name: 'set_presence',
+    description: 'Tell the open review page what you are doing, so the person sees it live: "working" with the id of the comment you are on (its pin pulses and its card shows elapsed time), "online" between items, "offline" when you leave. Add a short note ("editing Header.jsx", "verifying") whenever it helps. Works only while the review server is running; harmless otherwise.',
+    inputSchema: {
+      type: 'object', required: ['state'],
+      properties: {
+        state: { type: 'string', enum: ['online', 'working', 'offline'] },
+        commentId: { type: 'string', description: 'The comment being worked on (with state "working").' },
+        name: { type: 'string', description: 'How to show you, e.g. "Codex".' },
+        note: { type: 'string', description: 'One short line about the current step.' },
+      },
+    },
+  },
 ];
 const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
@@ -217,6 +230,20 @@ async function callTool(name, rawArgs) {
     if (out.notFound) throw new Error('no comment with id ' + args.id);
     return out;
   }
+  if (name === 'set_presence') {
+    // No HTTP link to the review server: write a small file the server's
+    // data-dir watch picks up and shows live. Also append an activity line.
+    const p = {
+      state: args.state,
+      name: args.name || 'agent',
+      commentId: args.commentId || '',
+      note: args.note || '',
+      activity: args.note ? { kind: 'note', text: args.note, commentId: args.commentId || '' } : undefined,
+      at: Date.now(),
+    };
+    await writeJson(path.join(FEEDBACK_DIR, 'presence.json'), p);
+    return { ok: true, presence: p };
+  }
   throw new Error('unknown tool: ' + name);
 }
 
@@ -243,7 +270,9 @@ async function handleMessage(msg) {
         + 'list_comments, then for each open comment locate its target by the quoted anchor snippet '
         + '(cross-checked with the selector) and REFUSE rather than edit the wrong element; act per '
         + 'its type, and set_status resolved when done (reply to ask/explain, add_comment to leave '
-        + 'your own pins). The "please" in PPF is on purpose — we are courteous to our agents. ;-)',
+        + 'your own pins). Before working on a comment call set_presence {state:"working", commentId} '
+        + 'so the person watching the page sees which pin you are on; set_presence offline when you leave. '
+        + 'The "please" in PPF is on purpose — we are courteous to our agents. ;-)',
     });
   }
   if (method === 'notifications/initialized' || method === 'initialized') return; // notification

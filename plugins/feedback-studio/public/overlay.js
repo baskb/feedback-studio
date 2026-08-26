@@ -230,7 +230,12 @@
           </div>
         </div>
         <div class="kbf-panel-sub" id="kbf-panel-sub"></div>
-        <div class="kbf-agent-chip" id="kbf-agent-chip" hidden role="status"><span class="kbf-agent-dot"></span><span id="kbf-agent-text"></span></div>
+        <div class="kbf-agent-row" id="kbf-agent-row" hidden>
+          <div class="kbf-agent-chip" id="kbf-agent-chip" role="status"><span class="kbf-agent-dot"></span><span id="kbf-agent-text"></span></div>
+          <button type="button" class="kbf-agent-actbtn" id="kbf-activity-btn" title="What the agent has been doing" aria-expanded="false">Activity<span class="kbf-agent-count" id="kbf-activity-count" hidden></span></button>
+        </div>
+        <div class="kbf-agent-note" id="kbf-agent-note" hidden></div>
+        <div class="kbf-activity" id="kbf-activity" hidden aria-label="Agent activity"></div>
         <div class="kbf-filters" role="group" aria-label="Filter comments">
           <button class="kbf-filter" data-filter="all" aria-pressed="false">All</button>
           <button class="kbf-filter" data-filter="open" aria-pressed="false">Open</button>
@@ -2878,7 +2883,9 @@
         + (c.status === 'resolved' ? ' is-resolved' : '')
         + (c.status === 'approved' ? ' is-approved' : '')
         + (c.status === 'rejected' ? ' is-rejected' : '')
-        + (shaky ? ' is-shaky' : '');
+        + (shaky ? ' is-shaky' : '')
+        + (agent.state === 'working' && agent.commentId === c.id ? ' is-working' : '')
+        + (agent.queue.includes(c.id) && agent.commentId !== c.id ? ' is-queued' : '');
       pin.innerHTML = c.author === 'agent' ? I.bot : String(idx + 1);
       const gist = c.text || (c.textEdit && c.textEdit.after ? '“' + c.textEdit.after + '”' : editsSummary(c));
       pin.title = (shaky ? '[pin may be off — re-pin from the List] ' : '') + (c.author === 'agent' ? '[agent] ' : '') + gist;
@@ -3040,9 +3047,16 @@
         // that's the fix having landed, not a bad pin.
         const pc = here && (st === 'open' || st === 'approved') ? pinConf.get(c.id) : undefined;
         const pinState = pc === 'lost' ? 'lost' : (pc === 'medium' || pc === 'low') ? 'shaky' : null;
+        // Live agent state for this card: being worked on now, queued next, or
+        // just finished (the "done" entry stays visible for a few minutes).
+        const working = agent.state === 'working' && agent.commentId === c.id;
+        const queued = !working && agent.queue.includes(c.id);
+        const doneEntry = !working ? activity.slice().reverse().find((e) => e.commentId === c.id && (e.kind === 'done' || e.kind === 'idle') && Date.now() - e.at < 5 * 60000) : null;
+        const lastAct = working ? activity.slice().reverse().find((e) => e.commentId === c.id && e.kind !== 'claim') : null;
         const stateClass = [
           st === 'resolved' ? 'is-resolved' : '', st === 'approved' ? 'is-approved' : '',
           st === 'rejected' ? 'is-rejected' : '', isAgent ? 'is-agent' : '', expanded ? 'is-expanded' : '',
+          working ? 'is-working' : '', queued ? 'is-queued' : '',
         ].filter(Boolean).join(' ');
         html += `
           <div class="kbf-card ${stateClass}" data-id="${c.id}" data-page="${escapeHtml(key)}" data-url="${escapeHtml(c.url || '')}">
@@ -3054,6 +3068,9 @@
               ${pinState ? `<span class="kbf-pinstate is-${pinState}" title="${pinState === 'lost' ? 'The pinned element could not be found on this page.' : 'The pinned element was only found with weak confidence — the agent will refuse to edit it.'}">${pinState === 'lost' ? 'pin lost' : 'pin unsure'}</span>` : ''}
               <span class="kbf-card-anchor" title="${escapeHtml(anchorTxt)}">${escapeHtml(anchorTxt)}</span>
             </div>
+            ${working ? `<div class="kbf-card-work"><span class="kbf-agent-dot"></span><span>${escapeHtml(agentName())} is on this · <span class="kbf-elapsed" data-since="${Number(agent.since) || Date.now()}">${fmtDur(Date.now() - (Number(agent.since) || Date.now()))}</span>${agent.note ? ' · ' + escapeHtml(agent.note) : (lastAct ? ' · ' + escapeHtml(activityText(lastAct)) : '')}</span></div>` : ''}
+            ${queued ? `<div class="kbf-card-work is-queued"><span class="kbf-agent-dot"></span><span>next up for ${escapeHtml(agentName())}</span></div>` : ''}
+            ${doneEntry ? `<div class="kbf-card-work is-done"><span class="kbf-agent-dot"></span><span>${escapeHtml(agentName())}: ${escapeHtml(activityText(doneEntry))}</span></div>` : ''}
             ${c.text ? `<div class="kbf-card-text">${escapeHtml(c.text)}</div>` : ''}
             ${c.textEdit && c.textEdit.after ? `<div class="kbf-card-textedit" title="${escapeHtml((c.textEdit.before || '') + ' → ' + c.textEdit.after)}"><del>${escapeHtml(c.textEdit.before || '')}</del><ins>${escapeHtml(c.textEdit.after)}</ins></div>` : ''}
             ${Array.isArray(c.edits) && c.edits.length ? `<div class="kbf-card-edits">${c.edits.map((ed) => `
@@ -3429,25 +3446,182 @@
     next.filter((c) => normalizePath(c.page) === PAGE && c.status === 'resolved' && prev.get(c.id) && prev.get(c.id) !== 'resolved')
       .forEach((c) => animateResolve(c.id));
   }
-  // Watch-mode presence: show "agent online / working" live (chip in the panel
-  // head + a dot on the list FAB). Presence ages out if heartbeats stop.
-  let presenceTimer = 0;
+  // ---------- agent presence + activity ----------
+  // The server tells us what the agent is doing (state, which comment, since
+  // when, latest note, queue, last heard from) and streams an activity log
+  // ("edited src/Header.jsx", "replied", "resolved"). This mirrors it: chip in
+  // the panel head, a pulsing ring on the pin being worked on, a strip on its
+  // card, an Activity drawer, and the tab title. Staleness is shown, never
+  // guessed: "working" stays "working" (marked quiet) until the server says
+  // otherwise — the old client-side 100s timeout is gone.
+  let agent = { state: 'offline', name: '', commentId: '', since: 0, note: '', lastSeen: 0, queue: [] };
+  let activity = [];
+  let activityUnread = 0;
+  let activityOpen = false;
+  let agentTick = 0;
+  let agentKey = '';
+  const QUIET_AFTER_MS = 90000;
+  const agentName = () => agent.name || 'Agent';
+  function fmtDur(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + 'm ' + (s % 60) + 's';
+    return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+  }
+  // "#3" for a comment on this page, "#2 on /about" elsewhere, "" if unknown.
+  function pinLabel(id) {
+    const c = comments.find((x) => x.id === id);
+    if (!c) return '';
+    const key = normalizePath(c.page);
+    const n = comments.filter((x) => normalizePath(x.page) === key).findIndex((x) => x.id === id) + 1;
+    return '#' + n + (key === PAGE ? '' : ' on ' + key);
+  }
+  function agentLine() {
+    const st = agent.state;
+    if (st === 'offline') return '';
+    const quiet = agent.lastSeen ? Date.now() - agent.lastSeen : 0;
+    let s = agentName();
+    if (st === 'working') {
+      const lbl = agent.commentId ? pinLabel(agent.commentId) : '';
+      s += ' · working on ' + (lbl || 'a comment');
+      if (agent.since) s += ' · ' + fmtDur(Date.now() - agent.since);
+    } else s += ' is online';
+    if (quiet > QUIET_AFTER_MS) s += ' · quiet for ' + fmtDur(quiet).replace(/ \d+s$/, '');
+    return s;
+  }
   function applyAgentStatus(a) {
-    const st = (a && a.state) || 'offline';
-    const on = st === 'online' || st === 'working';
+    agent = Object.assign({ state: 'offline', name: '', commentId: '', since: 0, note: '', lastSeen: 0, queue: [] }, a || {});
+    if (!Array.isArray(agent.queue)) agent.queue = [];
+    const on = agent.state === 'online' || agent.state === 'working';
+    const row = $('kbf-agent-row');
+    if (row) row.hidden = !on && !activity.length;
     const chip = $('kbf-agent-chip');
-    const txt = $('kbf-agent-text');
     if (chip) {
       chip.hidden = !on;
-      chip.classList.toggle('is-working', st === 'working');
-      if (txt) txt.textContent = ((a && a.name) || 'Agent') + (st === 'working' ? ' is working…' : ' is online');
+      chip.classList.toggle('is-working', agent.state === 'working');
+      chip.title = agent.state === 'working' && agent.commentId ? 'Jump to the comment being worked on' : '';
     }
     const fw = root.querySelector('.kbf-fab-wrap');
-    if (fw) fw.classList.toggle('kbf-agent-live', on);
-    clearTimeout(presenceTimer);
-    // Generous vs the ≤60s heartbeat cadence, so one late beat (agent busy
-    // mid-apply) doesn't flicker the chip to offline and back.
-    if (on) presenceTimer = setTimeout(() => applyAgentStatus({ state: 'offline' }), 100000);
+    if (fw) {
+      fw.classList.toggle('kbf-agent-live', on);
+      fw.classList.toggle('kbf-agent-busy', agent.state === 'working');
+    }
+    renderAgentChip();
+    clearInterval(agentTick);
+    if (on) agentTick = setInterval(renderAgentChip, 1000);
+    // Pins / cards only re-render when the thing being worked on changes —
+    // not on every heartbeat.
+    const key = agent.state + '|' + agent.commentId + '|' + agent.queue.join(',');
+    if (key !== agentKey) { agentKey = key; syncWorkingPins(); renderPanel(); }
+    setTabState();
+  }
+  function renderAgentChip() {
+    const txt = $('kbf-agent-text');
+    if (txt) txt.textContent = agentLine();
+    const chip = $('kbf-agent-chip');
+    if (chip) chip.classList.toggle('is-quiet', !!agent.lastSeen && Date.now() - agent.lastSeen > QUIET_AFTER_MS);
+    const note = $('kbf-agent-note');
+    if (note) {
+      const last = activity.length ? activity[activity.length - 1] : null;
+      const line = agent.state === 'working' && agent.note ? agent.note : (last && agent.state !== 'offline' ? activityText(last) : '');
+      note.hidden = !line;
+      note.textContent = line;
+    }
+    root.querySelectorAll('.kbf-elapsed').forEach((el) => { el.textContent = fmtDur(Date.now() - Number(el.dataset.since || Date.now())); });
+  }
+  function syncWorkingPins() {
+    for (const p of placed) {
+      p.pinEl.classList.toggle('is-working', agent.state === 'working' && p.comment.id === agent.commentId);
+      p.pinEl.classList.toggle('is-queued', agent.queue.includes(p.comment.id) && p.comment.id !== agent.commentId);
+    }
+  }
+  function activityText(e) {
+    if (!e) return '';
+    if (e.kind === 'edit') return 'edited ' + (e.file || e.text || 'a file');
+    if (e.kind === 'done') return (e.text || 'done') + (e.took ? ' · took ' + fmtDur(e.took) : '');
+    if (e.kind === 'idle') return e.text || 'paused';
+    return e.text || e.kind;
+  }
+  const ACT_ICON = { edit: '✎', note: '…', reply: '↩', resolve: '✓', claim: '▶', done: '✓', idle: '⏸' };
+  function pushActivity(e) {
+    if (!e || !e.id) return;
+    if (activity.some((x) => x.id === e.id)) return;
+    activity.push(e);
+    if (activity.length > 100) activity.splice(0, activity.length - 100);
+    if (!activityOpen) activityUnread++;
+    // The agent finished something while this tab was in the background: say so
+    // in the tab title until the user comes back.
+    if ((e.kind === 'done' || e.kind === 'resolve' || e.kind === 'reply') && document.hidden) tabDone = true;
+    renderActivity();
+    renderAgentChip();
+    const row = $('kbf-agent-row');
+    if (row) row.hidden = false;
+    if (e.kind === 'done' || e.kind === 'idle') renderPanel();
+    setTabState();
+  }
+  function renderActivity() {
+    const btn = $('kbf-activity-btn');
+    const cnt = $('kbf-activity-count');
+    if (cnt) { cnt.hidden = !activityUnread; cnt.textContent = String(activityUnread); }
+    if (btn) btn.setAttribute('aria-expanded', activityOpen ? 'true' : 'false');
+    const box = $('kbf-activity');
+    if (!box) return;
+    box.hidden = !activityOpen;
+    if (!activityOpen) return;
+    if (!activity.length) { box.innerHTML = '<div class="kbf-activity-empty">Nothing yet — activity shows up here while the agent works.</div>'; return; }
+    box.innerHTML = activity.slice().reverse().map((e) => {
+      const t = new Date(e.at);
+      const hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0') + ':' + String(t.getSeconds()).padStart(2, '0');
+      const lbl = e.commentId ? pinLabel(e.commentId) : '';
+      return `<div class="kbf-act is-${escapeHtml(e.kind)}"><span class="kbf-act-time">${hh}</span><span class="kbf-act-icon" aria-hidden="true">${ACT_ICON[e.kind] || '·'}</span><span class="kbf-act-text">${escapeHtml(activityText(e))}</span>${lbl ? `<button type="button" class="kbf-act-link" data-id="${escapeHtml(e.commentId)}">${escapeHtml(lbl)}</button>` : ''}</div>`;
+    }).join('');
+  }
+  // Tab title + favicon: "⚙ #3 · Page" while working, "✓ Page" after the agent
+  // finished something while the tab was hidden. The host page owns its title;
+  // we only prefix it, and re-read the base whenever the host changes it.
+  let baseTitle = '';
+  let tabDone = false;
+  let favOrig = null;
+  const TAB_RE = /^(⚙ [^·]+ · |✓ )/;
+  function setTabState() {
+    const cur = document.title;
+    if (!TAB_RE.test(cur)) baseTitle = cur;
+    const working = agent.state === 'working';
+    let prefix = '';
+    if (working) prefix = '⚙ ' + (agent.commentId ? (pinLabel(agent.commentId).split(' on ')[0] || '…') : '…') + ' · ';
+    else if (tabDone) prefix = '✓ ';
+    const want = prefix + baseTitle;
+    if (document.title !== want) document.title = want;
+    setFavicon(working ? 'amber' : tabDone ? 'green' : null);
+  }
+  function setFavicon(color) {
+    let link = document.querySelector('link[rel~="icon"]');
+    if (!color) {
+      if (favOrig !== null && link) { if (favOrig) link.href = favOrig; else link.remove(); favOrig = null; }
+      return;
+    }
+    if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); if (favOrig === null) favOrig = ''; }
+    else if (favOrig === null) favOrig = link.getAttribute('href') || '';
+    const fill = color === 'amber' ? '%23c98a2b' : '%232f9e6a';
+    link.href = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='${fill}'/%3E%3C/svg%3E`;
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && tabDone) { tabDone = false; setTabState(); } });
+  $('kbf-activity-btn').addEventListener('click', () => {
+    activityOpen = !activityOpen;
+    if (activityOpen) activityUnread = 0;
+    renderActivity();
+  });
+  $('kbf-activity').addEventListener('click', (e) => {
+    const b = e.target.closest('.kbf-act-link');
+    if (b) focusOrOpen(b.dataset.id);
+  });
+  $('kbf-agent-chip').addEventListener('click', () => { if (agent.state === 'working' && agent.commentId) focusOrOpen(agent.commentId); });
+  // Jump to a comment on this page, or open the page that has it.
+  function focusOrOpen(id) {
+    if (focusComment(id, true)) return;
+    const c = comments.find((x) => x.id === id);
+    if (c && c.url && normalizePath(c.page) !== PAGE) location.href = c.url;
   }
 
   // The agent finished a batch and wants the page to show its edits under the
@@ -3494,6 +3668,15 @@
     es.addEventListener('agent-status', (e) => {
       try { const d = JSON.parse(e.data); if (d && d.agent) applyAgentStatus(d.agent); } catch (err) {}
     });
+    es.addEventListener('activity-log', (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        if (d && Array.isArray(d.activity)) { activity = d.activity.slice(-100); activityUnread = 0; renderActivity(); renderAgentChip(); const row = $('kbf-agent-row'); if (row && activity.length) row.hidden = false; }
+      } catch (err) {}
+    });
+    es.addEventListener('activity', (e) => {
+      try { const d = JSON.parse(e.data); if (d && d.entry) pushActivity(d.entry); } catch (err) {}
+    });
     es.addEventListener('reload', () => requestReload());
     es.addEventListener('store-error', (e) => {
       // Server-sent application error (its own event name, so it never collides
@@ -3509,6 +3692,9 @@
       if (es && es.readyState === EventSource.CLOSED) {
         try { es.close(); } catch (e) {}
         es = null;
+        // No stream = no truth about the agent. Say offline rather than keep a
+        // stale "working on #3" on screen; the reconnect re-sends presence.
+        if (agent.state !== 'offline') applyAgentStatus({ state: 'offline' });
         scheduleResubscribe();
       }
     };

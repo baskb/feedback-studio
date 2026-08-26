@@ -155,7 +155,10 @@ belongs to the site whose `.feedback/` it lives in, and its image paths resolve 
      `background-position`), `w`/`h` if the box should resize. Same confidence rule: if you
      can't confidently locate the element, leave it open and ask for a re-pin.
 4. Present changes as **diffs grouped by page**. Honour `autonomy`: `review` (default) = show
-   first; `auto` = apply directly. Mark each resolved when applied (the pin flips green live):
+   first; `auto` = apply directly. If the server is running, **claim each item before you
+   touch it** — `POST /__feedback/api/agent-status` with `{"state":"working","commentId":"<id>"}`
+   (one call; see *Watch mode* for the details) — so the person watching the page sees which
+   pin you are on and how long it takes. Mark each resolved when applied (the pin flips green live):
    PATCH `/__feedback/api/comments/<id>` with `{"status":"resolved"}` if the server is running,
    else set `"status":"resolved"` in the file. (If the server runs with `--share strict`, API
    calls 401/403 without a key — append `?key=<admin key from the startup banner>`.)
@@ -180,18 +183,28 @@ belongs to the site whose `.feedback/` it lives in, and its image paths resolve 
 
 Trigger: "watch the feedback", "go live", "feedback watch". Instead of a batch PPF, you stay
 present while the user reviews — answering questions on pins within seconds and applying
-`auto` comments as they arrive (pins flip green live). Set `S=http://localhost:<port>/__feedback/api`.
-(Under `--share strict`, append `?key=<admin key from the startup banner>` to every call —
-without it the API answers 401/403.)
+`auto` comments as they arrive (pins flip green live). Set `S=http://localhost:<port>/__feedback/api`
+— while the server runs, `.feedback/session.json` holds `apiBase` (and `adminKey` under
+`--share`), so read it instead of guessing the port. (Under `--share strict`, append
+`?key=<admin key>` to every call — without it the API answers 401/403.)
 
-1. Ensure a session is running (see *Start a session*), then announce yourself:
+1. Ensure a session is running (see *Start a session*), then announce yourself once:
    `curl -s -X POST $S/agent-status -H "Content-Type: application/json" -d '{"state":"online","name":"<short role>"}'`
-   The overlay shows an "agent online" chip + a green dot. **Re-post at least every 60s**
-   (any state) — the overlay marks you offline after ~100s of silence. Presence is
-   single-agent (last write wins): don't run two watchers on one session.
+   The overlay shows an "agent online" chip + a green dot. No heartbeat discipline needed:
+   every call you make (the poll below, replies, PATCHes) counts as one, and the plugin's
+   hooks report your file edits by themselves. Presence is single-agent (last write wins):
+   don't run two watchers on one session.
 2. Loop until the user says stop (or ~15 min with no activity): `GET $S/comments` every ~5s
    and diff against what you've seen (new comments, new user replies, status → `approved`).
-3. React per item — post `{"state":"working"}` first, `{"state":"online"}` when done:
+3. React per item. **Claim it first** so the page shows which pin you are on:
+   `POST $S/agent-status` with `{"state":"working","commentId":"<id>","note":"locating the element"}`
+   — the pin pulses, its card shows "<you> is on this · elapsed time · latest step", and the
+   tab title reads `⚙ #3`. Several arrived at once? Add `"queue":["<id2>","<id3>"]` so those
+   cards read "next up". Post a fresh `note` at natural steps ("editing src/Header.jsx",
+   "verifying") — file edits are reported for you by the hooks, so this is optional.
+   Finishing is automatic: resolving/rejecting the claimed comment, or answering it in a
+   reply, drops you back to "online" and writes "done · took 2m" on the card. Only a
+   "Queued …" reply parks the item — post `{"state":"online"}` yourself after that one.
    - **`question` (or any comment asking something):** answer in a thread reply
      (`POST $S/comments/<id>/reply`). Don't change code for a question.
    - **`autonomy:"auto"`:** locate with the usual confidence rule — if unsure, reply asking

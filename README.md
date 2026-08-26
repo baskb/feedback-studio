@@ -185,8 +185,11 @@ reverse.
 - **Latitude per comment** — `fix` (repair it), `change` (apply near-verbatim),
   `improve` (use judgement); Markdown gets document verbs. Plus `review`/`auto`
   autonomy per comment.
-- **Live everything** — pins flip green as comments resolve, an agent-presence
-  chip shows who's working, no refresh needed.
+- **Live everything** — pins flip green as comments resolve, and the page
+  mirrors the terminal: the pin being worked on pulses, its card shows "Claude
+  is on this · 1m 20s · edited src/Header.jsx", an Activity drawer keeps the
+  history, and the tab title reads `⚙ #3` while work is under way. No refresh,
+  no heartbeat discipline — the plugin's hooks report file edits by themselves.
 - **Screenshots as ground truth** — each pin captures what you actually saw
   (auto-attached, gitignored, GC'd with the comment; `--no-shots` to disable).
 - **Share with roles** — `--share` mints view / comment / admin capability
@@ -264,7 +267,8 @@ have never seen this tool).
 
 There is also an **MCP server** (`bin/feedback-studio-mcp.mjs`) for local
 MCP-capable agents such as Codex CLI, Cursor, Windsurf, and Cline — tools:
-`list_comments`, `get_comment`, `add_comment`, `reply`, `set_status`. It ships
+`list_comments`, `get_comment`, `add_comment`, `reply`, `set_status`, and
+`set_presence` (so the open page shows which comment that agent is on). It ships
 with the plugin but is **not activated by default in Claude Code** (the skill
 reads the files directly; no always-on server in every turn). Full setup is in
 [INTEROP.md](INTEROP.md).
@@ -334,6 +338,14 @@ instead of guessing), a `.bak` is saved first, and re-running never duplicates.
   Node through the firewall), or skip all of it with `--tunnel`.
 - **Static vs proxy**: static mode needs a rebuild to see content changes;
   proxy mode reflects live edits and forwards dynamic routes to the dev server.
+- **What the plugin's hooks do.** The Claude Code plugin registers three small
+  hooks (after every file edit, when you send a message, when a turn ends).
+  Each one looks for `.feedback/session.json` — written by a running review
+  server — and, only if it finds one, tells that server what just happened so
+  the open page can show it. Without a session it exits at once, and it never
+  reads or sends anything but the edited file's relative path. Disable them
+  like any plugin hook (Claude Code's `/hooks` menu or `settings.json`); the
+  page then still shows presence from the agent's own API calls.
 
 ## License
 

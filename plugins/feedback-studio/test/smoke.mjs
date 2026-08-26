@@ -275,6 +275,78 @@ try {
   });
   check('agent-status coerces junk state to offline', (await as3.json()).agent.state === 'offline');
 
+  // Presence + activity: what the browser mirrors while the agent works.
+  const J = { 'Content-Type': 'application/json', Origin: ORIGIN };
+  const postJ = (p, body, extra) => fetch(ORIGIN + '/__feedback/api/' + p, { method: 'POST', headers: { ...J, ...(extra || {}) }, body: JSON.stringify(body) });
+  const getAgent = async () => (await (await fetch(ORIGIN + '/__feedback/api/agent-status')).json());
+  // session.json lets hooks + the skill find this server without guessing the port
+  let sess = null;
+  try { sess = JSON.parse(readFileSync(path.join(root, '.feedback', 'session.json'), 'utf8')); } catch (e) {}
+  check('writes session.json with pid + apiBase', !!sess && sess.pid === srv.pid && sess.apiBase === `http://localhost:${PORT}/__feedback/api`);
+  // claim a comment: state working + since set; activity gets a "claim" line
+  const claimTarget = (await (await postJ('comments', { page: '/', text: 'claim me', anchor: { selector: '#c', snippet: 'C' } })).json()).comment;
+  const claimed = (await (await postJ('agent-status', { state: 'working', commentId: claimTarget.id, name: 'Claude', note: 'locating' })).json()).agent;
+  check('claim sets working + commentId + since', claimed.state === 'working' && claimed.commentId === claimTarget.id && claimed.since > 0 && claimed.note === 'locating');
+  const sinceBefore = claimed.since;
+  const reclaimed = (await (await postJ('agent-status', { state: 'working', commentId: claimTarget.id, note: 'editing' })).json()).agent;
+  check('re-claim of the same comment keeps since, updates note', reclaimed.since === sinceBefore && reclaimed.note === 'editing');
+  // an untagged activity line (what a hook posts) attaches to the claimed comment
+  const act = await (await postJ('activity', { kind: 'edit', file: 'src/Header.jsx' })).json();
+  check('activity attaches to the comment being worked on', act.entry && act.entry.kind === 'edit' && act.entry.commentId === claimTarget.id);
+  const log1 = (await getAgent()).activity;
+  check('agent-status GET carries the activity log', Array.isArray(log1) && log1.some((e) => e.kind === 'claim') && log1.some((e) => e.kind === 'edit' && e.file === 'src/Header.jsx'));
+  // late joiners on the SSE stream get presence + the activity log up front
+  const sseRes = await fetch(ORIGIN + '/__feedback/events');
+  const sseReader = sseRes.body.getReader();
+  let sseText = '';
+  for (let i = 0; i < 4 && !sseText.includes('event: activity-log'); i++) { const { value, done } = await sseReader.read(); if (done) break; sseText += Buffer.from(value).toString(); }
+  check('SSE late joiner receives agent-status + activity-log', sseText.includes('event: agent-status') && sseText.includes('event: activity-log') && sseText.includes('src/Header.jsx'));
+  sseReader.cancel().catch(() => {});
+  // resolving the claimed comment (as the agent) releases presence by itself
+  await fetch(ORIGIN + '/__feedback/api/comments/' + claimTarget.id, { method: 'PATCH', headers: J, body: JSON.stringify({ status: 'resolved' }) });
+  const released = await getAgent();
+  check('resolving the claimed comment auto-releases to online', released.agent.state === 'online' && released.agent.commentId === '' && released.activity.some((e) => e.kind === 'done' && e.commentId === claimTarget.id && e.took >= 0));
+  // a normal answer on a claimed comment releases too; a "Queued" reply does not
+  await postJ('agent-status', { state: 'working', commentId: claimTarget.id });
+  await postJ('comments/' + claimTarget.id + '/reply', { author: 'agent', text: 'Queued — I will show you this first.' });
+  const stillWorking = (await getAgent()).agent;
+  await postJ('comments/' + claimTarget.id + '/reply', { author: 'agent', text: 'Done: bumped the size.' });
+  const answered = (await getAgent()).agent;
+  check('"Queued" reply keeps working; a real answer releases', stillWorking.state === 'working' && answered.state === 'online');
+  // implicit heartbeat: the agent's own poll promotes offline → online; a browser's does not
+  await postJ('agent-status', { state: 'offline' });
+  await fetch(ORIGIN + '/__feedback/api/comments', { headers: { 'Sec-Fetch-Mode': 'cors', 'User-Agent': 'Mozilla/5.0 (test browser)' } });
+  const afterBrowser = (await getAgent()).agent.state;
+  await fetch(ORIGIN + '/__feedback/api/comments');
+  const afterAgent = (await getAgent()).agent.state;
+  check('agent poll counts as heartbeat (browser fetch does not)', afterBrowser === 'offline' && afterAgent === 'online');
+  // presence.json (MCP-only agents) is merged by the data-dir watch
+  writeFileSync(path.join(root, '.feedback', 'presence.json'), JSON.stringify({ state: 'working', name: 'Codex', commentId: claimTarget.id, note: 'via file', activity: { kind: 'note', text: 'via file' } }));
+  let viaFile = null;
+  for (let i = 0; i < 20; i++) { await sleep(150); viaFile = (await getAgent()).agent; if (viaFile.name === 'Codex') break; }
+  check('presence.json is picked up live', viaFile && viaFile.name === 'Codex' && viaFile.state === 'working' && viaFile.commentId === claimTarget.id);
+  // the plugin hook: finds the session file from the cwd and reports the edit
+  const hook = path.join(__dirname, '..', 'hooks', 'report.mjs');
+  const runHook = (arg, input, cwd) => new Promise((resolve) => {
+    const h = spawn(process.execPath, [hook, arg], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    h.stdout.on('data', (d) => { out += d; });
+    h.on('close', (code) => resolve({ code, out }));
+    h.stdin.end(JSON.stringify(input));
+  });
+  const h1 = await runHook('edit', { cwd: root, tool_input: { file_path: path.join(site, 'index.html') } }, root);
+  await sleep(200);
+  const afterHook = await getAgent();
+  check('hook reports the edit (relative path, exit 0, silent)', h1.code === 0 && h1.out === '' && afterHook.activity.some((e) => e.kind === 'edit' && e.file === 'site/index.html'));
+  const h2 = await runHook('idle', { cwd: root }, root);
+  const afterIdle = await getAgent();
+  check('hook "idle" ends the working state', h2.code === 0 && afterIdle.agent.state === 'online' && afterIdle.agent.commentId === '');
+  const noSess = mkdtempSync(path.join(tmpdir(), 'fbs-nosess-'));
+  const h3 = await runHook('edit', { cwd: noSess, tool_input: { file_path: 'x.js' } }, noSess);
+  check('hook without a session exits 0 silently', h3.code === 0 && h3.out === '');
+  rmSync(noSess, { recursive: true, force: true });
+  await postJ('agent-status', { state: 'offline' });
+
   // reload broadcast endpoint (agent refreshes open overlays after a batch)
   const reload = await fetch(ORIGIN + '/__feedback/api/reload', { method: 'POST', headers: { Origin: ORIGIN } });
   check('reload endpoint accepts POST', reload.status === 200 && (await reload.json()).ok === true);

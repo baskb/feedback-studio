@@ -36,6 +36,7 @@
   "files": [
     "plugins/feedback-studio/bin/",
     "plugins/feedback-studio/demo/",
+    "plugins/feedback-studio/hooks/",
     "plugins/feedback-studio/lib/",
     "plugins/feedback-studio/public/",
     "plugins/feedback-studio/skills/",

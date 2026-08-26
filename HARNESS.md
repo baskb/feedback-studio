@@ -64,3 +64,7 @@ leaves open for a re-pin.
 These numbers are re-measured per release. The family-grouped vote that ships
 now only moves borderline structural-only matches toward lower, safer
 confidence, so the confident-correct counts can only hold or improve.
+
+## Presence and activity are not anchoring signals
+
+Watch mode tells the page which comment the agent is on (`agent-status`) and what it just did (`activity`). Both are in-memory on the server, ephemeral, and purely informational: they never feed `resolveWithConfidence`, never change a comment's stored anchor, and never move a comment's status. A "working on #3" claim that is left behind by a crashed agent is released by the server's 10-minute silence timer; a wrong claim can at worst light the wrong pin, never edit the wrong element.

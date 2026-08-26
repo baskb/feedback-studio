@@ -1,6 +1,6 @@
 // Live smoke test for the MCP stdio server. Run: node test/mcp-smoke.mjs
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,7 +35,11 @@ try {
   check('unsupported protocol falls back, not echoed', unsupported.result.protocolVersion !== 'bogus');
 
   const tools = await rpc({ jsonrpc: '2.0', id: 3, method: 'tools/list' });
-  check('lists 5 tools', tools.result.tools.length === 5);
+  check('lists 6 tools', tools.result.tools.length === 6);
+  const pres = await rpc({ jsonrpc: '2.0', id: 30, method: 'tools/call', params: { name: 'set_presence', arguments: { state: 'working', commentId: 'c1', name: 'Codex', note: 'looking' } } });
+  let presFile = null;
+  try { presFile = JSON.parse(readFileSync(path.join(dir, 'presence.json'), 'utf8')); } catch (e) {}
+  check('set_presence writes presence.json', !pres.result.isError && presFile && presFile.state === 'working' && presFile.commentId === 'c1' && presFile.activity && presFile.activity.text === 'looking');
 
   const add = await rpc({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'add_comment', arguments: { page: '/', text: 'from agent' } } });
   const added = JSON.parse(add.result.content[0].text);

@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Pins on table cells and list items hang outside the corner, tail pointing in.** 0.9.6 tucked those pins inside the box, which put the pin on top of the very text it marked. They now sit just outside the box's top-left corner, flipped so the tail points down-right into the cell or bullet — the text stays readable and there is no doubt which cell is meant. Wide elements (paragraphs, headings) are unchanged.
+
 ## [0.9.6] - 2026-08-26
 
 ### Fixed

@@ -448,6 +448,8 @@ button {
 .kbf-pin:hover, .kbf-pin:focus-visible { transform: scale(1.12); opacity: 1; }
 .kbf-pin:focus-visible { outline: 2px solid var(--kbf-clay); outline-offset: 2px; }
 .kbf-pin.is-agent { background: var(--kbf-agent); border-radius: 50% 50% 2px 50%; }
+/* Hung outside a cell / list item's top-left corner: the tail points down-right, into the box. */
+.kbf-pin.is-outside, .kbf-pin.is-agent.is-outside { border-radius: 50% 50% 2px 50%; }
 .kbf-pin.is-agent svg { width: 15px; height: 15px; }
 .kbf-pin.is-resolved { background: var(--kbf-green); }
 .kbf-pin.is-rejected { background: var(--kbf-muted); }

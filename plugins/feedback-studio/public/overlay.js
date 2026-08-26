@@ -2912,20 +2912,24 @@
     // Re-measure on the next frame to reveal them without waiting for a scroll.
     requestAnimationFrame(positionPins);
   }
-  const PIN_INSET_TAGS = new Set(['TD', 'TH']);
+  const PIN_OUTSIDE_TAGS = new Set(['TD', 'TH', 'LI']);
   function positionPins() {
     for (const p of placed) {
       const r = p.el.getBoundingClientRect();
       // No box yet (not laid out / display:none ancestor) — keep it hidden rather
       // than parking it at 0,0. A later pass reveals it once it has a real rect.
       if (!r.width && !r.height) { p.pinEl.style.display = 'none'; continue; }
-      // The pin is centred on the element's top-left corner. On a narrow box —
-      // a table cell, a short list item, a button — half of it then hangs over
-      // the neighbour to the left and it reads as "the wrong column". Tuck it
-      // inside such boxes instead, so it can only belong to the one it marks.
-      const inset = PIN_INSET_TAGS.has(p.el.tagName) || r.width < 160 ? 15 : 0;
-      p.pinEl.style.left = (r.left + inset) + 'px';
-      p.pinEl.style.top = (r.top + (inset && r.height >= 32 ? inset : 0)) + 'px';
+      // The pin is centred on the element's top-left corner, tail pointing
+      // down-left. On a table cell or a list item that puts it on top of the
+      // very text it marks (and half over the column to the left). For those,
+      // hang it just OUTSIDE the corner instead, flipped so the tail points
+      // down-right into the cell — nothing covered, no doubt which cell.
+      const outside = PIN_OUTSIDE_TAGS.has(p.el.tagName) || r.width < 160;
+      p.pinEl.classList.toggle('is-outside', outside);
+      // 7px out: the pin straddles the corner where all four boxes have only
+      // padding, so it covers neither this cell's text nor a neighbour's.
+      p.pinEl.style.left = (r.left - (outside ? 7 : 0)) + 'px';
+      p.pinEl.style.top = (r.top - (outside ? 7 : 0)) + 'px';
       const off = r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth;
       p.pinEl.style.display = off ? 'none' : 'flex';
     }

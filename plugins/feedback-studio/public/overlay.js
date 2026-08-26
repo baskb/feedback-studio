@@ -2876,7 +2876,11 @@
       const { el, confidence } = resolveWithConfidence(c.anchor, pool);
       pinConf.set(c.id, el ? confidence : 'lost');
       if (!el) return;
-      const shaky = confidence === 'medium' || confidence === 'low';
+      // Same rule as the List cards: only comments still awaiting action warn.
+      // A resolved comment's text USUALLY changed — that is the fix having
+      // landed — so its pin stays green, never amber.
+      const awaiting = c.status !== 'resolved' && c.status !== 'rejected';
+      const shaky = awaiting && (confidence === 'medium' || confidence === 'low');
       const pin = document.createElement('div');
       pin.className = 'kbf-pin'
         + (c.author === 'agent' ? ' is-agent' : '')
@@ -3142,7 +3146,13 @@
     expandedId = expandedId === c.id ? null : c.id;
     focusReplyNext = !!expandedId;
     renderPanel();
-    if (expandedId && normalizePath(c.page) === PAGE) focusComment(c.id, false);
+    if (expandedId && normalizePath(c.page) === PAGE) {
+      // Say so when there is nothing to scroll to, instead of silently staying
+      // put: a resolved "delete" comment's text is gone by design.
+      if (!focusComment(c.id, false)) toast(c.status === 'resolved' || c.status === 'rejected'
+        ? 'That text is no longer in the document — nothing to scroll to.'
+        : "Couldn't locate this element on the page — it may need a re-pin.");
+    }
   }
 
   listEl.addEventListener('input', (e) => {
@@ -3236,6 +3246,11 @@
 
   function focusComment(id, openPanel) {
     const p = placed.find((x) => x.comment.id === id);
+    if (openPanel) setPanel(true);
+    // The card first: scrolling the List is instant, and doing it AFTER the
+    // page's smooth scroll would cancel that animation mid-way.
+    const card = root.querySelector('.kbf-card[data-id="' + id + '"]');
+    if (card) { card.scrollIntoView({ block: 'nearest' }); flashCard(card); }
     if (p) {
       revealEl(p.el);
       p.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -3244,9 +3259,6 @@
       p.pinEl.classList.add('is-active');
       setTimeout(() => p.pinEl.classList.remove('is-active'), 1600);
     }
-    if (openPanel) setPanel(true);
-    const card = root.querySelector('.kbf-card[data-id="' + id + '"]');
-    if (card) { card.scrollIntoView({ block: 'nearest' }); flashCard(card); }
     return !!p; // whether the element was found on the page
   }
 

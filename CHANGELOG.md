@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-08-26
+
 ### Changed
 - **Pins on table cells and list items hang outside the corner, tail pointing in.** 0.9.6 tucked those pins inside the box, which put the pin on top of the very text it marked. They now sit just outside the box's top-left corner, flipped so the tail points down-right into the cell or bullet — the text stays readable and there is no doubt which cell is meant. Wide elements (paragraphs, headings) are unchanged.
 
@@ -606,7 +608,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.6...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.7...HEAD
+[0.9.7]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.7
 [0.9.6]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.6
 [0.9.5]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.5
 [0.9.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.4

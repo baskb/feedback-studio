@@ -1578,7 +1578,9 @@ async function writeSessionFile(scheme) {
   await writeJson(SESSION_FILE(), {
     pid: process.pid,
     port: PORT,
-    apiBase: `${scheme}://localhost:${PORT}/__feedback/api`,
+    // 127.0.0.1, not "localhost": on Node 18 "localhost" resolves to ::1 first
+    // and the server binds IPv4 only — the hook's request would be refused.
+    apiBase: `${scheme}://127.0.0.1:${PORT}/__feedback/api`,
     adminKey: SHARE ? SHARE_KEYS.admin : undefined,
     cwd: CWD,
     dataDir: DATA_DIR,

@@ -282,7 +282,7 @@ try {
   // session.json lets hooks + the skill find this server without guessing the port
   let sess = null;
   try { sess = JSON.parse(readFileSync(path.join(root, '.feedback', 'session.json'), 'utf8')); } catch (e) {}
-  check('writes session.json with pid + apiBase', !!sess && sess.pid === srv.pid && sess.apiBase === `http://localhost:${PORT}/__feedback/api`);
+  check('writes session.json with pid + apiBase', !!sess && sess.pid === srv.pid && sess.apiBase === `http://127.0.0.1:${PORT}/__feedback/api`);
   // claim a comment: state working + since set; activity gets a "claim" line
   const claimTarget = (await (await postJ('comments', { page: '/', text: 'claim me', anchor: { selector: '#c', snippet: 'C' } })).json()).comment;
   const claimed = (await (await postJ('agent-status', { state: 'working', commentId: claimTarget.id, name: 'Claude', note: 'locating' })).json()).agent;

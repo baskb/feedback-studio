@@ -411,7 +411,13 @@
 
     let confidence;
     if (hasText) {
-      const tr = textRel(best, rawSnip);
+      let tr = textRel(best, rawSnip);
+      // A range anchor (a selected sentence) stores a FRAGMENT of its container's
+      // text, so "buried inside much larger text" is the expected relation, not
+      // a sign of an over-broad ancestor — as long as the element is the same
+      // kind of container that was recorded (an <li> stays an <li>; an
+      // <article> that merely contains the sentence does not qualify).
+      if (tr === 'weak' && a.type === 'range' && a.tag && best.nodeName.toLowerCase() === a.tag) tr = 'strong';
       if ((set.has('attr') || set.has('structural')) && tr === 'strong') confidence = 'high';
       else if (set.has('text') && tr === 'strong') confidence = 'high';
       else if (tr !== 'none') confidence = 'medium'; // text present but not a clean match → re-check

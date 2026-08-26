@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-08-26
+
 ### Fixed
 - **Resolved pins stay green.** Since 0.9.4 a pin whose element re-resolved with weak confidence turned amber — including resolved comments, whose text has usually been changed by the very fix that resolved them. In `--md` review that made most processed comments look like warnings. Pins now follow the same rule the List cards already did: only comments still awaiting action warn.
 - **Clicking a comment in the List scrolls to it reliably.** The List used to scroll its own card *after* starting the page's smooth scroll, which could cancel that animation part-way; the order is now reversed. And when there is nothing to scroll to (a resolved "delete" comment's text is gone by design), the click now says so instead of silently doing nothing.
@@ -601,7 +603,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.5...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.6...HEAD
+[0.9.6]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.6
 [0.9.5]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.5
 [0.9.4]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.4
 [0.9.3]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.3

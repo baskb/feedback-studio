@@ -1,6 +1,6 @@
 {
   "name": "feedback-studio",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "A local commenting overlay for a website you're building (a static build or your local dev server) or a Markdown file, not public sites you browse. Click or tap any element (or select text) and leave typed or spoken feedback; comments persist to .feedback/, then you tell your agent 'PPF' (Please Process Feedback) to apply them. Review from your phone by voice over a Cloudflare tunnel (--tunnel) or self-signed HTTPS.",
   "author": {
     "name": "Bastiaan Kortenbout"

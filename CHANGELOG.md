@@ -9,6 +9,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - **Resolved pins stay green.** Since 0.9.4 a pin whose element re-resolved with weak confidence turned amber — including resolved comments, whose text has usually been changed by the very fix that resolved them. In `--md` review that made most processed comments look like warnings. Pins now follow the same rule the List cards already did: only comments still awaiting action warn.
 - **Clicking a comment in the List scrolls to it reliably.** The List used to scroll its own card *after* starting the page's smooth scroll, which could cancel that animation part-way; the order is now reversed. And when there is nothing to scroll to (a resolved "delete" comment's text is gone by design), the click now says so instead of silently doing nothing.
+- **Pins on table cells sit inside the cell.** A pin is centred on its element's top-left corner, which on a narrow box — a table cell, a short list item — left half of it hanging over the column to the left, so it looked pinned to the wrong column. Pins on `td`/`th` and on any box narrower than 160px are now tucked just inside the box. Wide elements are unchanged.
 - **Hooks reach the server on Node 18.** `session.json` pointed at `localhost`, which Node 18 resolves to IPv6 first while the server listens on IPv4 only; it now says `127.0.0.1`.
 
 ## [0.9.5] - 2026-08-26

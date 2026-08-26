@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-08-26
+
 ### Fixed
 - **A sentence pin no longer starts life as "pin unsure".** Selecting a sentence inside a long paragraph or bullet stores that sentence as the anchor's text. On resolution the tool compared it with the whole paragraph, saw a short text inside a much longer one, and read that as "an over-broad ancestor" — so the pin went amber the moment it was placed, on an unchanged page. A sentence sitting inside its own paragraph is the expected relation and now counts as a strong match, provided the element has the tag the anchor recorded (an `<li>` stays an `<li>`; a wrapper that merely contains the sentence does not qualify). Verified on a page with near-duplicate "Current:" / "New:" bullets: the pin resolves at high confidence to the bullet that was selected.
 
@@ -611,7 +613,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.7...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.8...HEAD
+[0.9.8]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.8
 [0.9.7]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.7
 [0.9.6]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.6
 [0.9.5]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.5

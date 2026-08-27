@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-08-27
+
 ### Changed
 - **`--md`: the document moves aside for the List panel.** With the panel open (windows 768px and wider) the page gets a matching right padding, so the article re-centres in the space beside the panel instead of being partly covered by it. The move is animated and pins follow it; a reload with the panel already open shows the shifted layout at once. Ordinary web pages are unchanged — the overlay never restyles a site it does not own.
 
@@ -616,7 +618,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.8...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.9...HEAD
+[0.9.9]: https://github.com/baskb/feedback-studio/compare/v0.9.8...v0.9.9
 [0.9.8]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.8
 [0.9.7]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.7
 [0.9.6]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.6

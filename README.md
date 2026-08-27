@@ -287,7 +287,8 @@ startup and warns you if it's missing.
 ## Reviewing Markdown, and the `Stamp .md` button
 
 In `--md` mode each comment records the **source `.md` path**. The rendered HTML
-is throwaway; the agent edits the file. Two handoff paths:
+is throwaway; the agent edits the file. (Keep the List panel open while you read: the
+document moves aside and re-centres beside it on wide windows.) Two handoff paths:
 
 - **`.feedback/comments.json`** — the rich record: threads, status, types, and
   exact `rephrase` wording from in-place edits.

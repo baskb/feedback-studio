@@ -626,7 +626,9 @@ try {
       // Collapsible chapters ship with the doc shell: the fold script (keyed
       // per file via sessionStorage), the reveal hook the overlay talks to, and
       // the CSS that makes [hidden] win over the table display override.
-      check('--md: doc shell includes the chapter-fold script and reveal hook',
+      check('--md: doc shell re-centres the article beside an open List panel',
+    aHtml.includes('html.kbf-panel-open body') && aHtml.includes('kbf-shift-instant'));
+  check('--md: doc shell includes the chapter-fold script and reveal hook',
         aHtml.includes('kbf-md-fold') && aHtml.includes('kbf:reveal') && aHtml.includes('.doc > [hidden]'));
       // Links in the doc body open in a new tab (external AND relative-to-
       // another-doc, so following a reference never replaces the review page);

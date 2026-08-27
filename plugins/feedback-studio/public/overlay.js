@@ -2986,6 +2986,28 @@
     const tb = $('kbf-toggle-panel');
     if (tb) { tb.setAttribute('aria-expanded', open ? 'true' : 'false'); tb.classList.toggle('is-active', open); } // stay expanded while the panel is open
     if (open) renderPanel();
+    applyPanelShift(open, false);
+  }
+  // --md only: the doc shell re-centres the article beside the open panel
+  // (html.kbf-panel-open -> body padding-right). Web pages are never touched.
+  function applyPanelShift(open, instant) {
+    if (MODE !== 'md') return;
+    const de = document.documentElement;
+    if (instant) de.classList.add('kbf-shift-instant');
+    de.classList.toggle('kbf-panel-open', open);
+    // A timer, not rAF: a tab opened in the background gets no frames, and the
+    // class must not stay on (it would turn every later toggle into a jump).
+    if (instant) { setTimeout(() => de.classList.remove('kbf-shift-instant'), 100); return; }
+    // The padding animates for 280ms and fires neither scroll nor resize, so
+    // pump the positioner across the move instead of letting pins jump at the
+    // end. A background tab freezes the transition clock (it runs later, when
+    // the tab is shown), so transitionend re-measures once more to be sure.
+    const until = performance.now() + 340;
+    (function pump() { schedulePos(); if (performance.now() < until) requestAnimationFrame(pump); })();
+    if (!applyPanelShift._bound) {
+      applyPanelShift._bound = true;
+      document.body.addEventListener('transitionend', (e) => { if (e.target === document.body && e.propertyName === 'padding-right') schedulePos(); });
+    }
   }
   function setFilter(f) {
     filter = f;
@@ -3909,7 +3931,7 @@
     }
     setMode(mode);
     refresh();
-    if (panelOpen) { panel.classList.add('is-open'); renderPanel(); }
+    if (panelOpen) { panel.classList.add('is-open'); renderPanel(); applyPanelShift(true, true); }
     const focusId = SS.get('kbf-focus');
     if (focusId) {
       SS.remove('kbf-focus');

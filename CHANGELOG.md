@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **`--md`: the document moves aside for the List panel.** With the panel open (windows 768px and wider) the page gets a matching right padding, so the article re-centres in the space beside the panel instead of being partly covered by it. The move is animated and pins follow it; a reload with the panel already open shows the shifted layout at once. Ordinary web pages are unchanged — the overlay never restyles a site it does not own.
+
 ## [0.9.8] - 2026-08-26
 
 ### Fixed

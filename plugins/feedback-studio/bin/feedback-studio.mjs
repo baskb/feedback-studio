@@ -1213,6 +1213,14 @@ function mdDocShell(title, sourceRel, sourceDisplay, bodyHtml) {
   body { margin:0; background:var(--paper); color:var(--ink);
     font:16px/1.7 ui-serif, Georgia, "Times New Roman", serif; -webkit-font-smoothing:antialiased; }
   .doc { max-width: 46rem; margin: 0 auto; padding: 56px 24px 160px; }
+  /* The overlay sets html.kbf-panel-open while its List panel (392px, see
+     overlay.css .kbf-panel - keep the two widths equal) is open: body gets a
+     matching right padding so .doc re-centres in the space beside the panel.
+     kbf-shift-instant skips the slide on a reload with the panel already open.
+     Under 768px the panel keeps overlaying (at 480px it is full-width anyway). */
+  body { transition: padding-right .28s cubic-bezier(.32,.72,0,1); }
+  html.kbf-shift-instant body { transition: none; }
+  @media (min-width: 768px) { html.kbf-panel-open body { padding-right: 392px; } }
   .doc-source { font:600 12px/1 ui-monospace,"Fira Mono",monospace; color:var(--muted);
     letter-spacing:.04em; text-transform:uppercase; margin-bottom:28px; padding-bottom:14px; border-bottom:1px solid var(--rule); }
   h1,h2,h3,h4 { font-family: ui-sans-serif,-apple-system,"Segoe UI",system-ui,sans-serif; line-height:1.25; letter-spacing:-0.01em; margin:1.8em 0 .6em; }

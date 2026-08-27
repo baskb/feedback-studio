@@ -55,6 +55,14 @@
   // (ids are UUIDs, never reused) and the map clears on page reload.
   const replyDrafts = {};
   const isOpenC = (c) => c.status !== 'resolved' && c.status !== 'rejected';
+  // Newest activity on a comment: created, updated (reply / status / edit), or its newest reply.
+  const lastTouch = (c) => {
+    let t = (c.updatedAt && c.updatedAt > (c.createdAt || '')) ? c.updatedAt : (c.createdAt || '');
+    for (const r of (Array.isArray(c.thread) ? c.thread : [])) if (r.createdAt && r.createdAt > t) t = r.createdAt;
+    return t;
+  };
+  // "Today" = added or touched on the reviewer's local calendar day (timestamps are UTC ISO strings).
+  const isTodayC = (c) => { const d = new Date(lastTouch(c) || 0); const n = new Date(); return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate(); };
   let recognizing = false;
   let recognition = null;
   let voiceManualStop = false; // true when the user (not a pause) stopped dictation
@@ -240,6 +248,7 @@
           <button class="kbf-filter" data-filter="all" aria-pressed="false">All</button>
           <button class="kbf-filter" data-filter="open" aria-pressed="false">Open</button>
           <button class="kbf-filter" data-filter="resolved" aria-pressed="false">Resolved</button>
+          <button class="kbf-filter" data-filter="today" aria-pressed="false" title="Comments added or changed today">Today</button>
         </div>
       </div>
       <div class="kbf-list" id="kbf-list"></div>
@@ -2882,6 +2891,10 @@
       const { el, confidence } = resolveWithConfidence(c.anchor, pool);
       pinConf.set(c.id, el ? confidence : 'lost');
       if (!el) return;
+      // The List filter (All / Open / Resolved) applies to the pins as well, so
+      // "Open" clears a page full of green resolved pins. Numbering comes from
+      // idx over the unfiltered page list, so the visible pins keep their numbers.
+      if (!filtered([c]).length) return;
       // Same rule as the List cards: only comments still awaiting action warn.
       // A resolved comment's text USUALLY changed — that is the fix having
       // landed — so its pin stays green, never amber.
@@ -3013,10 +3026,12 @@
     filter = f;
     SS.set('kbf-filter', f);
     renderPanel();
+    renderPins();
   }
   function filtered(list) {
     if (filter === 'open') return list.filter(isOpenC);
     if (filter === 'resolved') return list.filter((c) => c.status === 'resolved');
+    if (filter === 'today') return list.filter(isTodayC);
     return list;
   }
 
@@ -3035,11 +3050,6 @@
     // floats its card to the top, so a long list never needs scrolling to find
     // what just happened. Sorts a copy — the `comments` array keeps creation
     // order because pin numbers (pageIndex below) are derived from it.
-    const lastTouch = (c) => {
-      let t = (c.updatedAt && c.updatedAt > (c.createdAt || '')) ? c.updatedAt : (c.createdAt || '');
-      for (const r of (Array.isArray(c.thread) ? c.thread : [])) if (r.createdAt && r.createdAt > t) t = r.createdAt;
-      return t;
-    };
     const view = filtered(comments).slice().sort((a, b) => lastTouch(b).localeCompare(lastTouch(a)));
     if (!view.length) {
       listEl.innerHTML = `<div class="kbf-empty">${I.empty}<p>${comments.length ? 'Nothing in this filter.' : 'No comments yet.<br>Turn on Point mode and click anything on the page.<br><span class="kbf-empty-kbd">Press <kbd>P</kbd> to toggle Point mode.</span>'}</p></div>`;

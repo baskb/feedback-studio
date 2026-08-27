@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-27
+
+### Changed
+- **The List filter now hides pins too.** Choosing *Open* in the panel removes the pins of resolved and rejected comments from the page (and *Resolved* shows only those), in both web and Markdown mode — a page with many finished comments no longer stays cluttered with green pins. Pin numbers do not change when pins are hidden. The filter is remembered per tab, like before.
+- **New *Today* filter** in the List: only comments added or changed today (your local day — a new comment, a reply, a status change), on the page and in the List — handy for a review round on a document that already carries older, finished comments.
+
 ## [0.9.9] - 2026-08-27
 
 ### Changed
@@ -618,7 +624,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v0.9.9...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/baskb/feedback-studio/compare/v0.9.9...v1.0.0
 [0.9.9]: https://github.com/baskb/feedback-studio/compare/v0.9.8...v0.9.9
 [0.9.8]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.8
 [0.9.7]: https://github.com/baskb/feedback-studio/releases/tag/v0.9.7

@@ -1,6 +1,6 @@
 {
   "name": "feedback-studio",
-  "version": "0.9.9",
+  "version": "1.0.0",
   "description": "Local visual feedback overlay for a site you're building or a Markdown file: click or select anything, leave typed or spoken feedback, then tell your coding agent 'PPF' (Please Process Feedback) to apply it. Zero-dependency Node + MCP server; also a Claude Code plugin.",
   "keywords": [
     "feedback",

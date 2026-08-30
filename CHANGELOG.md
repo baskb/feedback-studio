@@ -6,6 +6,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Pins no longer turn amber "pin unsure" after the agent applied the change.** When the agent replied on a comment and the pinned text changed afterwards (its own edit), but the paragraph or cell is still found by position, the pin is drawn as a normal pin and the card shows a small "changed after reply" note with a hint to resolve it. Before, such a pin looked like it had drifted. The agent still re-locates from the quoted text before editing, so the refuse-to-guess rule is unchanged.
+- The skill now says it plainly: **a reply is not a status** — when a reply says the change is applied, the comment must be set to resolved in the same step (process and watch mode).
+
 ## [1.0.0] - 2026-08-27
 
 ### Changed

@@ -63,6 +63,8 @@
   };
   // "Today" = added or touched on the reviewer's local calendar day (timestamps are UTC ISO strings).
   const isTodayC = (c) => { const d = new Date(lastTouch(c) || 0); const n = new Date(); return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate(); };
+  // True when an agent reply on the thread is newer than the comment itself.
+  const agentRepliedAfter = (c) => (Array.isArray(c.thread) ? c.thread : []).some((r) => r.author === 'agent' && r.createdAt && r.createdAt > (c.createdAt || ''));
   let recognizing = false;
   let recognition = null;
   let voiceManualStop = false; // true when the user (not a pause) stopped dictation
@@ -2899,7 +2901,14 @@
       // A resolved comment's text USUALLY changed — that is the fix having
       // landed — so its pin stays green, never amber.
       const awaiting = c.status !== 'resolved' && c.status !== 'rejected';
-      const shaky = awaiting && (confidence === 'medium' || confidence === 'low');
+      // The agent replied after the comment was made and the quoted text no
+      // longer matches, but the element is still found by position: that is the
+      // agent's own edit sitting where the pin is, not a pin that drifted. Draw
+      // it as a normal pin; the card says "changed after reply" so the reviewer
+      // can resolve it. (The agent still re-locates from the snippet before it
+      // edits anything, so this never loosens the refuse-to-guess rule.)
+      const changedAfterReply = awaiting && confidence !== 'high' && agentRepliedAfter(c);
+      const shaky = awaiting && !changedAfterReply && (confidence === 'medium' || confidence === 'low');
       const pin = document.createElement('div');
       pin.className = 'kbf-pin'
         + (c.author === 'agent' ? ' is-agent' : '')
@@ -2911,7 +2920,7 @@
         + (agent.queue.includes(c.id) && agent.commentId !== c.id ? ' is-queued' : '');
       pin.innerHTML = c.author === 'agent' ? I.bot : String(idx + 1);
       const gist = c.text || (c.textEdit && c.textEdit.after ? '“' + c.textEdit.after + '”' : editsSummary(c));
-      pin.title = (shaky ? '[pin may be off — re-pin from the List] ' : '') + (c.author === 'agent' ? '[agent] ' : '') + gist;
+      pin.title = (changedAfterReply ? '[text changed after the agent replied — resolve it in the List if the change is what you asked for] ' : shaky ? '[pin may be off — re-pin from the List] ' : '') + (c.author === 'agent' ? '[agent] ' : '') + gist;
       pin.setAttribute('role', 'button');
       pin.tabIndex = 0;
       // Hidden until positionPins() gives it real coordinates — a fixed-position
@@ -3099,6 +3108,9 @@
         // that's the fix having landed, not a bad pin.
         const pc = here && (st === 'open' || st === 'approved') ? pinConf.get(c.id) : undefined;
         const pinState = pc === 'lost' ? 'lost' : (pc === 'medium' || pc === 'low') ? 'shaky' : null;
+        // The agent replied after the comment and the pinned text no longer
+        // matches: almost always an applied change that was never resolved.
+        const changedAfterReply = !!pinState && agentRepliedAfter(c);
         // Live agent state for this card: being worked on now, queued next, or
         // just finished (the "done" entry stays visible for a few minutes).
         const working = agent.state === 'working' && agent.commentId === c.id;
@@ -3117,7 +3129,7 @@
               <span class="kbf-type-tag kbf-type-${ct}">${ct}</span>
               <span class="kbf-author ${isAgent ? 'is-agent' : ''}">${escapeHtml(who)}</span>
               ${st === 'approved' || st === 'rejected' ? `<span class="kbf-status kbf-status-${st}">${st}</span>` : ''}
-              ${pinState ? `<span class="kbf-pinstate is-${pinState}" title="${pinState === 'lost' ? 'The pinned element could not be found on this page.' : 'The pinned element was only found with weak confidence — the agent will refuse to edit it.'}">${pinState === 'lost' ? 'pin lost' : 'pin unsure'}</span>` : ''}
+              ${changedAfterReply ? `<span class="kbf-pinstate is-changed" title="The pinned text changed after the agent replied. If the change is what you asked for, resolve the comment (✓) and the pin turns green; otherwise re-pin it.">changed after reply</span>` : pinState ? `<span class="kbf-pinstate is-${pinState}" title="${pinState === 'lost' ? 'The pinned element could not be found on this page.' : 'The pinned element was only found with weak confidence — the agent will refuse to edit it.'}">${pinState === 'lost' ? 'pin lost' : 'pin unsure'}</span>` : ''}
               <span class="kbf-card-anchor" title="${escapeHtml(anchorTxt)}">${escapeHtml(anchorTxt)}</span>
             </div>
             ${working ? `<div class="kbf-card-work"><span class="kbf-agent-dot"></span><span>${escapeHtml(agentName())} is on this · <span class="kbf-elapsed" data-since="${Number(agent.since) || Date.now()}">${fmtDur(Date.now() - (Number(agent.since) || Date.now()))}</span>${agent.note ? ' · ' + escapeHtml(agent.note) : (lastAct ? ' · ' + escapeHtml(activityText(lastAct)) : '')}</span></div>` : ''}

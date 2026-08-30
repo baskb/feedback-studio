@@ -163,7 +163,10 @@ belongs to the site whose `.feedback/` it lives in, and its image paths resolve 
    else set `"status":"resolved"` in the file. (If the server runs with `--share strict`, API
    calls 401/403 without a key — append `?key=<admin key from the startup banner>`.)
    **Leave a short reply on each comment saying what you did** (one sentence, plain — "Bumped
-   the headline to 32px and bold." — no file paths or code). This narrates back to the reviewer:
+   the headline to 32px and bold." — no file paths or code). **A reply is not a status.** If
+   your reply says the change is applied, set `status: resolved` in the same step — an open
+   comment whose pinned text you changed shows the reviewer an amber "changed after reply" pin
+   until someone resolves it. This narrates back to the reviewer:
    the overlay's **"Walk me through the changes"** button plays a guided tour that scrolls to
    each element, highlights it, and **reads your reply aloud**. Written for the ear — keep it a
    human, spoken-sounding summary, not a changelog line.
@@ -208,7 +211,8 @@ present while the user reviews — answering questions on pins within seconds an
    - **`question` (or any comment asking something):** answer in a thread reply
      (`POST $S/comments/<id>/reply`). Don't change code for a question.
    - **`autonomy:"auto"`:** locate with the usual confidence rule — if unsure, reply asking
-     for a re-pin instead of editing — then apply, PATCH `{"status":"resolved"}`, and remind
+     for a re-pin instead of editing — then apply, PATCH `{"status":"resolved"}` (a reply
+     alone leaves the comment open and its pin amber once the text changed), and remind
      the user to reload if the page won't hot-reload itself.
    - **`autonomy:"review"`:** reply "Queued — I'll show you this change before applying it."
      and leave it open (batch it for PPF or an approval).

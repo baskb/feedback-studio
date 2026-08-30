@@ -1936,6 +1936,7 @@ button {
 .kbf-pinstate { flex: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 6px; border-radius: 4px; }
 .kbf-pinstate.is-shaky { color: var(--kbf-amber); background: rgba(201, 138, 43, 0.14); }
 .kbf-pinstate.is-lost { color: #b3452e; background: rgba(179, 69, 46, 0.12); }
+.kbf-pinstate.is-changed { color: var(--kbf-muted, #6b6a63); background: rgba(107, 106, 99, 0.12); text-transform: none; letter-spacing: 0; }
 .kbf-repin { margin-top: 6px; align-self: flex-start; }
 .kbf-repin svg { width: 13px; height: 13px; }
 

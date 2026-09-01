@@ -19,7 +19,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { exec, execSync, spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, stat, readdir, chmod, unlink, rename, utimes, mkdtemp, cp } from 'node:fs/promises';
-import { existsSync, readFileSync, statSync, watch, createReadStream, createWriteStream, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, watch, createReadStream, createWriteStream, unlinkSync, readdirSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -1492,7 +1492,10 @@ function broadcastAgentStatus() {
 // "full" when keyless) is told apart from the agent — only the agent's own
 // calls count as heartbeats. `X-Feedback-Agent: 1` says so explicitly.
 function isAgentRequest(req) {
-  if (req.headers['x-feedback-agent']) return true;
+  // `X-Feedback-Agent: 0` is the opposite claim: a non-browser client that is
+  // not the agent (a desktop widget polling counts) and must not read as one.
+  const claim = req.headers['x-feedback-agent'];
+  if (claim !== undefined) return !(claim === '0' || claim === 'false' || claim === 'no');
   const ua = String(req.headers['user-agent'] || '');
   return !(req.headers['sec-fetch-mode'] && /^Mozilla\//.test(ua));
 }
@@ -2218,8 +2221,30 @@ async function writeSiteMeta(url) {
 // port: `.feedback/session.json` lives while the process runs (removed on a
 // clean exit; readers also check `pid` is alive so a crash can't leave a lie).
 const SESSION_FILE = () => path.join(DATA_DIR, 'session.json');
-async function writeSessionFile(scheme) {
-  await writeJson(SESSION_FILE(), {
+// The same record, once more in a per-user registry, so desktop integrations
+// (the Omarchy bar plugin, a future `feedback-studio ls`) can list every review
+// server on the machine without knowing any project path. One file per pid;
+// stale files (dead pid) are swept on every start.
+const SESSIONS_DIR = () => path.join(GLOBAL_DATA, 'sessions');
+const REGISTRY_FILE = () => path.join(SESSIONS_DIR(), process.pid + '.json');
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return !!(e && e.code === 'EPERM'); }
+}
+function sweepSessionRegistry() {
+  let names = [];
+  try { names = readdirSync(SESSIONS_DIR()); } catch (e) { return; }
+  for (const name of names) {
+    // `<pid>.json`, or a `<pid>.json.tmp-*` left by a process killed mid-write.
+    const m = /^(\d+)\.json(\.tmp-.*)?$/.exec(name);
+    if (!m) continue;
+    const f = path.join(SESSIONS_DIR(), name);
+    let pid = Number(m[1]);
+    if (!m[2]) { try { pid = Number(JSON.parse(readFileSync(f, 'utf8')).pid) || pid; } catch (e) { /* junk: sweep it */ } }
+    if (!pidAlive(pid)) { try { unlinkSync(f); } catch (e) {} }
+  }
+}
+async function writeSessionFile(scheme, publicUrl, ips) {
+  const session = {
     pid: process.pid,
     port: PORT,
     // 127.0.0.1, not "localhost": on Node 18 "localhost" resolves to ::1 first
@@ -2229,10 +2254,27 @@ async function writeSessionFile(scheme) {
     cwd: CWD,
     dataDir: DATA_DIR,
     startedAt: new Date().toISOString(),
+  };
+  await writeJson(SESSION_FILE(), session).catch(() => {});
+  sweepSessionRegistry();
+  await writeJson(REGISTRY_FILE(), {
+    ...session,
+    label: LABEL || undefined,
+    mode: DEMO ? 'demo' : (PROXY ? 'proxy' : (MD_MODE ? 'md' : 'static')),
+    served: DEMO ? undefined : (PROXY || (MD_MODE ? String(args.md) : (STATIC_DIR ? path.relative(CWD, STATIC_DIR).split(path.sep).join('/') : '')) || undefined),
+    url: `${scheme}://localhost:${PORT}/`,
+    // Where a phone can reach this session, if anywhere: the tunnel, else the
+    // LAN address when the server was started on a non-loopback host.
+    phoneUrl: publicUrl ? publicUrl + '/' : (EXPOSE_LAN && ips && ips.length ? `${scheme}://${ips[0]}:${PORT}/` : undefined),
+    tunnel: !!publicUrl,
+    share: SHARE ? (SHARE_STRICT ? 'strict' : 'on') : undefined,
   }).catch(() => {});
+  // The registry may carry the admin key; keep it to this user.
+  try { chmodSync(REGISTRY_FILE(), 0o600); } catch (e) {}
 }
 function removeSessionFile() {
   try { if (existsSync(SESSION_FILE())) unlinkSync(SESSION_FILE()); } catch (e) {}
+  try { if (existsSync(REGISTRY_FILE())) unlinkSync(REGISTRY_FILE()); } catch (e) {}
 }
 
 function banner(scheme, ips, publicUrl) {
@@ -2437,7 +2479,7 @@ async function main() {
     // site) — written now so `url` reflects the real tunnel URL, `served` the
     // resolved static dir (correct even when --dir was autodetected).
     await writeSiteMeta(publicUrl ? publicUrl + '/' : `${scheme}://localhost:${PORT}/`);
-    await writeSessionFile(scheme);
+    await writeSessionFile(scheme, publicUrl, ips);
     warnIfFeedbackCommittable();
     warnIfDataFarFromSource();
     // Under strict share even localhost needs a key — open our own tab as admin.

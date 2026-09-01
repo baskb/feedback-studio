@@ -298,6 +298,19 @@ them up. Gitignore `**/.feedback/`.
 > `--tunnel`, and screenshots lazily install one helper each into
 > `~/.feedback-studio/` on first use only.
 
+## On Omarchy Linux: the bar plugin
+
+[Omarchy](https://omarchy.org) users get Feedback Studio in the bar: open-comment
+counts, what the agent is doing, a QR code to review from your phone, and
+one-click starts for a folder, a `.md` file, or the demo.
+
+```
+omarchy plugin add https://github.com/baskb/omarchy-feedback-studio --enable
+```
+
+Needs Omarchy 4.0+ and Node (`mise use -g node@lts`). Details in the
+[plugin's README](https://github.com/baskb/omarchy-feedback-studio).
+
 ## Use with other agents (Codex, Cursor, ChatGPT)
 
 The capture side is agent-agnostic and the data is plain files: any agent can

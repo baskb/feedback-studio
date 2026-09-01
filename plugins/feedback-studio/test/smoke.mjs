@@ -2,7 +2,7 @@
 // surface (injection, API, CSRF guard, path-traversal guard). Not part of the
 // unit suite — run manually: node test/smoke.mjs
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync, utimesSync, statSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
@@ -400,6 +400,19 @@ try {
   let sess = null;
   try { sess = JSON.parse(readFileSync(path.join(root, '.feedback', 'session.json'), 'utf8')); } catch (e) {}
   check('writes session.json with pid + apiBase', !!sess && sess.pid === srv.pid && sess.apiBase === `http://127.0.0.1:${PORT}/__feedback/api`);
+  // The per-user registry mirrors session.json, so a desktop widget (the Omarchy
+  // bar plugin) can list every running review server without knowing a project path.
+  const regFile = path.join(process.env.CLAUDE_PLUGIN_DATA || path.join(homedir(), '.feedback-studio'), 'sessions', srv.pid + '.json');
+  let reg = null;
+  try { reg = JSON.parse(readFileSync(regFile, 'utf8')); } catch (e) {}
+  check('registers in ~/.feedback-studio/sessions/<pid>.json', !!reg && reg.pid === srv.pid && reg.apiBase === sess.apiBase && reg.url === `http://localhost:${PORT}/` && reg.mode === 'static' && reg.cwd === root);
+  check('registry entry is private to the user (0600)', !!reg && ((statSync(regFile).mode & 0o777) === 0o600));
+  // A desktop widget polling the API (curl, no browser headers) must not read as
+  // the agent's heartbeat: `X-Feedback-Agent: 0` opts out of presence.
+  const seenBefore = (await getAgent()).agent.lastSeen;
+  await sleep(20);
+  await fetch(ORIGIN + '/__feedback/api/comments', { headers: { 'X-Feedback-Agent': '0', 'User-Agent': 'curl/8.0' } });
+  check('X-Feedback-Agent: 0 does not touch presence', (await getAgent()).agent.lastSeen === seenBefore);
   // claim a comment: state working + since set; activity gets a "claim" line
   const claimTarget = (await (await postJ('comments', { page: '/', text: 'claim me', anchor: { selector: '#c', snippet: 'C' } })).json()).comment;
   const claimed = (await (await postJ('agent-status', { state: 'working', commentId: claimTarget.id, name: 'Claude', note: 'locating' })).json()).agent;
@@ -1256,8 +1269,10 @@ try {
   console.log('FAIL  exception:', e.message);
   failures++;
 } finally {
+  const regFileAtExit = path.join(process.env.CLAUDE_PLUGIN_DATA || path.join(homedir(), '.feedback-studio'), 'sessions', srv.pid + '.json');
   srv.kill();
   await sleep(400); // let the child release file handles before cleanup (Windows)
+  check('registry entry removed on shutdown', !existsSync(regFileAtExit));
   try { rmSync(root, { recursive: true, force: true }); } catch (e) { /* temp dir, OS will reap */ }
   console.log(failures ? `\n${failures} smoke check(s) failed` : '\nall smoke checks passed');
   process.exit(failures ? 1 : 0);

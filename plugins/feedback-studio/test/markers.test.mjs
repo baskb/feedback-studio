@@ -34,7 +34,7 @@ test('stamps the single line holding the quoted text', async () => {
     const r = await exportMarkers(dataDir, root);
     assert.deepEqual({ files: r.files, stamped: r.stamped, notFound: r.notFound }, { files: 1, stamped: 1, notFound: 0 });
     const out = readFileSync(path.join(root, 'doc.md'), 'utf-8').split('\n');
-    assert.match(out[2], /^Alpha paragraph here\. <!-- @FB: note -->$/);
+    assert.match(out[2], /^Alpha paragraph here\. <!-- @FB#c_[\w-]+: note -->$/);
     assert.ok(existsSync(path.join(root, 'doc.md.bak')), 'a .bak is saved before writing');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -102,6 +102,91 @@ test('is idempotent: stamping twice writes the marker once', async () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test('a CRLF file stays CRLF everywhere after stamping', async () => {
+  const { root, dataDir } = setup();
+  try {
+    writeFileSync(path.join(root, 'doc.md'), '# Title\r\n\r\nAlpha paragraph here.\r\n\r\nOmega paragraph.\r\n');
+    await writeComments(dataDir, [mdComment(root, 'doc.md', 'Alpha paragraph here.')]);
+    assert.equal((await exportMarkers(dataDir, root)).stamped, 1);
+    const out = readFileSync(path.join(root, 'doc.md'), 'utf-8');
+    assert.ok(!/(^|[^\r])\n/.test(out), 'no bare newline survives in a CRLF file');
+    assert.match(out, /Alpha paragraph here\. <!-- @FB#c_[\w-]+: note -->\r\n/, 'the stamped line still ends CRLF');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('an LF file stays LF (the marker adds no stray carriage return)', async () => {
+  const { root, dataDir } = setup();
+  try {
+    writeFileSync(path.join(root, 'doc.md'), '# Title\n\nAlpha paragraph here.\n');
+    await writeComments(dataDir, [mdComment(root, 'doc.md', 'Alpha paragraph here.')]);
+    await exportMarkers(dataDir, root);
+    assert.ok(!readFileSync(path.join(root, 'doc.md'), 'utf-8').includes('\r'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('re-stamping an edited comment replaces its marker instead of adding a second', async () => {
+  const { root, dataDir } = setup();
+  try {
+    writeFileSync(path.join(root, 'doc.md'), 'Alpha line.\n');
+    const c = mdComment(root, 'doc.md', 'Alpha line.', { text: 'note' });
+    await writeComments(dataDir, [c]);
+    assert.equal((await exportMarkers(dataDir, root)).stamped, 1);
+    c.text = 'sharper wording please';           // the reviewer edited the comment
+    await writeComments(dataDir, [c]);
+    const r = await exportMarkers(dataDir, root);
+    assert.deepEqual({ stamped: r.stamped, updated: r.updated }, { stamped: 0, updated: 1 }, 'updated in place, not stamped again');
+    const out = readFileSync(path.join(root, 'doc.md'), 'utf-8');
+    assert.equal(out.split('#' + c.id).length - 1, 1, 'exactly one marker for this id');
+    assert.equal((out.match(/@FB/g) || []).length, 1);
+    assert.ok(out.includes('sharper wording please'));
+    assert.ok(!out.includes(': note -->'), 'the stale marker text is gone');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a marker stamped before ids existed is not stamped a second time', async () => {
+  const { root, dataDir } = setup();
+  try {
+    const c = mdComment(root, 'doc.md', 'Alpha line.', { text: 'note' });
+    writeFileSync(path.join(root, 'doc.md'), 'Alpha line. <!-- @FB: note -->\n'); // the 1.0.0 format
+    await writeComments(dataDir, [c]);
+    const r = await exportMarkers(dataDir, root);
+    assert.deepEqual({ stamped: r.stamped, files: r.files }, { stamped: 0, files: 0 });
+    assert.equal((readFileSync(path.join(root, 'doc.md'), 'utf-8').match(/@FB/g) || []).length, 1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('an edited comment whose marker predates ids is updated, not duplicated', async () => {
+  const { root, dataDir } = setup();
+  try {
+    const c = mdComment(root, 'doc.md', 'Alpha line.', { text: 'sharper wording please' });
+    writeFileSync(path.join(root, 'doc.md'), 'Alpha line. <!-- @FB: note -->\n'); // stamped by 1.0.0, text edited since
+    await writeComments(dataDir, [c]);
+    const r = await exportMarkers(dataDir, root);
+    assert.deepEqual({ stamped: r.stamped, updated: r.updated }, { stamped: 0, updated: 1 });
+    const out = readFileSync(path.join(root, 'doc.md'), 'utf-8');
+    assert.equal((out.match(/@FB/g) || []).length, 1, 'no twin marker beside the old one');
+    assert.ok(out.includes('#' + c.id + ': sharper wording please'));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('text inside an existing marker never matches another comment\'s snippet', async () => {
+  const { root, dataDir } = setup();
+  try {
+    writeFileSync(path.join(root, 'doc.md'), 'Alpha line.\n\nBeta line.\n');
+    // A's comment TEXT contains the phrase B is anchored to. Once A is stamped,
+    // that phrase sits on line 0 inside a marker — it is not source text, so B
+    // must find nothing and refuse, not stamp itself onto A's line.
+    const a = mdComment(root, 'doc.md', 'Alpha line.', { text: 'zeta wording here' });
+    const b = mdComment(root, 'doc.md', 'zeta wording here', { text: 'second note' });
+    await writeComments(dataDir, [a, b]);
+    const r = await exportMarkers(dataDir, root);
+    assert.deepEqual({ stamped: r.stamped, notFound: r.notFound }, { stamped: 1, notFound: 1 });
+    const out = readFileSync(path.join(root, 'doc.md'), 'utf-8');
+    assert.ok(!out.includes('second note'), 'the second comment was not stamped anywhere');
+    assert.equal((out.match(/@FB/g) || []).length, 1);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('a sourceFile outside the root is never written (path traversal)', async () => {
   const { root, dataDir } = setup();
   try {
@@ -132,7 +217,7 @@ test('--md outside the cwd: stamping works once that root is explicitly allowed'
     // …allowing the md root stamps it, still resolving against the cwd
     const r2 = await exportMarkers(dataDir, root, [root, mdRoot]);
     assert.equal(r2.stamped, 1);
-    assert.match(readFileSync(path.join(mdRoot, 'report.md'), 'utf-8'), /Alpha paragraph here\. <!-- @FB: note -->/);
+    assert.match(readFileSync(path.join(mdRoot, 'report.md'), 'utf-8'), /Alpha paragraph here\. <!-- @FB#c_[\w-]+: note -->/);
   } finally {
     rmSync(mdRoot, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
@@ -155,4 +240,8 @@ test('marker text per type', () => {
   assert.equal(fbMarker({ type: 'comment', text: 'a note' }), '<!-- @FB: a note -->');
   // comment text can never close the HTML comment early
   assert.ok(!fbMarker({ type: 'comment', text: 'evil --> breakout' }).slice(5, -3).includes('-->'));
+  // the id rides right after the tag, so a marker traces back to comments.json
+  assert.equal(fbMarker({ id: 'c_1', type: 'comment', text: 'a note' }), '<!-- @FB#c_1: a note -->');
+  assert.equal(fbMarker({ id: 'c_1', type: 'delete', text: 'cut this' }), '<!-- @FB-DELETE#c_1: cut this -->');
+  assert.equal(fbMarker({ id: 'c_1', type: 'rephrase', text: 'better words' }), '<!-- @FB#c_1: rephrase as "better words" -->');
 });

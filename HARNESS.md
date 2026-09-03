@@ -30,6 +30,8 @@ weak, not strong. Confidence:
   nothing corroborates.
 - **none**: nothing resolved.
 
+One more rule keeps duplicates honest. When the quoted text is found on more than one element of the tag the anchor recorded, a match on text alone earns at most `medium`, never `high`. Two identical table rows, two bullets with the same sentence, a repeated heading: picking the first one would be a guess, so the comment asks for a re-check instead.
+
 `low` and `none` are the refuse-and-re-pin cases. The key invariant the family
 grouping protects: a selector and xpath that have rotted to the same wrong
 element can no longer be mistaken for two strategies agreeing, so they cannot

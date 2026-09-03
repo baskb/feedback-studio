@@ -32,7 +32,7 @@ jobs:
           node -e "JSON.parse(require('fs').readFileSync('plugins/feedback-studio/.claude-plugin/plugin.json','utf8'))"
 
       - name: Unit tests
-        run: node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs
+        run: node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs plugins/feedback-studio/test/narration.test.mjs
 
       - name: HTTP smoke test
         run: node plugins/feedback-studio/test/smoke.mjs

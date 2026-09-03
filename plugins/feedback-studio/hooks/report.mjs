@@ -25,13 +25,16 @@ function alive(pid) {
 // The session file sits in the data dir: `$FEEDBACK_DIR`, else `.feedback/` in
 // the cwd or one of its parents (a `--data-dir` session belongs to the
 // reviewed project, which may be a subfolder of where Claude runs — or the
-// other way round).
+// other way round). The walk up stops at the first folder holding a `.git`:
+// that is the project, and a session belonging to some unrelated project
+// higher up the disk is none of this hook's business.
 function findSession(cwd) {
   const dirs = [];
   if (process.env.FEEDBACK_DIR) dirs.push(path.resolve(process.env.FEEDBACK_DIR));
   let d = cwd;
-  for (let i = 0; i < 4 && d; i++) {
+  for (let i = 0; i < 32 && d; i++) {
     dirs.push(path.join(d, '.feedback'));
+    if (existsSync(path.join(d, '.git'))) break; // the project root
     const up = path.dirname(d);
     if (up === d) break;
     d = up;
@@ -70,16 +73,27 @@ if (kind === 'edit') {
   body = { kind: 'note', text: String(kind).slice(0, 120) };
 }
 
+// Say where this came from. A hook fires because a tool ran, which is not proof
+// the agent is still in the session — the server logs the line but does not treat
+// it as a heartbeat, so a hook firing after the agent left cannot show it as here.
+body.source = 'hook';
+
 let url;
 try { url = new URL(session.apiBase.replace(/\/$/, '') + '/activity' + (session.adminKey ? '?key=' + encodeURIComponent(session.adminKey) : '')); }
 catch (e) { process.exit(0); }
+// Only ever talk to a server on this machine. `session.json` is a file in the
+// project, so a wrong or tampered-with address would otherwise send the names of
+// edited files somewhere off the machine. The server writes 127.0.0.1 there, also
+// for a tunnelled session, so nothing legitimate is turned away.
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+if (!LOOPBACK.has(url.hostname)) process.exit(0);
 const mod = url.protocol === 'https:' ? https : http;
 const data = JSON.stringify(body);
 const req = mod.request(url, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
   timeout: 800,
-  rejectUnauthorized: false, // a --https session uses a self-signed certificate
+  rejectUnauthorized: false, // a --https session uses a self-signed certificate (loopback only, checked above)
 }, (res) => { res.resume(); res.on('end', () => process.exit(0)); });
 req.on('timeout', () => { req.destroy(); process.exit(0); });
 req.on('error', () => process.exit(0));

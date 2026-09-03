@@ -38,6 +38,43 @@ test('inferType detects spoken questions (but a fix/improve wins over question w
   assert.equal(inferType('make this say Start'), 'change');   // plain imperative
 });
 
+test('inferType maps words to the Markdown verbs in md mode', () => {
+  assert.equal(inferType('reword this sentence', 'md'), 'rephrase');
+  assert.equal(inferType('can we rephrase the opening', 'md'), 'rephrase');
+  assert.equal(inferType('say something shorter instead', 'md'), 'rephrase');
+  assert.equal(inferType('word this differently', 'md'), 'rephrase');
+  assert.equal(inferType('expand this section', 'md'), 'expand');
+  assert.equal(inferType('this needs more detail', 'md'), 'expand');
+  assert.equal(inferType('elaborate on the second point', 'md'), 'expand');
+  assert.equal(inferType('flesh this out a bit', 'md'), 'expand');
+  assert.equal(inferType('remove this paragraph', 'md'), 'delete');
+  assert.equal(inferType('just delete this', 'md'), 'delete');
+  assert.equal(inferType('drop the whole intro', 'md'), 'delete');
+  assert.equal(inferType('cut this bit', 'md'), 'delete');
+  assert.equal(inferType('why is this here', 'md'), 'question');
+  assert.equal(inferType('is that on purpose?', 'md'), 'question');
+  assert.equal(inferType('nice bit of writing', 'md'), 'comment');
+  assert.equal(inferType('this reads well', 'md'), 'comment');
+  // md mode never returns a web verb, even for words that read as fix/improve
+  assert.equal(inferType('this is broken', 'md'), 'comment');
+});
+
+test('web mode is unchanged, and is still the default', () => {
+  assert.equal(inferType('this is broken', 'web'), 'fix');
+  assert.equal(inferType('make the hero pop more', 'web'), 'improve');
+  assert.equal(inferType('what does this do', 'web'), 'question');
+  assert.equal(inferType('make this say Start', 'web'), 'change');
+  assert.equal(inferType('remove this paragraph'), 'change');  // no mode: web verbs
+  assert.equal(inferType('expand this section'), 'change');
+});
+
+test('correlate types its drafts with the mode it was given', () => {
+  const transcript = [seg(3000, 'reword this line')];
+  const pointer = { hovers: [hover('#p1', 'Some sentence', 1200, 3200)], clicks: [] };
+  assert.equal(correlate(transcript, pointer, { mode: 'md' })[0].type, 'rephrase');
+  assert.equal(correlate(transcript, pointer)[0].type, 'change'); // default stays web
+});
+
 test('deixis: "make THIS orange" anchors to the element under the cursor', () => {
   const transcript = [seg(3000, 'make this orange')];
   // cursor dwelled on #cta while speaking (utterance window looks back from 3000)

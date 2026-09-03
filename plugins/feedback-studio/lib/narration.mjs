@@ -35,8 +35,25 @@ const FILLER = new Set([
 const FIX_RE = /\b(broken?|bug|error|typo|doesn'?t work|not working|wrong|crash|misspell|missing|404|fails?)\b/i;
 const IMPROVE_RE = /\b(improve|better|nicer|pop|punch|weak|bland|boring|ugly|redesign|cleaner|modern|stronger|more \w+|too (?:plain|dull|quiet))\b/i;
 const QUESTION_RE = /^\s*(what|why|where|when|who|which|how)\b|\?\s*$|\b(explain|what does|what is|why is|why does|how does|where is|where does)\b/i;
-export function inferType(text) {
+
+// Markdown review has its own verbs (see ALLOWED_TYPES in lib/store.mjs), so a
+// spoken note on a document maps to rephrase / expand / delete / question /
+// comment instead. "delete" asks for an object ("cut THIS", "drop the intro"),
+// because a bare "cut" or "drop" is an ordinary word in a sentence about text.
+const REPHRASE_RE = /\b(reword|rephrase|rewrite|say .{0,30}\binstead\b|instead of this|word(?:ed)? (?:this|it) differently|different wording|better wording)\b/i;
+const EXPAND_RE = /\b(expand|elaborate|more detail|more details|flesh(?:ed)? (?:this |it )?out|say more|add more)\b/i;
+const DELETE_RE = /\b(remove|delete|drop|cut)\s+(?:this|that|it|these|those|the\b.{0,30})|\b(?:this|that)\s+(?:can|should)\s+go\b/i;
+
+// `mode` is 'web' (the default) or 'md'.
+export function inferType(text, mode = 'web') {
   const t = String(text || '');
+  if (mode === 'md') {
+    if (REPHRASE_RE.test(t)) return 'rephrase';
+    if (EXPAND_RE.test(t)) return 'expand';
+    if (DELETE_RE.test(t)) return 'delete';
+    if (QUESTION_RE.test(t)) return 'question';
+    return 'comment';
+  }
   if (FIX_RE.test(t)) return 'fix';
   if (IMPROVE_RE.test(t)) return 'improve';
   if (QUESTION_RE.test(t)) return 'question';
@@ -177,7 +194,9 @@ function pickTarget(utterance, hovers, clicks, win) {
 //   { text, type, anchor|null, confidence, needsPin, tStart, tEnd, signals }
 // A draft with confidence below 'high' has needsPin=true — the reviewer must
 // place it rather than trust a guessed element (the load-bearing invariant).
+// `opts.mode` picks the verb set: 'web' (the default) or 'md' for a document.
 export function correlate(transcript, pointer, opts = {}) {
+  const mode = opts.mode === 'md' ? 'md' : 'web';
   const lookback = opts.lookbackMs ?? LOOKBACK_MS;
   const lookahead = opts.lookaheadMs ?? LOOKAHEAD_MS;
   const hovers = (pointer && pointer.hovers) || [];
@@ -190,7 +209,7 @@ export function correlate(transcript, pointer, opts = {}) {
     const anchored = target && target.confidence === 'high';
     drafts.push({
       text: u.text,
-      type: inferType(u.text),
+      type: inferType(u.text, mode),
       anchor: anchored ? target.anchor : null,
       confidence: target ? target.confidence : 'none',
       needsPin: !anchored,

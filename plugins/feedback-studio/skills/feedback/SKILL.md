@@ -4,7 +4,7 @@ description: Visual feedback overlay for a local website or Markdown file. The u
 when_to_use: Use when the user wants to visually review or comment on a local website or a Markdown file (optionally from their phone, by voice); OR to process the comments they collected and apply them; OR to stay live during the review (watch mode - answer question pins in seconds, apply auto comments as they arrive); OR when you (or another skill, e.g. a design/copy/accessibility reviewer) should leave review comments pinned to specific elements for the user to approve. Trigger phrases include "review/open my site", "give feedback on this .md", "start it mobile-ready", "process the feedback", "watch the feedback / go live", and "leave review comments on this page".
 argument-hint: [start | process | watch | --dir <path> | --proxy <url> | --md <file> | --https | --tunnel | --label <name> | --data-dir <path>]
 user-invocable: true
-allowed-tools: Bash Read Edit Write Glob Grep
+allowed-tools: Bash Read Edit Write Glob Grep TaskCreate TodoWrite
 ---
 
 # Feedback Studio
@@ -76,7 +76,8 @@ start, so the exposure window is one session.
 Types become document verbs: `comment` / `rephrase` / `expand` / `delete` / `question`
 (websites use `fix` / `change` / `improve`). Each comment carries its **`sourceFile`** (the
 `.md`); edit that file, not the throwaway rendered HTML. The panel's **Stamp .md** button can
-also write inline `<!-- @FB[-VERB]: ... -->` markers onto the source line (saving a `.bak`).
+also write inline `<!-- @FB[-VERB]#<comment id>: ... -->` markers onto the source line (saving
+a `.bak`); the id ties the line back to the comment in `comments.json`.
 Processing from markers: `grep -n "@FB"`, edit each line, then delete the marker you handled.
 
 ## Process comments

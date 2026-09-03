@@ -39,9 +39,11 @@ node plugins/feedback-studio/bin/feedback-studio.mjs --md README.md
 ## Tests
 
 ```bash
-# unit tests: the shared store (atomic writes, locking, schema, type parity)
-# and the Markdown marker stamper (unique-match, refuse-to-guess, idempotency)
-node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs
+# unit tests: the shared store (atomic writes, locking, schema, type parity),
+# the Markdown marker stamper (unique-match, refuse-to-guess, idempotency), and
+# the narration engine (which spoken phrase lands on which element, and when it
+# asks for a pin instead)
+node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs plugins/feedback-studio/test/narration.test.mjs
 
 # live HTTP smoke (injection, CSRF guard, path-traversal guard, persistence)
 node plugins/feedback-studio/test/smoke.mjs

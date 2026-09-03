@@ -37,6 +37,10 @@ grouping protects: a selector and xpath that have rotted to the same wrong
 element can no longer be mistaken for two strategies agreeing, so they cannot
 produce a confident wrong edit.
 
+## The same scenarios run in CI
+
+Since 1.1.0 the anchoring code lives in `plugins/feedback-studio/lib/anchor.mjs`, a module without a DOM of its own: the page comes in through a small adapter, so the browser overlay and the Node test suite run the very same code. `test/anchor.test.mjs` builds a sample page from literals (`test/fake-dom.mjs`) and replays the scenarios below: an identical page, typical edits, the harsh case with shifted siblings and replaced headings, duplicated elements, placeholder snippets, sentence ranges, and the id and attribute rules. Every scenario asserts the one property that matters: a result is either `high` at the right element, or it degrades. It is never `high` at a wrong element. The fake page understands only the selectors the module itself writes and refuses anything else, so a change to how anchors are built cannot pass the tests by accident.
+
 ## Reproduce
 
 With the overlay open on any page, in the dev console:

@@ -42,8 +42,10 @@ node plugins/feedback-studio/bin/feedback-studio.mjs --md README.md
 # unit tests: the shared store (atomic writes, locking, schema, type parity),
 # the Markdown marker stamper (unique-match, refuse-to-guess, idempotency), and
 # the narration engine (which spoken phrase lands on which element, and when it
-# asks for a pin instead)
-node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs plugins/feedback-studio/test/narration.test.mjs
+# asks for a pin instead), the anchor rules (an anchor is found at the right
+# element or degrades, never confidently wrong) and the interop files (the
+# Codex prompt, the AGENTS.md snippet and hooks.json say what the code does)
+node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs plugins/feedback-studio/test/narration.test.mjs plugins/feedback-studio/test/anchor.test.mjs plugins/feedback-studio/test/interop.test.mjs
 
 # live HTTP smoke (injection, CSRF guard, path-traversal guard, persistence)
 node plugins/feedback-studio/test/smoke.mjs

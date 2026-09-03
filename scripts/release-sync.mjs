@@ -36,4 +36,18 @@ try {
   console.error('changelog roll skipped:', e.message);
 }
 
-console.log('release-sync: version ' + version + ' written to plugin.json, marketplace.json, CHANGELOG.md');
+// interop/AGENTS.md shows the exact block `--seed-agents` writes, so it is generated
+// from the same source text (lib/store.mjs) instead of being kept in step by hand.
+// test/interop.test.mjs fails when the two drift, so this also runs on every release.
+await writeAgentsSnippetDoc();
+async function writeAgentsSnippetDoc() {
+  const { AGENTS_SNIPPET_BODY } = await import('../plugins/feedback-studio/lib/store.mjs');
+  const head = `# (snippet) Paste into your project's AGENTS.md or CLAUDE.md
+
+\`feedback-studio --seed-agents\` writes the block below into your \`CLAUDE.md\` (Claude Code) and \`AGENTS.md\` (Codex / Cursor / Cline / Windsurf) automatically, guarded by a marker so it is never duplicated. You can also paste it by hand. This file is generated from the same text the command writes (\`scripts/release-sync.mjs\`); edit \`AGENTS_SNIPPET_BODY\` in \`plugins/feedback-studio/lib/store.mjs\`, not this file.
+
+`;
+  writeFileSync('interop/AGENTS.md', head + AGENTS_SNIPPET_BODY + '\n');
+}
+
+console.log('release-sync: version ' + version + ' written to plugin.json, marketplace.json, CHANGELOG.md; interop/AGENTS.md regenerated');

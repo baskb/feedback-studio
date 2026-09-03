@@ -22,12 +22,23 @@ your phone. When you do:
 
 ## Reviewing untrusted Markdown (`--md`)
 
-`--md` renders a file and serves it on the same origin as the comment API. The
-rendered output is stripped of active content (`<script>`/`<style>`, framing and
-redirecting tags, inline `on*` handlers, and `javascript:` URLs) so a hostile
-`.md` can't run script against the API. This is **defense in depth, not a full
-HTML sanitizer**: open Markdown you broadly trust, and prefer staying local
-(loopback) when reviewing a file you didn't write.
+`--md` renders a file and serves it on the same origin as the comment API, so
+script inside a hostile `.md` could post comments an agent later acts on.
+
+**By default, HTML written in the `.md` is shown as text and never rendered.**
+A `<script>` block, an `<iframe>`, an `<img onerror=...>`: all of it appears on
+the page as the characters you typed. This covers both a block of HTML on its own
+and a tag inside a sentence. Fenced code blocks and Markdown tables are
+unaffected. Markdown-generated output still passes through the same strip as
+before, because a plain Markdown link can point at a `javascript:` address with
+no HTML involved.
+
+`--md-html` renders the HTML instead, for a document you wrote yourself and want
+to see in full. The rendered output is then stripped of active content
+(`<script>`/`<style>`, framing and redirecting tags, inline `on*` handlers, and
+`javascript:` URLs). That strip is **defense in depth, not a full HTML
+sanitizer**: with `--md-html`, open only Markdown you broadly trust, and prefer
+staying local (loopback) when reviewing a file you didn't write.
 
 ## Pinning the `cloudflared` helper
 

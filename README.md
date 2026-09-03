@@ -218,23 +218,29 @@ npx feedback-studio --dir dist --share --tunnel     # client review with role li
 
 Or `npm i -g feedback-studio`, or run `node plugins/feedback-studio/bin/feedback-studio.mjs` from a clone.
 
+`feedback-studio --help` prints this same list; the two come from one place in the code, so they cannot drift apart.
+
 | Flag | Meaning |
 |---|---|
-| `--demo` | Serve the bundled sample page from a throwaway temp copy, pre-seeded with example comments. The fastest first run; never touches your project. |
-| `--no-seed` | With `--demo`: start with **no** comments, so you add your own live. |
-| `--dir <path>` | Serve a static build directory. |
+| `--demo` | Serve the bundled sample page from a throwaway temp copy. |
+| `--no-seed` | With `--demo`: start with no comments, so you add your own live. |
+| `--dir <path>` | Serve a static build directory (auto-detected when left out). |
 | `--proxy <url>` | Proxy a running dev server and inject the overlay (live reload). |
-| `--md <file\|dir>` | Render a Markdown file or folder to reviewable pages. Fetches a small renderer once. |
-| `--label <name>` | Name this session/site — shown in the overlay so you can tell several open tabs apart. |
-| `--data-dir <path>` | Where to store this session's `.feedback` data (default `<cwd>/.feedback`). Give each site its own dir to run **several sites from one repo** — see below. |
-| `--share` | Mint **view / comment / admin** capability links (printed at start; keys rotate every run). Your own machine keeps keyless access; `--share strict` requires a key even locally. |
-| `--no-shots` | Disable pin-time element screenshots. |
+| `--spa` | Serve `index.html` for an unknown path that has no file extension. |
+| `--md <file\|dir>` | Render a Markdown file, or a folder of them, as pages you can review. |
+| `--md-html` | With `--md`: render HTML written in the file (only for a document you trust). |
+| `--label <name>` | Name this session, shown in the overlay so you can tell open tabs apart. |
+| `--data-dir <path>` | Where to store this session's `.feedback` data (default `<cwd>/.feedback`). |
+| `--share [strict]` | Mint view / comment / admin links; "strict" asks this computer for a key too. |
+| `--no-shots` | Turn off the element screenshot taken when you pin a comment. |
 | `--port <n>` | Listen port (default `4444`). |
-| `--host <addr>` | Bind address (default `127.0.0.1`). Use `--host 0.0.0.0` to reach it from your phone or LAN. |
-| `--tunnel` | Public HTTPS URL via a Cloudflare quick tunnel: real cert, no warning, mic works, any network. Fetches `cloudflared` once; no account needed. |
-| `--https` | TLS with a self-signed cert for phone voice over the LAN (one-time "not private" tap-through). `--tunnel` avoids the warning. |
-| `--no-open` | Don't auto-open the browser. |
-| `--seed-agents` | Append the processing workflow to this project's `CLAUDE.md` + `AGENTS.md` (idempotent), then exit — so any agent knows the flow without the plugin. |
+| `--host <addr>` | Bind address (default `127.0.0.1`; use `0.0.0.0` for your phone or LAN). |
+| `--tunnel` | Public HTTPS address through a Cloudflare quick tunnel (real certificate). |
+| `--https` | Serve over TLS with a self-signed certificate (voice on phones). |
+| `--no-open` | Don't open the browser automatically. |
+| `--seed-agents` | Append the processing workflow to `./CLAUDE.md` and `./AGENTS.md`, then exit. |
+| `--help` | Show this help and exit. |
+| `--version` | Print the version and exit. |
 
 The overlay starts in **light theme** (panel toggle for dark, remembered per
 browser). Drag the **Point button** to any corner; on desktop, drag a composer
@@ -288,7 +294,9 @@ startup and warns you if it's missing.
 
 In `--md` mode each comment records the **source `.md` path**. The rendered HTML
 is throwaway; the agent edits the file. (Keep the List panel open while you read: the
-document moves aside and re-centres beside it on wide windows.) Two handoff paths:
+document moves aside and re-centres beside it on wide windows.) HTML written inside the
+file is shown as text, because a document you were sent is not code you reviewed; pass
+`--md-html` to render it instead. Two handoff paths:
 
 - **`.feedback/comments.json`** — the rich record: threads, status, types, and
   exact `rephrase` wording from in-place edits.

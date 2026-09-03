@@ -27,6 +27,10 @@ mkdirSync(site);
 writeFileSync(path.join(site, 'index.html'), '<!doctype html><html><body><h1 id="t">Hi</h1></body></html>');
 writeFileSync(path.join(site, '404.html'), '<!doctype html><html><body><h1>custom not found</h1></body></html>');
 writeFileSync(path.join(root, 'secret.txt'), 'TOP SECRET');
+// A 1000-byte file with a repeating pattern, so a byte range can be compared
+// against exactly the bytes that were asked for.
+const RANGE_BODY = Buffer.from(Array.from({ length: 1000 }, (_, i) => 97 + (i % 26)));
+writeFileSync(path.join(site, 'range.bin'), RANGE_BODY);
 
 const PORT = 4567;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
@@ -37,13 +41,92 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
 function check(name, cond) { console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}`); if (!cond) failures++; }
 
+// Run the CLI once and wait for it to finish, collecting both output streams
+// together, since which stream a message went to is not what these checks test.
+function runCli(cliArgs, cwd) {
+  return new Promise((resolve) => {
+    const p = spawn(process.execPath, [bin, ...cliArgs], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    p.stdout.on('data', (d) => { out += d; });
+    p.stderr.on('data', (d) => { out += d; });
+    p.on('close', (code) => resolve({ code, out }));
+  });
+}
+
+// Wait for a freshly spawned server to answer, instead of guessing how long it
+// needs. Any answer counts, including a 401 under --share strict: this asks
+// whether the port is listening, not whether the request was allowed.
+async function waitForReady(port, tries = 60) {
+  for (let i = 0; i < tries; i++) {
+    try { await fetch(`http://127.0.0.1:${port}/__feedback/api/comments`); return true; }
+    catch (e) { await sleep(100); }
+  }
+  return false;
+}
+
 try {
   await sleep(700);
+
+  // --help is generated from the FLAGS list in the CLI, so read the names out of
+  // the source: a flag added there without a help line fails this check.
+  const cliSrc = readFileSync(bin, 'utf8');
+  const flagBlock = /const FLAGS = \[([\s\S]*?)\n\];/.exec(cliSrc);
+  const flagNames = flagBlock ? [...flagBlock[1].matchAll(/name: '(--[a-z-]+)'/g)].map((m) => m[1]) : [];
+  const helpRun = await runCli(['--help', 'a-positional-word'], root);
+  check('--help lists every flag, exits 0, starts no server',
+    flagNames.length >= 17 && helpRun.code === 0 && helpRun.out.includes('Usage: feedback-studio')
+    && flagNames.every((f) => helpRun.out.includes(f)) && !helpRun.out.includes('Ctrl+C to stop'));
+  const shortHelp = await runCli(['-h'], root);
+  check('-h does the same as --help', shortHelp.code === 0 && shortHelp.out.includes('Usage: feedback-studio'));
+  const pluginVersion = JSON.parse(readFileSync(path.join(__dirname, '..', '.claude-plugin', 'plugin.json'), 'utf8')).version;
+  const versionRun = await runCli(['--version'], root);
+  const shortVersion = await runCli(['-v'], root);
+  check('--version prints the plugin manifest version and exits 0',
+    versionRun.code === 0 && versionRun.out.trim() === pluginVersion && shortVersion.out.trim() === pluginVersion);
+  const unknownRun = await runCli(['--proxi', 'http://127.0.0.1:1'], root);
+  check('a misspelled flag exits 1 and says which one',
+    unknownRun.code === 1 && unknownRun.out.includes('unknown option --proxi') && unknownRun.out.includes('Usage: feedback-studio'));
+  // "--share strict" and "--flag=value" must not read as unknown options. Run
+  // them past the check with --seed-agents, which exits 0 without a server (in
+  // its own folder, since it writes CLAUDE.md / AGENTS.md into the cwd).
+  const seedCwd = mkdtempSync(path.join(tmpdir(), 'fbs-seed-'));
+  const valueForms = await runCli(['--share', 'strict', '--port=4599', '--no-shots', '--seed-agents'], seedCwd);
+  check('"--share strict" and --flag=value are not read as unknown options',
+    valueForms.code === 0 && !valueForms.out.includes('unknown option'));
+  rmSync(seedCwd, { recursive: true, force: true });
 
   const home = await fetch(ORIGIN + '/');
   const homeBody = await home.text();
   check('serves index', home.status === 200);
   check('injects overlay script', homeBody.includes('/__feedback/overlay.js'));
+
+  // Byte ranges (a video scrubbing, a resumed download) and HEAD (a link check).
+  const ranged = await fetch(ORIGIN + '/range.bin', { headers: { Range: 'bytes=100-199' } });
+  const rangedBody = Buffer.from(await ranged.arrayBuffer());
+  check('Range: bytes=100-199 returns 206 with exactly those 100 bytes',
+    ranged.status === 206 && ranged.headers.get('accept-ranges') === 'bytes'
+    && ranged.headers.get('content-range') === 'bytes 100-199/1000'
+    && ranged.headers.get('content-length') === '100'
+    && rangedBody.length === 100 && rangedBody.equals(RANGE_BODY.subarray(100, 200)));
+  const tailRange = await fetch(ORIGIN + '/range.bin', { headers: { Range: 'bytes=-50' } });
+  check('Range: bytes=-50 returns the last 50 bytes',
+    tailRange.status === 206 && tailRange.headers.get('content-range') === 'bytes 950-999/1000');
+  const badRange = await fetch(ORIGIN + '/range.bin', { headers: { Range: 'bytes=5000-6000' } });
+  check('a range past the end of the file => 416',
+    badRange.status === 416 && badRange.headers.get('content-range') === 'bytes */1000');
+  const junkRange = await fetch(ORIGIN + '/range.bin', { headers: { Range: 'bytes=0-10, 20-30' } });
+  check('a range header we do not honour falls back to the whole file (200)',
+    junkRange.status === 200 && junkRange.headers.get('content-length') === '1000');
+  const headFile = await fetch(ORIGIN + '/range.bin', { method: 'HEAD' });
+  check('HEAD on a file returns the headers and no body',
+    headFile.status === 200 && headFile.headers.get('content-length') === '1000'
+    && headFile.headers.get('accept-ranges') === 'bytes'
+    && (await headFile.arrayBuffer()).byteLength === 0);
+  const headPage = await fetch(ORIGIN + '/', { method: 'HEAD' });
+  check('HEAD on a page reports the length WITH the overlay added, and no body',
+    headPage.status === 200
+    && Number(headPage.headers.get('content-length')) === Buffer.byteLength(homeBody)
+    && (await headPage.arrayBuffer()).byteLength === 0);
 
   // a custom 404.html must keep its 404 status (writeHead used to force 200)
   const miss = await fetch(ORIGIN + '/no-such-page');
@@ -103,7 +186,16 @@ try {
   check('path traversal blocked', trav.status === 404 && !travBody.includes('TOP SECRET'));
 
   const asset = await fetch(ORIGIN + '/__feedback/overlay.js');
-  check('serves overlay asset', asset.status === 200);
+  const assetBody = await asset.text();
+  check('serves overlay entry module at the old URL', asset.status === 200 && /javascript/.test(asset.headers.get('content-type') || '') && /\bimport\b/.test(assetBody));
+  check('overlay is injected as a module script', /<script type="module" src="\/__feedback\/overlay\.js"><\/script>/.test(homeBody));
+  const part = await fetch(ORIGIN + '/__feedback/overlay/state.mjs');
+  check('serves an overlay module part', part.status === 200 && /javascript/.test(part.headers.get('content-type') || ''));
+  const anchorMod = await fetch(ORIGIN + '/__feedback/lib/anchor.mjs');
+  check('serves the shared anchor module', anchorMod.status === 200 && (await anchorMod.text()).includes('export function createAnchoring'));
+  const escapeMod = await fetch(ORIGIN + '/__feedback/lib/..%2Fbin%2Ffeedback-studio.mjs');
+  const dotted = await fetch(ORIGIN + '/__feedback/overlay/nope.txt');
+  check('module routes take one plain .mjs file name only', escapeMod.status === 404 && dotted.status === 404);
 
   // narration correlation engine is served as an ES module the overlay imports
   const narr = await fetch(ORIGIN + '/__feedback/lib/narration.mjs');
@@ -579,6 +671,13 @@ try {
   const http = await import('node:http');
   let upstreamCookie = 'UNSET';
   const upstream = http.createServer((ureq, ures) => {
+    // A redirect the dev server points at its own full address. Answered first
+    // and without touching upstreamCookie, so the cookie check below still reads
+    // what the page request sent.
+    if (ureq.url === '/redirect') {
+      ures.writeHead(302, { Location: `http://${ureq.headers.host}/landed` });
+      return ures.end();
+    }
     upstreamCookie = ureq.headers.cookie || '';
     ures.writeHead(200, {
       'Content-Type': 'text/html',
@@ -608,6 +707,11 @@ try {
     // with no permission prompt at all.
     check('proxy: upstream CSP + Permissions-Policy stripped from injected HTML',
       pxRes.headers.get('content-security-policy') === null && pxRes.headers.get('permissions-policy') === null);
+    // A redirect carrying the dev server's own address would send the browser
+    // off the review server and lose the overlay; it has to point back at us.
+    const pxRedirect = await fetch(`http://127.0.0.1:${PX_PORT}/redirect`, { redirect: 'manual' });
+    check('proxy: a redirect to the dev server\'s own address becomes a plain path',
+      pxRedirect.status === 302 && pxRedirect.headers.get('location') === '/landed');
   } finally {
     pxSrv.kill(); upstream.close();
   }
@@ -635,6 +739,27 @@ try {
     nsSrv.kill();
   }
 
+  // --spa: a built single-page app draws /some/route itself, so an unknown path
+  // with no file extension gets index.html. Without the flag it stays a 404.
+  const plainDeep = await fetch(ORIGIN + '/some/route');
+  check('without --spa an unknown route is still a 404', plainDeep.status === 404);
+  const SPA_PORT = PORT + 10;
+  const spaSrv = spawn(process.execPath, [bin, '--dir', site, '--spa', '--port', String(SPA_PORT), '--no-open'], { stdio: 'ignore', cwd: root });
+  try {
+    await waitForReady(SPA_PORT);
+    const SPA = `http://127.0.0.1:${SPA_PORT}`;
+    const spaDeep = await fetch(SPA + '/some/route');
+    const spaBody = await spaDeep.text();
+    check('--spa serves index.html (with the overlay) for an unknown route',
+      spaDeep.status === 200 && spaBody.includes('<h1 id="t">Hi</h1>') && spaBody.includes('/__feedback/overlay.js'));
+    const spaAsset = await fetch(SPA + '/missing.js');
+    check('--spa still 404s a missing file that has an extension', spaAsset.status === 404);
+    const spaReal = await fetch(SPA + '/');
+    check('--spa leaves a path that does resolve alone', spaReal.status === 200 && (await spaReal.text()).includes('<h1 id="t">Hi</h1>'));
+  } finally {
+    spaSrv.kill();
+  }
+
   // --md cross-file scoping (regression for the 2026-07-14 "cross-file bleed").
   // In single-file --md mode EVERY file serves at '/', so the overlay can't tell
   // one file's comments from another's by `page` — it scopes by the served
@@ -655,8 +780,11 @@ try {
     '# Bravo\n\nSecond doc paragraph.\n\n<a href=javascript:alert(1)>x</a>\n\n<svg><a><animate attributeName="href" values="javascript:alert(1)"/><text>c</text></a></svg>\n');
   const MDA_PORT = PORT + 7;
   const MDB_PORT = PORT + 8;
+  // b.md runs with --md-html on purpose: those two payloads only reach the page
+  // when HTML in the file is rendered, which is exactly the path the sanitizer
+  // guards. The default (HTML shown as text) is checked further down with c.md.
   const mdaSrv = spawn(process.execPath, [bin, '--md', 'docs/a.md', '--port', String(MDA_PORT), '--no-open'], { stdio: 'ignore', cwd: mdCwd });
-  const mdbSrv = spawn(process.execPath, [bin, '--md', 'docs/b.md', '--port', String(MDB_PORT), '--no-open'], { stdio: 'ignore', cwd: mdCwd });
+  const mdbSrv = spawn(process.execPath, [bin, '--md', 'docs/b.md', '--port', String(MDB_PORT), '--no-open', '--md-html'], { stdio: 'ignore', cwd: mdCwd });
   try {
     await sleep(700);
     const MDA = `http://127.0.0.1:${MDA_PORT}`;
@@ -717,6 +845,43 @@ try {
     }
   } finally {
     mdaSrv.kill(); mdbSrv.kill();
+  }
+
+  // HTML written inside a .md is shown as text by default, and rendered only
+  // with --md-html. c.md carries a block payload, an inline tag, a table and a
+  // fenced block, plus a plain Markdown link to a script address (which `marked`
+  // does not clean, so it proves the sanitizer still runs in the strict mode).
+  writeFileSync(path.join(mdCwd, 'docs', 'c.md'),
+    '# Charlie\n\nA sentence with <b>bold</b> inside it.\n\n<script>alert(1)</script>\n\nA [link](javascript:alert(1)) here.\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n```html\n<em>in a fence</em>\n```\n');
+  const MDC_PORT = PORT + 11;
+  const MDD_PORT = PORT + 12;
+  const mdcSrv = spawn(process.execPath, [bin, '--md', 'docs/c.md', '--port', String(MDC_PORT), '--no-open'], { stdio: 'ignore', cwd: mdCwd });
+  const mddSrv = spawn(process.execPath, [bin, '--md', 'docs/c.md', '--port', String(MDD_PORT), '--no-open', '--md-html'], { stdio: 'ignore', cwd: mdCwd });
+  try {
+    await waitForReady(MDC_PORT);
+    await waitForReady(MDD_PORT);
+    const strictRes = await fetch(`http://127.0.0.1:${MDC_PORT}/`);
+    const strictHtml = await strictRes.text();
+    // Same guard as above: without the lazily-installed renderer there is no
+    // page to inspect, and an offline runner should skip rather than fail.
+    if (strictRes.status === 200 && strictHtml.includes('Charlie')) {
+      const loose = await (await fetch(`http://127.0.0.1:${MDD_PORT}/`)).text();
+      // The page shell has scripts of its own, so look for THIS payload.
+      check('--md: HTML in the file is shown as text by default, block and inline alike',
+        strictHtml.includes('&lt;script&gt;alert(1)&lt;/script&gt;') && !strictHtml.includes('<script>alert(1)')
+        && strictHtml.includes('&lt;b&gt;bold&lt;/b&gt;') && !strictHtml.includes('<b>bold</b>'));
+      check('--md: a Markdown link to a script address is neutralised in the default mode too',
+        !/href\s*=\s*["']?javascript/i.test(strictHtml));
+      check('--md: fenced code and tables are untouched in both modes',
+        strictHtml.includes('&lt;em&gt;in a fence&lt;/em&gt;') && loose.includes('&lt;em&gt;in a fence&lt;/em&gt;')
+        && /<table>[\s\S]*<th>a<\/th>/.test(strictHtml) && /<table>[\s\S]*<th>a<\/th>/.test(loose));
+      check('--md-html: the HTML renders again and the script is stripped, as before',
+        loose.includes('<b>bold</b>') && !loose.includes('<script>alert(1)') && !loose.includes('&lt;b&gt;bold&lt;/b&gt;'));
+    } else {
+      console.log('SKIP  --md: strict / --md-html render checks (marked renderer unavailable)');
+    }
+  } finally {
+    mdcSrv.kill(); mddSrv.kill();
   }
 } catch (e) {
   console.log('FAIL  exception:', e.message);

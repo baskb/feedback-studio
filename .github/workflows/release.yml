@@ -21,12 +21,25 @@ jobs:
           node-version: 20
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Tag must match package.json version
+      # All three version files must agree with the tag, not just package.json:
+      # a stale plugin.json ships a plugin that reports the wrong version, and a
+      # stale marketplace.json offers the wrong one for install.
+      - name: Tag must match every version file
         run: |
-          PKG=$(node -p "require('./package.json').version")
           TAG="${GITHUB_REF_NAME#v}"
-          echo "package.json=$PKG  tag=$TAG"
-          test "$PKG" = "$TAG"
+          echo "tag=$TAG"
+          off=0
+          compare() {
+            echo "  $1 = $2"
+            if [ "$2" != "$TAG" ]; then
+              echo "::error::$1 says $2, but the tag is v$TAG. Bump it (npm run release:patch does all of them) and re-tag."
+              off=1
+            fi
+          }
+          compare package.json "$(node -p "require('./package.json').version")"
+          compare plugins/feedback-studio/.claude-plugin/plugin.json "$(node -p "require('./plugins/feedback-studio/.claude-plugin/plugin.json').version")"
+          compare .claude-plugin/marketplace.json "$(node -p "require('./.claude-plugin/marketplace.json').plugins[0].version")"
+          test "$off" = "0"
 
       # Gate the publish on the SAME suite CI runs, so a release can't ship a
       # regression that the per-PR checks would have caught.

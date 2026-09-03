@@ -6,24 +6,8 @@
 // to any DOM element or text selection and persist to .feedback/comments.json
 // plus a readable FEEDBACK.md, ready for an agent to process.
 //
-// Modes:
-//   --dir <path>     serve a static build directory (auto-detected if omitted)
-//   --proxy <url>    proxy a running dev server (e.g. http://localhost:5173)
-//   --md <path>      review a Markdown file or a folder of them
-//   --label <name>   name this session/site (shown in the overlay; for multi-site repos)
-//   --data-dir <p>   where to store this session's .feedback data (default <cwd>/.feedback;
-//                    give each site its own dir to run several sessions from one repo)
-//   --demo           serve the bundled sample page from a throwaway temp copy
-//   --no-seed        with --demo: start with no comments (add your own live)
-//   --share          mint view / comment / admin capability links (pairs well with --tunnel);
-//                    "--share strict" makes even localhost require a key
-//   --no-shots       disable pin-time element screenshots
-//   --port <n>       listen port (default 4444)
-//   --host <addr>    bind address (default 127.0.0.1; use 0.0.0.0 for phone/LAN)
-//   --https          serve over TLS with a self-signed cert (voice on phones)
-//   --tunnel         public real-cert URL via a Cloudflare quick tunnel
-//   --no-open        don't open the browser automatically
-//   --seed-agents    append the processing workflow to ./CLAUDE.md + ./AGENTS.md, then exit
+// The flags live in the FLAGS list below, which is also what `--help` prints, so
+// the two can never drift apart. Run `feedback-studio --help` to see them.
 //
 // HTTP needs zero dependencies. --https / --md fetch a tiny helper once.
 
@@ -35,7 +19,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { exec, execSync, spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, stat, readdir, chmod, unlink, mkdtemp, cp } from 'node:fs/promises';
-import { existsSync, readFileSync, statSync, watch, createWriteStream, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, watch, createReadStream, createWriteStream, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
@@ -50,6 +34,39 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 // ---------- args ----------
+// Every flag the server accepts, in one place: `--help` is printed from this
+// list, an unknown flag is recognised against it, and the README table repeats
+// the same names and the same one-line help.
+const FLAGS = [
+  { name: '--demo', arg: '', help: 'Serve the bundled sample page from a throwaway temp copy.' },
+  { name: '--no-seed', arg: '', help: 'With --demo: start with no comments, so you add your own live.' },
+  { name: '--dir', arg: '<path>', help: 'Serve a static build directory (auto-detected when left out).' },
+  { name: '--proxy', arg: '<url>', help: 'Proxy a running dev server and inject the overlay (live reload).' },
+  { name: '--spa', arg: '', help: 'Serve index.html for an unknown path that has no file extension.' },
+  { name: '--md', arg: '<file|dir>', help: 'Render a Markdown file, or a folder of them, as pages you can review.' },
+  { name: '--md-html', arg: '', help: 'With --md: render HTML written in the file (only for a document you trust).' },
+  { name: '--label', arg: '<name>', help: 'Name this session, shown in the overlay so you can tell open tabs apart.' },
+  { name: '--data-dir', arg: '<path>', help: "Where to store this session's .feedback data (default <cwd>/.feedback)." },
+  { name: '--share', arg: '[strict]', help: 'Mint view / comment / admin links; "strict" asks this computer for a key too.' },
+  { name: '--no-shots', arg: '', help: 'Turn off the element screenshot taken when you pin a comment.' },
+  { name: '--port', arg: '<n>', help: 'Listen port (default 4444).' },
+  { name: '--host', arg: '<addr>', help: 'Bind address (default 127.0.0.1; use 0.0.0.0 for your phone or LAN).' },
+  { name: '--tunnel', arg: '', help: 'Public HTTPS address through a Cloudflare quick tunnel (real certificate).' },
+  { name: '--https', arg: '', help: 'Serve over TLS with a self-signed certificate (voice on phones).' },
+  { name: '--no-open', arg: '', help: "Don't open the browser automatically." },
+  { name: '--seed-agents', arg: '', help: 'Append the processing workflow to ./CLAUDE.md and ./AGENTS.md, then exit.' },
+  { name: '--help', arg: '', help: 'Show this help and exit.' },
+  { name: '--version', arg: '', help: 'Print the version and exit.' },
+];
+const FLAG_NAMES = new Set(FLAGS.map((f) => f.name.slice(2)));
+
+function usageText() {
+  const label = (f) => f.name + (f.arg ? ' ' + f.arg : '');
+  const width = Math.max(...FLAGS.map((f) => label(f).length));
+  const lines = FLAGS.map((f) => '  ' + label(f).padEnd(width) + '  ' + f.help);
+  return `\n  Usage: feedback-studio [options]\n\n${lines.join('\n')}\n`;
+}
+
 function parseArgs(argv) {
   const out = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -63,7 +80,31 @@ function parseArgs(argv) {
   }
   return out;
 }
-const args = parseArgs(process.argv.slice(2));
+const rawArgv = process.argv.slice(2);
+const args = parseArgs(rawArgv);
+
+// The version comes from the plugin manifest, the same file the MCP server reads,
+// so there is only ever one number to bump.
+function readVersion() {
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', '.claude-plugin', 'plugin.json'), 'utf-8'));
+    return pkg.version || '0.0.0';
+  } catch (e) { return '0.0.0'; }
+}
+
+// --help and --version answer and leave: no server, no browser, no data dir.
+// They run before every other check so they work from any folder.
+if (rawArgv.includes('--help') || rawArgv.includes('-h')) { console.log(usageText()); process.exit(0); }
+if (rawArgv.includes('--version') || rawArgv.includes('-v')) { console.log(readVersion()); process.exit(0); }
+// A misspelled flag used to be accepted in silence and then ignored, so
+// `--proxi http://localhost:5173` quietly served a static folder instead.
+// Positional words are still fine; only unknown --flags stop us.
+for (const key of Object.keys(args)) {
+  if (key === '_' || FLAG_NAMES.has(key)) continue;
+  console.error(`\n  unknown option --${key}`);
+  console.error(usageText());
+  process.exit(1);
+}
 
 const PORT = Number(args.port || process.env.PORT || 4444);
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
@@ -98,6 +139,10 @@ if (DEMO && (args.proxy || args.md || args.dir || args['data-dir'])) {
 
 // Markdown review mode: --md <file.md> or --md <dir-of-md>.
 const MD_MODE = !!args.md;
+// HTML written inside a .md is shown as text unless --md-html asks for it to be
+// rendered. A file you were sent can carry a <script>, and the rendered page
+// shares an address with the comment API, so text is the safer default.
+const MD_HTML = !!args['md-html'];
 let MD_ROOT = null; // directory that md paths are resolved under
 let MD_SINGLE = null; // the single .md file, when --md points at one file
 if (MD_MODE) {
@@ -200,6 +245,10 @@ function resolveStaticDir() {
   return null;
 }
 let STATIC_DIR = DEMO ? null : (PROXY || MD_MODE ? null : resolveStaticDir());
+// --spa: a built single-page app routes /about in the browser, so there is no
+// about.html on disk. With the flag on, a path with no file extension that
+// matches no file gets index.html (and its overlay) instead of a 404.
+const SPA = !!args.spa;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -212,7 +261,9 @@ const MIME = {
   '.map': 'application/json; charset=utf-8', '.wasm': 'application/wasm',
 };
 
-const INJECT = `\n<script src="/__feedback/overlay.js" defer></script>\n`;
+// The overlay is a set of ES modules (public/overlay/*.mjs); `type="module"`
+// scripts run after the page is parsed, the same timing `defer` gave before.
+const INJECT = `\n<script type="module" src="/__feedback/overlay.js"></script>\n`;
 function injectHtml(html) {
   // Inject before the LAST </body> (an earlier one may live inside a <script>
   // or <template>); fall back to appending if there's no closing body tag.
@@ -747,21 +798,103 @@ async function serveAsset(res, file) {
     res.end(buf);
   } catch (e) { res.writeHead(404); res.end('Not found'); }
 }
-async function serveStatic(res, file, status = 200) {
-  const ext = path.extname(file).toLowerCase();
-  if (ext === '.html') {
-    res.writeHead(status, { 'Content-Type': MIME[ext], 'Cache-Control': 'no-store' });
-    res.end(injectHtml(await readFile(file, 'utf-8')));
+// Read one `Range: bytes=...` header. Returns the byte window to send, the
+// string 'unsatisfiable' when the file cannot answer it (416), or null to send
+// the whole file. Several ranges in one header, or anything malformed, count as
+// null: RFC 9110 lets a server ignore a range it does not want to honour, and a
+// full 200 is always a correct answer.
+function parseRange(header, size) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
+  if (!m) return null;
+  const [, from, to] = m;
+  if (from === '' && to === '') return null;
+  let start, end;
+  if (from === '') {
+    // "bytes=-500" means the last 500 bytes.
+    const want = Number(to);
+    if (!want) return 'unsatisfiable';
+    start = Math.max(0, size - want);
+    end = size - 1;
   } else {
-    res.writeHead(status, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
-    res.end(await readFile(file));
+    start = Number(from);
+    end = to === '' ? size - 1 : Math.min(Number(to), size - 1);
   }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= size || start > end) return 'unsatisfiable';
+  return { start, end };
+}
+
+// Send a file (or a slice of it) without loading it into memory first. A read
+// error after the headers went out can only be reported by cutting the
+// connection, and a browser that navigates away mid-download must not leave the
+// read running, hence the two handlers.
+function streamFile(res, file, range) {
+  const stream = createReadStream(file, range ? { start: range.start, end: range.end } : {});
+  stream.on('error', () => { try { res.destroy(); } catch (e) {} });
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
+}
+
+async function serveStatic(req, res, file, status = 200) {
+  const ext = path.extname(file).toLowerCase();
+  const headOnly = req.method === 'HEAD';
+  if (ext === '.html') {
+    // A page has to be read whole: the overlay tag is added before it goes out,
+    // which changes its length, so a byte range could never line up with what is
+    // on disk. Pages are small; everything else streams.
+    const body = injectHtml(await readFile(file, 'utf-8'));
+    res.writeHead(status, {
+      'Content-Type': MIME[ext], 'Cache-Control': 'no-store',
+      'Content-Length': Buffer.byteLength(body),
+    });
+    return res.end(headOnly ? undefined : body);
+  }
+  let size;
+  try { size = (await stat(file)).size; }
+  catch (e) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('404 — not found'); }
+
+  const range = parseRange(req.headers.range, size);
+  if (range === 'unsatisfiable') {
+    res.writeHead(416, {
+      'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store',
+      'Accept-Ranges': 'bytes', 'Content-Range': `bytes */${size}`,
+    });
+    return res.end(headOnly ? undefined : '416 — range not satisfiable');
+  }
+  const headers = {
+    'Content-Type': MIME[ext] || 'application/octet-stream',
+    'Cache-Control': 'no-store',
+    // Saying so is what makes a video scrub and a paused download resume.
+    'Accept-Ranges': 'bytes',
+  };
+  if (range) {
+    headers['Content-Range'] = `bytes ${range.start}-${range.end}/${size}`;
+    headers['Content-Length'] = range.end - range.start + 1;
+    res.writeHead(206, headers);
+  } else {
+    headers['Content-Length'] = size;
+    res.writeHead(status, headers);
+  }
+  if (headOnly) return res.end();
+  streamFile(res, file, range);
 }
 
 // ---------- proxy serving ----------
 // Requests are pinned to the configured upstream origin: only the path+query of
 // the incoming request is forwarded, never a host derived from the request line,
 // so this can't be turned into an open proxy / SSRF pivot.
+// A dev server that answers a redirect usually writes its own full address into
+// Location. Followed as-is, the browser leaves the review server and the overlay
+// is gone. Point the same path back through us instead. Only the configured
+// upstream address is rewritten; a redirect to anywhere else is left alone.
+function rewriteLocation(headers) {
+  const loc = headers.location;
+  if (typeof loc === 'string' && PROXY && loc.startsWith(PROXY)) {
+    const rest = loc.slice(PROXY.length);
+    headers.location = rest.startsWith('/') ? rest : '/' + rest;
+  }
+  return headers;
+}
+
 function proxyRequest(req, res) {
   const u = new URL(req.url, PROXY_URL);
   const fwd = { ...req.headers, host: PROXY_URL.host, 'accept-encoding': 'identity' };
@@ -796,11 +929,11 @@ function proxyRequest(req, res) {
         delete headers['permissions-policy'];
         delete headers['feature-policy'];
         headers['cache-control'] = 'no-store';
-        res.writeHead(pres.statusCode || 200, headers);
+        res.writeHead(pres.statusCode || 200, rewriteLocation(headers));
         res.end(html);
       });
     } else {
-      res.writeHead(pres.statusCode || 200, pres.headers);
+      res.writeHead(pres.statusCode || 200, rewriteLocation({ ...pres.headers }));
       pres.pipe(res);
     }
   });
@@ -1407,10 +1540,36 @@ function linksOpenNewTab(html) {
   });
 }
 
+// HTML written inside a .md is shown as text, not rendered. This is the default
+// because a document you were sent is not code you reviewed, and the rendered
+// page shares an address with the comment API. `marked` hands every raw HTML
+// piece to renderer.html, both a block on its own and a tag inside a sentence,
+// so escaping there is enough. Fenced code and tables never pass through it and
+// are unaffected. --md-html turns this off and renders the HTML instead, which
+// then goes through sanitizeRenderedHtml as it always did.
+function escapeAsText(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+function textOnlyRenderer(marked) {
+  if (typeof marked.Renderer !== 'function') {
+    throw new Error('this version of the Markdown renderer has no Renderer to build on. Re-run with --md-html, or reinstall marked in ' + path.join(GLOBAL_DATA, 'deps'));
+  }
+  const renderer = new marked.Renderer();
+  // A block sits between paragraphs, so give it a paragraph of its own; a tag
+  // inside a sentence stays inline where it was written.
+  renderer.html = (text, block) => (block ? '<p class="kbf-raw">' + escapeAsText(text).trim() + '</p>\n' : escapeAsText(text));
+  return renderer;
+}
+
 async function renderMd(file) {
   const marked = await ensureMarked();
   const src = await readFile(file, 'utf-8');
-  const body = linksOpenNewTab(sanitizeRenderedHtml(marked.parse(src, { gfm: true, breaks: false })));
+  const opts = { gfm: true, breaks: false };
+  if (!MD_HTML) opts.renderer = textOnlyRenderer(marked);
+  // sanitizeRenderedHtml runs in BOTH modes: `marked` does not clean link
+  // addresses, so a plain Markdown link can still point at a javascript:
+  // address with no raw HTML involved anywhere.
+  const body = linksOpenNewTab(sanitizeRenderedHtml(marked.parse(src, opts)));
   const rel = path.relative(CWD, file).split(path.sep).join('/');
   // Header display: a file outside the cwd would show a ../../../ chain of
   // machine internals — show it relative to the --md root instead (which for a
@@ -1507,17 +1666,26 @@ async function handler(req, res) {
       if (!SHOTS) prefix += 'window.__kbfShots=false;\n';
       if (SHARE) prefix += 'window.__kbfRole=' + JSON.stringify(roleFor(req, url) || 'none') + ';\n';
       if (LABEL) prefix += 'window.__kbfLabel=' + JSON.stringify(LABEL) + ';\n'; // site name (multi-site)
+      // The URL stays /__feedback/overlay.js for compatibility; the file behind
+      // it is the entry module of the split overlay. The prefix lines are plain
+      // statements, valid at the top of a module.
       if (prefix) {
-        const src = prefix + readFileSync(path.join(PUBLIC_DIR, 'overlay.js'), 'utf-8');
+        const src = prefix + readFileSync(path.join(PUBLIC_DIR, 'overlay', 'main.mjs'), 'utf-8');
         res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
         return res.end(src);
       }
-      return serveAsset(res, path.join(PUBLIC_DIR, 'overlay.js'));
+      return serveAsset(res, path.join(PUBLIC_DIR, 'overlay', 'main.mjs'));
     }
     if (url.pathname === '/__feedback/overlay.css') return serveAsset(res, path.join(PUBLIC_DIR, 'overlay.css'));
-    // The narration correlation engine (pure ES module) — dynamic-imported by the
-    // overlay so the browser and the Node test suite share one tested source.
-    if (url.pathname === '/__feedback/lib/narration.mjs') return serveAsset(res, path.join(__dirname, '..', 'lib', 'narration.mjs'));
+    // The overlay's own modules (/__feedback/overlay/<name>.mjs) and the shared
+    // modules it imports from lib/ (/__feedback/lib/<name>.mjs: anchoring,
+    // narration, the schema constants). One file name each, .mjs only, no
+    // path parts, so nothing outside those two folders can be reached.
+    const modRoute = /^\/__feedback\/(overlay|lib)\/([A-Za-z0-9_-]+\.mjs)$/.exec(url.pathname);
+    if (modRoute) {
+      const dir = modRoute[1] === 'overlay' ? path.join(PUBLIC_DIR, 'overlay') : path.join(__dirname, '..', 'lib');
+      return serveAsset(res, path.join(dir, modRoute[2]));
+    }
     // DNS-rebinding guard for the whole comment surface, reads included — a
     // rebound page could otherwise read the review data (API GETs, SSE stream).
     // The static overlay assets above stay public; they contain no data.
@@ -1554,14 +1722,21 @@ async function handler(req, res) {
 
     const file = await resolveStaticFile(url.pathname);
     if (!file) {
+      // --spa: /about and /orders/42 are routes the app draws in the browser,
+      // not files. A path with no file extension gets index.html and the overlay
+      // with it. A missing /app.js keeps its 404, so a broken asset still shows.
+      if (SPA && !path.extname(url.pathname)) {
+        const index = path.join(STATIC_DIR, 'index.html');
+        if (existsSync(index)) return serveStatic(req, res, index, 200);
+      }
       const notFound = path.join(STATIC_DIR, '404.html');
       // Pass the status explicitly: writeHead()'s code wins over res.statusCode,
       // so setting the property here would still send the custom page as a 200.
-      if (existsSync(notFound)) return serveStatic(res, notFound, 404);
+      if (existsSync(notFound)) return serveStatic(req, res, notFound, 404);
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('404 — not found');
     }
-    return serveStatic(res, file);
+    return serveStatic(req, res, file);
   } catch (err) {
     console.error('Request error:', err);
     if (res.headersSent) { try { res.end(); } catch (e) {} return; }

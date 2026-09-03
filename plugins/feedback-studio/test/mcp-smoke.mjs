@@ -68,6 +68,29 @@ try {
   check('list_comments shows the added one', listed.count === 1);
   check('list_comments summary carries autonomy', listed.comments[0].autonomy === 'review');
 
+  // The three tools every processing run ends with: read one in full, talk on
+  // its thread, and mark it done.
+  const one = await rpc({ jsonrpc: '2.0', id: 20, method: 'tools/call', params: { name: 'get_comment', arguments: { id: added.id } } });
+  const full = JSON.parse(one.result.content[0].text);
+  check('get_comment returns the full comment with anchor and thread', !one.result.isError && full.id === added.id && full.anchor && Array.isArray(full.thread));
+  const missing = await rpc({ jsonrpc: '2.0', id: 21, method: 'tools/call', params: { name: 'get_comment', arguments: { id: 'c_nope' } } });
+  check('get_comment on an unknown id => tool error', missing.result.isError === true);
+
+  const rep = await rpc({ jsonrpc: '2.0', id: 22, method: 'tools/call', params: { name: 'reply', arguments: { id: added.id, text: 'Done: bumped the size.', authorName: 'Codex', variants: [{ label: 'A', html: '<div onclick="x()">a</div>' }] } } });
+  const repOut = JSON.parse(rep.result.content[0].text);
+  const afterReply = JSON.parse((await rpc({ jsonrpc: '2.0', id: 23, method: 'tools/call', params: { name: 'get_comment', arguments: { id: added.id } } })).result.content[0].text);
+  check('reply lands on the thread as the agent', !rep.result.isError && repOut.replies === 1 && afterReply.thread[0].author === 'agent' && afterReply.thread[0].authorName === 'Codex');
+  check('reply variants are sanitized (no inline handlers)', afterReply.thread[0].variants && afterReply.thread[0].variants.length === 1 && !/onclick/i.test(afterReply.thread[0].variants[0].html));
+
+  const st = await rpc({ jsonrpc: '2.0', id: 24, method: 'tools/call', params: { name: 'set_status', arguments: { id: added.id, status: 'resolved' } } });
+  const stOut = JSON.parse(st.result.content[0].text);
+  const listAfter = JSON.parse((await rpc({ jsonrpc: '2.0', id: 25, method: 'tools/call', params: { name: 'list_comments', arguments: {} } })).result.content[0].text);
+  check('set_status resolved is written and drops the comment from the actionable list', !st.result.isError && stOut.status === 'resolved' && listAfter.count === 0);
+  const badStatus = await rpc({ jsonrpc: '2.0', id: 26, method: 'tools/call', params: { name: 'set_status', arguments: { id: added.id, status: 'done' } } });
+  check('set_status refuses a status outside the enum', badStatus.result.isError === true);
+  const listAll = JSON.parse((await rpc({ jsonrpc: '2.0', id: 27, method: 'tools/call', params: { name: 'list_comments', arguments: { status: 'all' } } })).result.content[0].text);
+  check('list_comments status=all still shows the resolved one', listAll.count === 1 && listAll.comments[0].status === 'resolved');
+
   const notFound = await rpc({ jsonrpc: '2.0', id: 8, method: 'frobnicate' });
   check('unknown method => -32601', notFound.error && notFound.error.code === -32601);
 

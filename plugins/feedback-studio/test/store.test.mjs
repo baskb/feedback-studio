@@ -122,13 +122,32 @@ test('makeReply trims and defaults author', () => {
   assert.equal(makeReply({ text: ' hi ' }).text, 'hi');
 });
 
-test('the overlay type set matches the shared constants (no drift)', () => {
-  const src = readFileSync(path.join(__dirname, '..', 'public', 'overlay.js'), 'utf-8');
-  // Pull the { id: 'x' } entries out of the TYPE_SETS block.
-  const block = src.slice(src.indexOf('TYPE_SETS'), src.indexOf('const TYPES'));
-  const ids = new Set([...block.matchAll(/id:\s*'([a-z]+)'/g)].map((m) => m[1]));
-  for (const t of ALLOWED_TYPES) assert.ok(ids.has(t), 'overlay is missing type "' + t + '"');
-  assert.equal(ids.size, ALLOWED_TYPES.length, 'overlay has an extra/unknown type');
+test('the overlay takes its type set from the shared schema (no drift)', () => {
+  const src = readFileSync(path.join(__dirname, '..', 'public', 'overlay', 'state.mjs'), 'utf-8');
+  // The overlay no longer keeps a hand-copied mirror: it imports the canonical
+  // lists over the same URL the browser loads them from.
+  assert.match(src, /import\s*\{[^}]*\bWEB_TYPES\b[^}]*\}\s*from\s*'\/__feedback\/lib\/schema\.mjs'/);
+  for (const name of ['WEB_TYPES', 'MD_TYPES', 'UNIVERSAL_TYPES', 'ALLOWED_TYPES']) {
+    assert.ok(!new RegExp('(?:const|let|var)\\s+' + name).test(src),
+      'overlay re-declares ' + name + ' instead of importing it');
+  }
+  // What the overlay DOES own is the wording per type. Every type an agent can
+  // meet must have a label/hint/placeholder, and no unknown type may have one.
+  const meta = src.slice(src.indexOf('const TYPE_META'), src.indexOf('const TYPE_ORDER'));
+  assert.ok(meta.length > 200, 'TYPE_META block not found in the overlay');
+  const ids = new Set([...meta.matchAll(/(\w+): \{ label:/g)].map((m) => m[1]));
+  for (const t of ALLOWED_TYPES) assert.ok(ids.has(t), 'overlay has no wording for type "' + t + '"');
+  assert.equal(ids.size, ALLOWED_TYPES.length, 'overlay has wording for an extra/unknown type');
+});
+
+test('the overlay takes its tweakable properties from the shared schema too', () => {
+  const src = readFileSync(path.join(__dirname, '..', 'public', 'overlay', 'tweaks.mjs'), 'utf-8');
+  assert.match(src, /import\s*\{[^}]*\bTWEAKABLE_PROPS\b[^}]*\}\s*from\s*'\/__feedback\/lib\/schema\.mjs'/);
+  assert.ok(!/(?:const|let|var)\s+TWEAKABLE_PROPS/.test(src), 'overlay re-declares TWEAKABLE_PROPS');
+  // The live knobs are filtered against the whitelist, so a property dropped
+  // from the schema can never stay a knob. (Which knobs exist is checked by
+  // "the overlay tweak controls are a subset of TWEAKABLE_PROPS" below.)
+  assert.match(src, /TWEAKABLE_PROPS\.includes\(/);
 });
 
 test('exportProcessInstructions writes a self-contained, MCP-first guide', async () => {
@@ -395,7 +414,7 @@ test('sanitizeVariantHtml catches unquoted attribute values and SVG animation', 
 });
 
 test('the overlay re-scrubs variants through a real parser before injection (no drift)', () => {
-  const src = readFileSync(path.join(__dirname, '..', 'public', 'overlay.js'), 'utf-8');
+  const src = readFileSync(path.join(__dirname, '..', 'public', 'overlay', 'variants.mjs'), 'utf-8');
   // the injection site must go through the parser-based scrub, never raw html
   assert.ok(src.includes('scrubVariantHtml('), 'overlay must define/use scrubVariantHtml');
   assert.ok(!/container\.innerHTML\s*=\s*v\.reply\.variants/.test(src), 'variants must never be injected unscrubbed');
@@ -451,8 +470,8 @@ test('makeReply carries sanitized variants and pick; junk pick is dropped', () =
 });
 
 test('the overlay tweak controls are a subset of TWEAKABLE_PROPS (no drift)', () => {
-  const src = readFileSync(path.join(__dirname, '..', 'public', 'overlay.js'), 'utf-8');
-  const block = src.slice(src.indexOf('TWEAK_CONTROLS'), src.indexOf('function clearTweakPreview'));
+  const src = readFileSync(path.join(__dirname, '..', 'public', 'overlay', 'tweaks.mjs'), 'utf-8');
+  const block = src.slice(src.indexOf('const TWEAK_CONTROLS'), src.indexOf('function tweakInfo'));
   const props = [...block.matchAll(/prop:\s*'([a-z-]+)'/g)].map((m) => m[1]);
   assert.ok(props.length >= 5, 'expected the overlay to declare tweak controls');
   for (const p of props) assert.ok(TWEAKABLE_PROPS.includes(p), `overlay tweak prop "${p}" is not in TWEAKABLE_PROPS`);

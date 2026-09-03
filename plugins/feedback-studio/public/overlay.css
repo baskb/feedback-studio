@@ -16,7 +16,7 @@
   --kbf-surface-2: #f5f4ef;
   --kbf-ink: #1f1e1c;
   --kbf-ink-soft: #565449;
-  --kbf-muted: #8a8578;
+  --kbf-muted: #6f6a5e;      /* 5.1:1 on paper; the old #8a8578 was 3.5:1, under the 4.5:1 body-text minimum */
   --kbf-border: #e7e4db;
   --kbf-border-strong: #d8d4c8;
   --kbf-chip: #1f1e1c;       /* dark "chip" surface (FAB, pins, toast) — always carries light text */
@@ -1881,12 +1881,14 @@ button {
 }
 /* Type tag pills. `change`/`comment`/`rephrase` ride the themed tint vars (so they adapt to
    dark on their own); the rest carry their own hue and need an explicit dark variant below. */
+/* Pill text is small, so each colour is checked against its tint at 4.5:1 or better
+   (the clay, green and amber accents themselves stay as they are for pins and fills). */
 .kbf-type-fix { background: #fdece5; color: #b04a26; }
-.kbf-type-change { background: var(--kbf-clay-tint); color: var(--kbf-clay-deep); }
-.kbf-type-improve { background: #e9f1ec; color: var(--kbf-green); }
+.kbf-type-change { background: var(--kbf-clay-tint); color: #9a4a2c; }
+.kbf-type-improve { background: #e9f1ec; color: #3b6f47; }
 .kbf-type-comment { background: var(--kbf-agent-tint); color: var(--kbf-agent-deep); }
-.kbf-type-rephrase { background: var(--kbf-clay-tint); color: var(--kbf-clay-deep); }
-.kbf-type-expand { background: #fff2e4; color: #b5701f; }
+.kbf-type-rephrase { background: var(--kbf-clay-tint); color: #9a4a2c; }
+.kbf-type-expand { background: #fff2e4; color: #8f5714; }
 .kbf-type-delete { background: #fde4e4; color: #b23b3b; }
 .kbf-type-question { background: #f0eafb; color: #6b4ec2; }
 /* Dark variants for the self-coloured tags (dark tint + a brighter accent for contrast). */

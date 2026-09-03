@@ -19,31 +19,18 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 // ---------- schema constants (the contract) ----------
-export const SCHEMA_VERSION = 6;
-export const FILE_VERSION = 1;
-
-// Comment types decide how much latitude the agent gets. Web pages and Markdown
-// documents use different verbs; `question` is UNIVERSAL — valid in either mode
-// ("Ask the page": the agent answers, doesn't edit). The union (deduped) is what
-// the file may legally contain.
-export const WEB_TYPES = ['fix', 'change', 'improve'];
-export const MD_TYPES = ['comment', 'rephrase', 'expand', 'delete', 'question'];
-export const UNIVERSAL_TYPES = ['question'];
-export const ALLOWED_TYPES = [...new Set([...WEB_TYPES, ...MD_TYPES, ...UNIVERSAL_TYPES])];
-export const STATUSES = ['open', 'approved', 'rejected', 'resolved'];
-export const AUTONOMY = ['auto', 'review'];
+// They live in ./schema.mjs so the browser overlay can import the very same
+// file (it cannot import this one — Node built-ins). Re-exported here so every
+// existing `import { WEB_TYPES } from './store.mjs'` keeps working.
+export * from './schema.mjs';
+import {
+  SCHEMA_VERSION, FILE_VERSION, WEB_TYPES, MD_TYPES, UNIVERSAL_TYPES,
+  ALLOWED_TYPES, AUTONOMY, TWEAKABLE_PROPS,
+} from './schema.mjs';
 
 const ANCHOR_KEYS = ['type', 'selector', 'attrSelector', 'xpath', 'tag', 'id', 'snippet', 'rangeText'];
 const TEXT_MAX = 10000;
 
-// Tweak Mode (web only): properties a comment's `edits[]` may carry. The overlay
-// exposes a subset as live knobs; the whitelist is slightly wider so agents can
-// author edits too. Values are opaque CSS values ("16px", "#0f766e", "16px 24px") —
-// they are DATA for the processing agent, never re-injected as live CSS by us.
-export const TWEAKABLE_PROPS = [
-  'font-size', 'font-weight', 'line-height', 'letter-spacing', 'text-align',
-  'color', 'background-color', 'padding', 'margin', 'border-radius', 'opacity', 'gap',
-];
 const EDITS_MAX = 16;
 
 let _writeSeq = 0;

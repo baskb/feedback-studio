@@ -63,8 +63,13 @@
   };
   // "Today" = added or touched on the reviewer's local calendar day (timestamps are UTC ISO strings).
   const isTodayC = (c) => { const d = new Date(lastTouch(c) || 0); const n = new Date(); return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate(); };
-  // True when an agent reply on the thread is newer than the comment itself.
-  const agentRepliedAfter = (c) => (Array.isArray(c.thread) ? c.thread : []).some((r) => r.author === 'agent' && r.createdAt && r.createdAt > (c.createdAt || ''));
+  // True when an agent reply on the thread is newer than the comment itself AND
+  // reads like an applied change: a "Queued…" reply parks the item (the server
+  // uses the same word to decide, see the reply route) and a variants proposal
+  // is a question, not an edit. Neither can vouch for changed text.
+  const agentRepliedAfter = (c) => (Array.isArray(c.thread) ? c.thread : []).some((r) =>
+    r.author === 'agent' && r.createdAt && r.createdAt > (c.createdAt || '')
+    && !/\bqueued\b/i.test(String(r.text || '')) && !(Array.isArray(r.variants) && r.variants.length));
   let recognizing = false;
   let recognition = null;
   let voiceManualStop = false; // true when the user (not a pause) stopped dictation
@@ -365,9 +370,16 @@
     } else {
       list = pool ? pool.all() : [...document.querySelectorAll('*')];
     }
-    let found = list.find((e) => norm(e.textContent).toLowerCase().startsWith(t) && e.getClientRects().length);
-    if (!found) found = list.find((e) => norm(e.textContent).toLowerCase().includes(t) && e.getClientRects().length);
-    return found || null;
+    const visible = (e) => e.getClientRects().length;
+    let hits = list.filter((e) => norm(e.textContent).toLowerCase().startsWith(t) && visible(e));
+    if (!hits.length) hits = list.filter((e) => norm(e.textContent).toLowerCase().includes(t) && visible(e));
+    // A wrapper and the element inside it carry the same text once, not twice:
+    // keep only the innermost hits. What is left are genuinely separate
+    // occurrences (two "Submit" buttons, repeated "Read more" links). More than
+    // one of those means the text alone cannot say which element was meant, so
+    // the caller must not treat the first one as a confident find.
+    const inner = hits.filter((e) => !hits.some((o) => o !== e && e.contains(o)));
+    return { el: inner[0] || null, ambiguous: inner.length > 1 };
   }
 
   // How well an element's text corroborates the stored snippet.
@@ -402,8 +414,9 @@
     if (a.attrSelector) tryStrat('attr', () => document.querySelector(a.attrSelector));
     if (a.selector) tryStrat('selector', () => document.querySelector(a.selector));
     if (a.xpath) tryStrat('xpath', () => byXPath(a.xpath));
-    if (hasText) tryStrat('text', () => byText(rawSnip, a.tag, pool));
-    if (!cands.length) return { el: null, confidence: null };
+    let textAmbiguous = false; // the snippet matched several separate elements
+    if (hasText) tryStrat('text', () => { const r = byText(rawSnip, a.tag, pool); textAmbiguous = r.ambiguous; return r.el; });
+    if (!cands.length) return { el: null, confidence: null, ambiguous: textAmbiguous };
 
     const familyOf = { attr: 'attr', selector: 'structural', xpath: 'structural', text: 'text' };
     const weight = { attr: 3, structural: 2, text: 2 };
@@ -430,14 +443,17 @@
       // <article> that merely contains the sentence does not qualify).
       if (tr === 'weak' && a.type === 'range' && a.tag && best.nodeName.toLowerCase() === a.tag) tr = 'strong';
       if ((set.has('attr') || set.has('structural')) && tr === 'strong') confidence = 'high';
-      else if (set.has('text') && tr === 'strong') confidence = 'high';
+      // Text alone earns "high" only when it points at ONE element. When the
+      // snippet matches several separate elements, picking the first would be
+      // a guess, so it stays "medium" (a re-check) until someone re-pins.
+      else if (set.has('text') && tr === 'strong' && !textAmbiguous) confidence = 'high';
       else if (tr !== 'none') confidence = 'medium'; // text present but not a clean match → re-check
       else confidence = 'low';
     } else {
       // No real text to corroborate. Trust only a uniquely-resolving stable attr.
       confidence = set.has('attr') ? 'high' : 'low';
     }
-    return { el: best, confidence };
+    return { el: best, confidence, ambiguous: textAmbiguous };
   }
   function resolveAnchor(a, pool) { return resolveWithConfidence(a, pool).el; }
 
@@ -479,15 +495,16 @@
   window.__kbfSelfTest = function () {
     const pool = makePool();
     const out = pageComments().map((c) => {
-      const { el, confidence } = resolveWithConfidence(c.anchor, pool);
+      const { el, confidence, ambiguous } = resolveWithConfidence(c.anchor, pool);
       const snip = c.anchor && (c.anchor.snippet || c.anchor.rangeText);
       const textOk = el ? textRel(el, snip) !== 'none' : false;
-      return { id: c.id, confidence, found: !!el, textOk };
+      return { id: c.id, confidence, found: !!el, textOk, ambiguous: !!ambiguous };
     });
     const n = out.length;
     // "Resolved" = confidently re-found (high/medium); low/none are refuse-and-re-pin.
     const resolved = out.filter((o) => o.confidence === 'high' || o.confidence === 'medium').length;
-    return { total: n, resolved, rate: n ? +(resolved / n).toFixed(3) : null, detail: out };
+    const ambiguous = out.filter((o) => o.ambiguous).length; // snippet matched several elements
+    return { total: n, resolved, ambiguous, rate: n ? +(resolved / n).toFixed(3) : null, detail: out };
   };
 
   // ---------- comment mode ----------
@@ -1016,7 +1033,9 @@
     const resetAllBtn = wrap.querySelector('.kbf-tweak-resetall');
 
     function applyPreview() {
-      const target = getEl();
+      // Preview on the element the "from" values were read from; only look it
+      // up again when the page replaced it (a live dev server re-rendering).
+      const target = el.isConnected ? el : getEl();
       if (!tweaks.size || !target) { clearTweakPreview(); schedulePos(); return; }
       target.setAttribute(TWEAK_ATTR, '1');
       let s = document.getElementById(TWEAK_STYLE_ID);
@@ -1776,7 +1795,8 @@
     const transcript = narrTranscript.slice(), hovers = narrHovers.slice(), clicks = narrClicks.slice();
     const eng = await loadNarrEngine();
     if (!eng) { toastError('Could not load the narration engine'); return; }
-    const drafts = eng.correlate(transcript, { hovers, clicks }).filter((d) => (d.text || '').trim());
+    // `mode` picks the verb set: a spoken note on a document becomes rephrase / expand / delete / comment, not fix / change.
+    const drafts = eng.correlate(transcript, { hovers, clicks }, { mode: MODE }).filter((d) => (d.text || '').trim());
     if (!drafts.length) { toast('No feedback caught — nothing to review'); return; }
     // Confident ones behave exactly like a manual comment: they're pinned right
     // away and PPF picks them up — no accept step. Only the ones we couldn't
@@ -2374,10 +2394,12 @@
     }
     // drag move / resize (SE handle)
     let drag = null;
+    let boxClick = false; // a drag that ends over the backdrop still fires a click there; that click must not close the modal
     modal.addEventListener('pointerdown', (e) => {
       const handle = e.target.closest('.kbf-crop-handle');
       const inBox = e.target.closest('.kbf-crop-box');
       if (!handle && !inBox) return;
+      boxClick = true;
       const r = imgEl.getBoundingClientRect();
       drag = { mode: handle ? 'resize' : 'move', x: e.clientX, y: e.clientY, bx: cbox.x, by: cbox.y, bw: cbox.w, bh: cbox.h, maxW: r.width, maxH: r.height };
       try { modal.setPointerCapture(e.pointerId); } catch (_) {}
@@ -2405,6 +2427,7 @@
       close(); onApply(rect);
     }
     modal.addEventListener('click', (e) => {
+      if (boxClick) { boxClick = false; return; } // the tail end of a crop-box drag, not a backdrop click
       const act = e.target.closest('[data-crop]')?.dataset.crop;
       if (act === 'cancel' || e.target === modal) { close(); return; }
       if (act === 'apply') apply();
@@ -3109,8 +3132,10 @@
         const pc = here && (st === 'open' || st === 'approved') ? pinConf.get(c.id) : undefined;
         const pinState = pc === 'lost' ? 'lost' : (pc === 'medium' || pc === 'low') ? 'shaky' : null;
         // The agent replied after the comment and the pinned text no longer
-        // matches: almost always an applied change that was never resolved.
-        const changedAfterReply = !!pinState && agentRepliedAfter(c);
+        // matches, but the element is still found by position: almost always
+        // an applied change that was never resolved. A LOST pin is never
+        // explained away like this: it stays "pin lost".
+        const changedAfterReply = pinState === 'shaky' && agentRepliedAfter(c);
         // Live agent state for this card: being worked on now, queued next, or
         // just finished (the "done" entry stays visible for a few minutes).
         const working = agent.state === 'working' && agent.commentId === c.id;
@@ -3217,7 +3242,8 @@
 
   listEl.addEventListener('input', (e) => {
     if (e.target.classList.contains('kbf-reply-input')) {
-      replyDrafts[expandedId] = e.target.value;
+      const card = e.target.closest('.kbf-card'); // the draft belongs to ITS card, whichever is expanded
+      replyDrafts[(card && card.dataset.id) || expandedId] = e.target.value;
       e.target.style.height = 'auto';
       e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
     }
@@ -3351,6 +3377,11 @@
   // rebuilt from scratch (same path a new comment takes), and the agent gets a
   // trustworthy target instead of hitting a refuse-and-ask later.
   function startRepin(c) {
+    // Point mode's own pointerup handler would open a NEW composer on the very
+    // element the reviewer just re-pinned (it runs a tick later than our click
+    // listener). Leave Point mode for the duration and come back to it after.
+    const wasMode = mode;
+    if (wasMode) setMode(false);
     setPanel(false);
     toast('Click the element this comment is about (Esc cancels)', { duration: 5000 });
     const onPick = async (e) => {
@@ -3379,6 +3410,7 @@
       document.removeEventListener('keydown', onKey, true);
       document.documentElement.style.cursor = '';
       hideHighlight();
+      if (wasMode) setMode(true); // restores Point mode and its crosshair cursor
     }
     document.documentElement.style.cursor = 'crosshair';
     document.addEventListener('click', onPick, true);
@@ -3712,7 +3744,7 @@
     if (a && (/^(input|textarea|select)$/i.test(a.nodeName) || a.isContentEditable)) return true;
     return false;
   }
-  function doReload() { try { location.reload(); } catch (e) {} }
+  function doReload() { reloadPending = false; try { location.reload(); } catch (e) {} }
   function requestReload() {
     if (reloadPending) return;
     reloadPending = true;
@@ -3720,7 +3752,9 @@
       // don't interrupt: offer it, and also auto-apply once the work is dismissed
       toast('Page updated by your agent', { actionLabel: 'Reload now', duration: 8000, onAction: doReload });
       const iv = setInterval(() => { if (!reloadIsUnsafe()) { clearInterval(iv); doReload(); } }, 1000);
-      setTimeout(() => clearInterval(iv), 60000); // give up after a minute; the toast still stands
+      // Give up after a minute (the toast still stands), but let the NEXT reload
+      // request from the agent start over instead of being ignored for good.
+      setTimeout(() => { clearInterval(iv); reloadPending = false; }, 60000);
       return;
     }
     toast('Applying your agent’s edits — reloading…', { duration: 1200 });

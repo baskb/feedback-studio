@@ -11,6 +11,10 @@
 //
 // Transport: newline-delimited JSON-RPC 2.0 over stdin/stdout (MCP stdio).
 // All diagnostics go to stderr; stdout carries protocol messages only.
+//
+// Starting up writes nothing. A client may launch us in any folder, so we create
+// the .feedback folder only when there is already data there, when FEEDBACK_DIR
+// says where to look, or when a tool call actually writes a comment.
 
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -205,6 +209,12 @@ async function callTool(name, rawArgs) {
       list.push(comment);
       return { comments: list, value: comment };
     });
+    // This write created the data folder if it was not there yet, so now is the
+    // moment to put the processing guide beside it (startup deliberately skips
+    // that in an unknown folder). Best-effort: a failure must not fail the tool.
+    if (!existsSync(path.join(FEEDBACK_DIR, 'HOW-TO-PROCESS.md'))) {
+      await exportProcessInstructions(FEEDBACK_DIR, siteLabel()).catch(() => {});
+    }
     return { ok: true, id: c.id, comment: summarize(c) };
   }
   if (name === 'reply') {
@@ -316,5 +326,13 @@ process.stdin.on('data', (chunk) => {
 process.stdin.on('end', () => { queue.then(() => process.exit(0)); });
 // Drop a self-contained processing guide next to the data, so an agent driving us
 // without the Claude Code plugin (no skill) still has the workflow. Best-effort.
-exportProcessInstructions(FEEDBACK_DIR, siteLabel()).catch(() => {});
+//
+// Only where the data already lives, though. An MCP client starts us in whatever
+// folder it happens to be in, and writing here unasked would leave a stray
+// .feedback folder behind in an unrelated project. So: write it when comments.json
+// is already there, or when FEEDBACK_DIR was set on purpose. Otherwise the first
+// add_comment writes it, which is the call that creates the folder anyway.
+if (existsSync(path.join(FEEDBACK_DIR, 'comments.json')) || process.env.FEEDBACK_DIR) {
+  exportProcessInstructions(FEEDBACK_DIR, siteLabel()).catch(() => {});
+}
 process.stderr.write(`feedback-studio MCP server ${SERVER_VERSION} ready (data: ${FEEDBACK_DIR}${siteLabel() ? `, site: ${siteLabel()}` : ''})\n`);

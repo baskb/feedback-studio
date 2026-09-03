@@ -6,25 +6,37 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dir = mkdtempSync(path.join(tmpdir(), 'fbs-mcp-'));
 const bin = path.join(__dirname, '..', 'bin', 'feedback-studio-mcp.mjs');
-const srv = spawn(process.execPath, [bin], { env: { ...process.env, FEEDBACK_DIR: dir }, stdio: ['pipe', 'pipe', 'ignore'] });
 
-let buf = '';
-const pending = [];
-srv.stdout.on('data', (d) => {
-  buf += d.toString();
-  let nl;
-  while ((nl = buf.indexOf('\n')) !== -1) {
-    const line = buf.slice(0, nl).trim();
-    buf = buf.slice(nl + 1);
-    if (line) { const r = pending.shift(); if (r) r(JSON.parse(line)); }
-  }
-});
-function rpc(msg) { return new Promise((res) => { pending.push(res); srv.stdin.write(JSON.stringify(msg) + '\n'); }); }
+// One server instance with its own line reader, so a test can start a second
+// one (a different cwd, a different environment) without the two sharing state.
+function startServer({ env, cwd } = {}) {
+  const srv = spawn(process.execPath, [bin], { env: env || process.env, cwd, stdio: ['pipe', 'pipe', 'ignore'] });
+  let buf = '';
+  const pending = [];
+  srv.stdout.on('data', (d) => {
+    buf += d.toString();
+    let nl;
+    while ((nl = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (line) { const r = pending.shift(); if (r) r(JSON.parse(line)); }
+    }
+  });
+  const rpc = (msg) => new Promise((res) => { pending.push(res); srv.stdin.write(JSON.stringify(msg) + '\n'); });
+  return { srv, rpc };
+}
+
+const dir = mkdtempSync(path.join(tmpdir(), 'fbs-mcp-'));
+const { srv, rpc } = startServer({ env: { ...process.env, FEEDBACK_DIR: dir } });
 
 let failures = 0;
 const check = (n, c) => { console.log(`${c ? 'PASS' : 'FAIL'}  ${n}`); if (!c) failures++; };
+
+// The second instance of the "writes nothing where it was merely started" test,
+// declared here so the cleanup block can always reach it.
+let bare = null;
+let bareSrv = null;
 
 try {
   const init = await rpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } });
@@ -60,15 +72,36 @@ try {
   check('unknown method => -32601', notFound.error && notFound.error.code === -32601);
 
   // the MCP server drops the processing guide next to the data on startup, so an
-  // agent driving it without the plugin still has the workflow on hand
+  // agent driving it without the plugin still has the workflow on hand. FEEDBACK_DIR
+  // is set here, which is the client saying where the data belongs.
   check('writes HOW-TO-PROCESS.md on startup', existsSync(path.join(dir, 'HOW-TO-PROCESS.md')));
+
+  // Started in a folder nobody pointed it at: an MCP client launches us wherever
+  // it happens to be, so merely running must create nothing. The first write is
+  // what makes the folder, and the guide goes in with it.
+  bare = mkdtempSync(path.join(tmpdir(), 'fbs-mcp-bare-'));
+  const bareEnv = { ...process.env };
+  delete bareEnv.FEEDBACK_DIR;
+  const second = startServer({ env: bareEnv, cwd: bare });
+  bareSrv = second.srv;
+  await second.rpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } });
+  const bareTools = await second.rpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+  check('starting in an unknown folder writes nothing there',
+    bareTools.result.tools.length === 6 && !existsSync(path.join(bare, '.feedback')));
+  const bareAdd = await second.rpc({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'add_comment', arguments: { page: '/', text: 'first note' } } });
+  check('the first add_comment creates the folder with the data and the guide',
+    !bareAdd.result.isError
+    && existsSync(path.join(bare, '.feedback', 'comments.json'))
+    && existsSync(path.join(bare, '.feedback', 'HOW-TO-PROCESS.md')));
 } catch (e) {
   console.log('FAIL  exception:', e.message); failures++;
 } finally {
   srv.stdin.end();
   srv.kill();
+  if (bareSrv) { bareSrv.stdin.end(); bareSrv.kill(); }
   await new Promise((r) => setTimeout(r, 300));
   try { rmSync(dir, { recursive: true, force: true }); } catch (e) {}
+  if (bare) { try { rmSync(bare, { recursive: true, force: true }); } catch (e) {} }
   console.log(failures ? `\n${failures} MCP smoke check(s) failed` : '\nall MCP smoke checks passed');
   process.exit(failures ? 1 : 0);
 }

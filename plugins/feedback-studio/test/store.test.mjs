@@ -107,6 +107,12 @@ test('exportMarkdown escapes backticks so comment text cannot break the table', 
     await exportMarkdown(dir, [makeComment({ text: 'use `code` here', anchor: { selector: 'a`b' } })]);
     const md = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf-8');
     assert.ok(!md.includes('`a`b`')); // the raw backtick in the selector must be neutralised
+    // The legend has to explain every type an agent can meet, not just the web
+    // three: `question` is answered rather than applied, and the Markdown verbs
+    // are edited in the sourceFile.
+    assert.ok(md.includes('`question`'), 'legend must explain question');
+    assert.ok(md.includes('`rephrase`'), 'legend must explain the Markdown verbs');
+    assert.ok(md.includes('`sourceFile`'));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -367,6 +373,25 @@ test('sanitizeVariantHtml defeats encoding-evasion vectors (the confirmed bypass
   assert.ok(s3.includes('url(#grad)'));
   // nested-tag evasion still collapses to nothing executable
   assert.ok(!/script/i.test(sanitizeVariantHtml('<scr<script>ipt>alert(1)</scr</script>ipt>')));
+});
+
+test('sanitizeVariantHtml catches unquoted attribute values and SVG animation', () => {
+  // an unquoted href was never seen by the quoted branches
+  const a = sanitizeVariantHtml('<a href=javascript:alert(1)>x</a>');
+  assert.ok(!/javascript:/i.test(a), 'unquoted javascript: must be neutralised: ' + a);
+  assert.ok(a.includes('href="#"'));
+  // unquoted works for the other url attributes too, and leaves safe ones alone
+  assert.ok(!/javascript:/i.test(sanitizeVariantHtml('<button formaction=javascript:x>go</button>')));
+  assert.ok(sanitizeVariantHtml('<a href=/docs/x.html>ok</a>').includes('href=/docs/x.html'));
+  // <animate> can point an href at a script scheme after the sanitizer has run,
+  // so the element itself has to go — the attribute check cannot see this one
+  const svg = sanitizeVariantHtml('<svg><a><animate attributeName="href" values="javascript:alert(1)"/><text>c</text></a></svg>');
+  assert.ok(!/<animate/i.test(svg), 'animation elements must be removed: ' + svg);
+  assert.ok(!/javascript:/i.test(svg));
+  assert.ok(svg.includes('<text>c</text>')); // the harmless content survives
+  // the whole family, opening and closing tags alike
+  assert.ok(!/<\/?(?:set|animateMotion|animateTransform)/i.test(
+    sanitizeVariantHtml('<set attributeName="href" to="javascript:x"></set><animateMotion/><animateTransform/>')));
 });
 
 test('the overlay re-scrubs variants through a real parser before injection (no drift)', () => {

@@ -261,6 +261,15 @@ try {
   await fetch(ORIGIN + '/__feedback/api/comments/' + irOwner.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
   check('deleting the comment GCs its media', !existsSync(irFile));
 
+  // The agent's own polling is its heartbeat: with no explicit state posted yet,
+  // the calls this test has been making (node, not a browser) have already
+  // promoted the chip from offline to online. Checked here, before anything
+  // posts a state, because a later explicit goodbye starts a quiet minute in
+  // which no implicit request may revive it (see the ghost check further down).
+  await fetch(ORIGIN + '/__feedback/api/comments');
+  check('the agent\'s own poll marks it present (offline → online at startup)',
+    (await (await fetch(ORIGIN + '/__feedback/api/agent-status')).json()).agent.state === 'online');
+
   // Watch mode: agent presence round-trips and rejects junk states
   const as1 = await fetch(ORIGIN + '/__feedback/api/agent-status', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
@@ -313,13 +322,16 @@ try {
   await postJ('comments/' + claimTarget.id + '/reply', { author: 'agent', text: 'Done: bumped the size.' });
   const answered = (await getAgent()).agent;
   check('"Queued" reply keeps working; a real answer releases', stillWorking.state === 'working' && answered.state === 'online');
-  // implicit heartbeat: the agent's own poll promotes offline → online; a browser's does not
+  // After an explicit goodbye nothing implicit brings the agent back for a
+  // minute: not a reviewer's browser (which never counted), and no longer the
+  // agent-looking poll either. Only a fresh {state:"online"} does, which is what
+  // an agent that really is back sends. This is what keeps a ghost off the page.
   await postJ('agent-status', { state: 'offline' });
   await fetch(ORIGIN + '/__feedback/api/comments', { headers: { 'Sec-Fetch-Mode': 'cors', 'User-Agent': 'Mozilla/5.0 (test browser)' } });
   const afterBrowser = (await getAgent()).agent.state;
   await fetch(ORIGIN + '/__feedback/api/comments');
   const afterAgent = (await getAgent()).agent.state;
-  check('agent poll counts as heartbeat (browser fetch does not)', afterBrowser === 'offline' && afterAgent === 'online');
+  check('after an explicit goodbye no implicit request revives presence', afterBrowser === 'offline' && afterAgent === 'offline');
   // presence.json (MCP-only agents) is merged by the data-dir watch
   writeFileSync(path.join(root, '.feedback', 'presence.json'), JSON.stringify({ state: 'working', name: 'Codex', commentId: claimTarget.id, note: 'via file', activity: { kind: 'note', text: 'via file' } }));
   let viaFile = null;
@@ -345,6 +357,24 @@ try {
   const h3 = await runHook('edit', { cwd: noSess, tool_input: { file_path: 'x.js' } }, noSess);
   check('hook without a session exits 0 silently', h3.code === 0 && h3.out === '');
   rmSync(noSess, { recursive: true, force: true });
+  await postJ('agent-status', { state: 'offline' });
+
+  // A hook can still fire once the session is over: the edit hook runs on the
+  // way out, and /clear ends the turn. That used to flip the chip back to
+  // "online" with nobody there. The line is still logged, but a hook is not a
+  // sign of life — only an explicit online POST is, and that wins at once.
+  await postJ('agent-status', { state: 'online', name: 'Claude' });
+  const ghostWasOnline = (await getAgent()).agent.state;
+  await postJ('agent-status', { state: 'offline' });
+  const ghostWentOffline = (await getAgent()).agent.state;
+  const ghostPost = await postJ('activity', { kind: 'edit', file: 'x.js', text: 'edited x.js', source: 'hook' });
+  const ghostAfter = await getAgent();
+  check('a hook firing after the agent left cannot put it back online',
+    ghostWasOnline === 'online' && ghostWentOffline === 'offline' && ghostPost.status === 200
+    && ghostAfter.agent.state === 'offline'
+    && ghostAfter.activity.some((e) => e.text === 'edited x.js')); // the line is still logged
+  await postJ('agent-status', { state: 'online' });
+  check('an explicit online POST still wins straight away', (await getAgent()).agent.state === 'online');
   await postJ('agent-status', { state: 'offline' });
 
   // reload broadcast endpoint (agent refreshes open overlays after a batch)
@@ -483,6 +513,37 @@ try {
       method: 'POST', headers: J, body: JSON.stringify({ state: 'online' }),
     });
     check('share: comment role cannot impersonate the agent', asDeny.status === 403);
+    // The activity log goes to everyone on the link, but the edited paths are a
+    // map of a private source tree — only the host side sees those. A shared
+    // reviewer gets the same line without the `file` field.
+    const actPost = await fetch(SH + `/__feedback/api/activity?key=${keys.admin}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ kind: 'edit', file: 'src/secret/Header.jsx', text: 'edited the header' }),
+    });
+    const findEntry = (list) => (list || []).find((e) => e.text === 'edited the header');
+    const viewSeen = findEntry((await (await fetch(SH + `/__feedback/api/agent-status?key=${keys.view}`)).json()).activity);
+    const adminSeen = findEntry((await (await fetch(SH + `/__feedback/api/agent-status?key=${keys.admin}`)).json()).activity);
+    const viewLog = findEntry((await (await fetch(SH + `/__feedback/api/activity?key=${keys.view}`)).json()).activity);
+    check('share: activity keeps the edited file path from anyone below admin',
+      actPost.status === 200 && viewSeen && !('file' in viewSeen) && viewLog && !('file' in viewLog)
+      && adminSeen && adminSeen.file === 'src/secret/Header.jsx');
+    // The same on the live stream, not only on a fresh read: the log a view
+    // client is handed when it joins, and every line pushed to it afterwards.
+    const vSse = await fetch(SH + `/__feedback/events?key=${keys.view}`);
+    const vReader = vSse.body.getReader();
+    let vText = '';
+    for (let i = 0; i < 4 && !vText.includes('event: activity-log'); i++) {
+      const { value, done } = await vReader.read(); if (done) break; vText += Buffer.from(value).toString();
+    }
+    const joinedClean = vText.includes('edited the header') && !vText.includes('src/secret/');
+    await fetch(SH + `/__feedback/api/activity?key=${keys.admin}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ kind: 'edit', file: 'src/secret/Other.jsx', text: 'edited another file' }),
+    });
+    for (let i = 0; i < 4 && !vText.includes('edited another file'); i++) {
+      const { value, done } = await vReader.read(); if (done) break; vText += Buffer.from(value).toString();
+    }
+    check('share: the live activity stream hides the file path too',
+      joinedClean && vText.includes('edited another file') && !vText.includes('src/secret/'));
+    vReader.cancel().catch(() => {});
     // Author spoofing (ultrareview bug_001): a comment-role reviewer claiming
     // author:"agent" in the body must be downgraded to "user" (the agent voice
     // renders with visual authority and exports "by agent"); full/admin — the
@@ -587,7 +648,11 @@ try {
   const mdCwd = path.join(root, 'mdcwd');
   mkdirSync(path.join(mdCwd, 'docs'), { recursive: true });
   writeFileSync(path.join(mdCwd, 'docs', 'a.md'), '# Alpha\n\nFirst doc paragraph.\n\nSee [the site](https://example.com/x), [chapter](#alpha), [doc B](b.md).\n');
-  writeFileSync(path.join(mdCwd, 'docs', 'b.md'), '# Bravo\n\nSecond doc paragraph.\n');
+  // b.md also carries two active-content payloads the renderer must neutralise:
+  // an UNQUOTED javascript: href (the quoted checks never saw it), and an
+  // <animate> that would point a link at that scheme after the sanitizer ran.
+  writeFileSync(path.join(mdCwd, 'docs', 'b.md'),
+    '# Bravo\n\nSecond doc paragraph.\n\n<a href=javascript:alert(1)>x</a>\n\n<svg><a><animate attributeName="href" values="javascript:alert(1)"/><text>c</text></a></svg>\n');
   const MDA_PORT = PORT + 7;
   const MDB_PORT = PORT + 8;
   const mdaSrv = spawn(process.execPath, [bin, '--md', 'docs/a.md', '--port', String(MDA_PORT), '--no-open'], { stdio: 'ignore', cwd: mdCwd });
@@ -623,6 +688,15 @@ try {
       const bHtml = await (await fetch(MDB + '/')).text();
       check('--md: each page carries its own sourceFile as __kbfSource',
         aHtml.includes('window.__kbfSource="docs/a.md"') && bHtml.includes('window.__kbfSource="docs/b.md"'));
+      // The unquoted href is rewritten to "#" and the animation element is gone,
+      // while the harmless text beside it survives. A rendered .md shares an
+      // origin with the comment API, so active content here could post comments
+      // an agent later implements.
+      check('--md: an unquoted javascript: href and an <animate> never reach the page',
+        /<a href="#">x<\/a>/.test(bHtml)
+        && !/href\s*=\s*["']?javascript/i.test(bHtml)
+        && !/<animate/i.test(bHtml)
+        && bHtml.includes('<text>c</text>'));
       // Collapsible chapters ship with the doc shell: the fold script (keyed
       // per file via sessionStorage), the reveal hook the overlay talks to, and
       // the CSS that makes [hidden] win over the table display override.

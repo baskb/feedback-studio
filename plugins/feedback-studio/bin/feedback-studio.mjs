@@ -682,7 +682,7 @@ async function handleApi(req, res, url) {
     // Deliberately SINGLE-agent (last write wins): one watching agent per
     // session is the v1 model; a second watcher's heartbeat replaces the chip.
     if (resource === 'agent-status') {
-      if (req.method === 'GET') return sendJSON(res, 200, { agent: agentStatus, activity: activityLog });
+      if (req.method === 'GET') return sendJSON(res, 200, { agent: agentStatus, activity: canManage ? activityLog : publicActivity(activityLog) });
       if (req.method === 'POST') {
         if (!canManage) return deny(); // presence is the host agent's voice, not a reviewer's
         const body = await readJson(req);
@@ -694,11 +694,14 @@ async function handleApi(req, res, url) {
     // posted by the plugin hooks after every file edit and by the agent at
     // natural steps. Untagged entries attach to the comment being worked on.
     if (resource === 'activity') {
-      if (req.method === 'GET') return sendJSON(res, 200, { activity: activityLog });
+      if (req.method === 'GET') return sendJSON(res, 200, { activity: canManage ? activityLog : publicActivity(activityLog) });
       if (req.method === 'POST') {
         if (!canManage) return deny();
         const body = await readJson(req);
-        touchPresence();
+        // A hook posts because a tool ran, not because the agent is here: it may
+        // fire moments after the agent left (the edit hook still runs on the way
+        // out). Its line is logged, but it never counts as a sign of life.
+        if (body.source !== 'hook') touchPresence();
         // A hook's "turn ended" means the agent is between tasks, not gone.
         if (body.kind === 'idle' && agentStatus.state === 'working') releasePresence(agentStatus.commentId, 'turn ended', 'idle');
         const entry = body.kind === 'idle' ? null : logActivity(body);
@@ -873,9 +876,13 @@ function handleSSE(req, res) {
   // Bound the client set: drop the oldest stream if we somehow accumulate many.
   if (sseClients.size >= MAX_SSE) dropSse(sseClients.values().next().value);
   sseClients.add(res);
+  // Remember what this stream may see: below admin, activity lines lose the
+  // edited file path, here and in every later broadcast (see publicActivity).
+  const sseRole = req._kbfRole || 'full';
+  res._kbfCanManage = sseRole === 'full' || sseRole === 'admin';
   // Late joiners see the current agent presence straight away.
   writeSse(res, 'event: agent-status\ndata: ' + JSON.stringify({ agent: agentStatus }) + '\n\n');
-  writeSse(res, 'event: activity-log\ndata: ' + JSON.stringify({ activity: activityLog }) + '\n\n');
+  writeSse(res, 'event: activity-log\ndata: ' + JSON.stringify({ activity: res._kbfCanManage ? activityLog : publicActivity(activityLog) }) + '\n\n');
   const ping = setInterval(() => writeSse(res, ': ping\n\n'), 25000);
   let cleaned = false;
   const cleanup = () => {
@@ -921,7 +928,10 @@ async function broadcastFromDisk() {
 const PRESENCE_STALE_MS = 10 * 60 * 1000; // no request at all for 10 min → offline
 const HEARTBEAT_BROADCAST_MS = 5000;      // pure heartbeats rebroadcast at most this often
 const ACTIVITY_MAX = 100;
-let agentStatus = { state: 'offline', name: '', commentId: '', since: 0, note: '', lastSeen: 0, queue: [], ts: 0 };
+// How long an explicit "I am offline" is respected. Inside this window a stray
+// agent-looking request cannot put the chip back on — see touchPresence.
+const OFFLINE_QUIET_MS = 60 * 1000;
+let agentStatus = { state: 'offline', name: '', commentId: '', since: 0, note: '', lastSeen: 0, queue: [], ts: 0, offlineAt: 0 };
 const activityLog = [];
 let _presenceTimer = null;
 let _lastHeartbeatBroadcast = 0;
@@ -933,7 +943,9 @@ function broadcastAgentStatus() {
   if (agentStatus.state !== 'offline') {
     _presenceTimer = setTimeout(() => {
       if (Date.now() - agentStatus.lastSeen < PRESENCE_STALE_MS) return;
-      setPresence({ state: 'offline' });
+      // `auto`: the agent went quiet, it did not say goodbye. Its next request
+      // may bring it straight back (no quiet window, see setPresence).
+      setPresence({ state: 'offline', auto: true });
     }, PRESENCE_STALE_MS + 500);
     _presenceTimer.unref();
   }
@@ -952,7 +964,12 @@ function touchPresence() {
   const now = Date.now();
   agentStatus.lastSeen = now;
   if (agentStatus.state === 'offline') {
-    agentStatus = { ...agentStatus, state: 'online', ts: now };
+    // The agent said it was leaving moments ago. A late request that merely
+    // looks like it (an edit hook firing after /clear) must not raise it from
+    // offline — the overlay would show someone at work who is not there.
+    // Only an explicit {state:"online"|"working"} POST wins inside this window.
+    if (now - (agentStatus.offlineAt || 0) < OFFLINE_QUIET_MS) return;
+    agentStatus = { ...agentStatus, state: 'online', offlineAt: 0, ts: now };
     broadcastAgentStatus();
   } else if (now - _lastHeartbeatBroadcast > HEARTBEAT_BROADCAST_MS) {
     broadcastAgentStatus();
@@ -974,6 +991,12 @@ function setPresence(body) {
     note: body.note == null ? (state === 'working' && commentId === agentStatus.commentId ? agentStatus.note : '') : String(body.note).slice(0, 120),
     lastSeen: state === 'offline' ? agentStatus.lastSeen : now,
     queue: Array.isArray(body.queue) ? body.queue.map(cleanId).filter(Boolean).slice(0, 20) : (state === 'offline' ? [] : agentStatus.queue),
+    // When the agent SAID it was leaving. touchPresence reads it and stays
+    // offline for a minute afterwards, so a hook that fires after the agent
+    // left cannot bring the chip back. Any other state clears it, and so does
+    // the silence timer's own offline (`auto`): an agent that merely went quiet
+    // shows up again with its very next request.
+    offlineAt: state === 'offline' && !body.auto ? now : 0,
     ts: now,
   };
   const claimed = next.state === 'working' && next.commentId && (agentStatus.state !== 'working' || agentStatus.commentId !== next.commentId);
@@ -989,8 +1012,15 @@ function releasePresence(commentId, text, kind = 'done') {
   if (agentStatus.state !== 'working' || agentStatus.commentId !== commentId) return;
   const took = agentStatus.since ? Date.now() - agentStatus.since : 0;
   logActivity({ kind, commentId, text: text || 'done', took });
-  agentStatus = { ...agentStatus, state: 'online', commentId: '', since: 0, note: '', lastSeen: Date.now(), queue: agentStatus.queue.filter((q) => q !== commentId), ts: Date.now() };
+  agentStatus = { ...agentStatus, state: 'online', offlineAt: 0, commentId: '', since: 0, note: '', lastSeen: Date.now(), queue: agentStatus.queue.filter((q) => q !== commentId), ts: Date.now() };
   broadcastAgentStatus();
+}
+// The activity log for anyone who is not the host: same lines, without the
+// `file` field. Under --share a view or comment link may go to someone outside
+// the team, and the edited paths are a map of the private source tree. The
+// wording of each line ("edited the header") is what the reviewer needs.
+function publicActivity(entries) {
+  return entries.map(({ file, ...rest }) => rest);
 }
 let _activitySeq = 0;
 function logActivity(entry) {
@@ -1007,7 +1037,9 @@ function logActivity(entry) {
   activityLog.push(e);
   if (activityLog.length > ACTIVITY_MAX) activityLog.splice(0, activityLog.length - ACTIVITY_MAX);
   const payload = 'event: activity\ndata: ' + JSON.stringify({ entry: e }) + '\n\n';
-  for (const res of [...sseClients]) writeSse(res, payload);
+  // Shared reviewers get the same line without the edited path (see publicActivity).
+  const publicPayload = 'event: activity\ndata: ' + JSON.stringify({ entry: publicActivity([e])[0] }) + '\n\n';
+  for (const res of [...sseClients]) writeSse(res, res._kbfCanManage === false ? publicPayload : payload);
   return e;
 }
 // Agents without HTTP (an MCP-only client) write .feedback/presence.json;
@@ -1337,6 +1369,9 @@ function sanitizeRenderedHtml(html) {
     .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
     // drop tags that can execute, frame, or redirect the page
     .replace(/<\/?(iframe|object|embed|base|meta|form|link)\b[^>]*>/gi, '')
+    // SVG animation elements can rewrite another element's href while the page
+    // is open, which would put back a link we just neutralised. Drop them.
+    .replace(/<\/?(animate|animateMotion|animateTransform|set)\b[^>]*>/gi, '')
     // strip inline event handlers:  onclick="…"  onerror='…'  onload=foo
     // ('/' counts as attribute whitespace in HTML5, so <img/onerror=…> too)
     .replace(/[\s/]on[a-z]+\s*=\s*"[^"]*"/gi, '')
@@ -1345,8 +1380,14 @@ function sanitizeRenderedHtml(html) {
     // neutralise script-ish URLs in href/src — checked ENTITY-DECODED (via the
     // shared schemeIsEvil), so an encoded/split scheme like `&#106;avascript:`
     // or `java&Tab;script:` can't slip past the way a literal-substring match would.
-    .replace(/\b(href|src)\s*=\s*"([^"]*)"/gi, (m, attr, val) => (schemeIsEvil(val) ? attr + '="#"' : m))
-    .replace(/\b(href|src)\s*=\s*'([^']*)'/gi, (m, attr, val) => (schemeIsEvil(val) ? attr + "='#'" : m));
+    // The SVG link attributes and the form ones count too: `xlink:href` on an
+    // <svg><a> and `formaction`/`action` on a button or form run the same scheme.
+    .replace(/\b(href|src|xlink:href|formaction|action)\s*=\s*"([^"]*)"/gi, (m, attr, val) => (schemeIsEvil(val) ? attr + '="#"' : m))
+    .replace(/\b(href|src|xlink:href|formaction|action)\s*=\s*'([^']*)'/gi, (m, attr, val) => (schemeIsEvil(val) ? attr + "='#'" : m))
+    // …and the same attributes written WITHOUT quotes (href=javascript:alert(1)),
+    // which the two branches above never see. Runs after them, so a value they
+    // already replaced with "#" is quoted by then and is left alone.
+    .replace(/\b(href|src|xlink:href|formaction|action)\s*=\s*([^\s"'>]+)/gi, (m, attr, val) => (schemeIsEvil(val) ? attr + '="#"' : m));
 }
 
 // Links in a reviewed document open in a NEW tab: following a reference must

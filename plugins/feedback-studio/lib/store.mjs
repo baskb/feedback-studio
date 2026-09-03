@@ -242,6 +242,9 @@ export function sanitizeVariantHtml(html) {
     .replace(/<(script|style|title)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
     // drop anything that can execute, frame, redirect, or submit
     .replace(/<\/?(script|style|iframe|object|embed|base|meta|form|link|frame|frameset)\b[^>]*>/gi, '')
+    // SVG animation elements can rewrite another element's href while the page
+    // is open, which would put back a link we just neutralised. Drop them.
+    .replace(/<\/?(animate|animateMotion|animateTransform|set)\b[^>]*>/gi, '')
     // strip inline event handlers ('/' counts as attribute whitespace in HTML5)
     .replace(/[\s/]on[a-z]+\s*=\s*"[^"]*"/gi, '')
     .replace(/[\s/]on[a-z]+\s*=\s*'[^']*'/gi, '')
@@ -251,6 +254,11 @@ export function sanitizeVariantHtml(html) {
       schemeIsEvil(val) || attr.toLowerCase() === 'srcdoc' ? attr + '="#"' : m)
     .replace(/\b(href|src|xlink:href|formaction|action|srcdoc)\s*=\s*'([^']*)'/gi, (m, attr, val) =>
       schemeIsEvil(val) || attr.toLowerCase() === 'srcdoc' ? attr + "='#'" : m)
+    // …and the same attributes written WITHOUT quotes (href=javascript:alert(1)),
+    // which the two branches above never see. Runs after them, so a value they
+    // already replaced with "#" is quoted by then and is left alone.
+    .replace(/\b(href|src|xlink:href|formaction|action|srcdoc)\s*=\s*([^\s"'>]+)/gi, (m, attr, val) =>
+      schemeIsEvil(val) || attr.toLowerCase() === 'srcdoc' ? attr + '="#"' : m)
     // inline styles are kept (variants need them) minus network beacons
     .replace(/\bstyle\s*=\s*("([^"]*)"|'([^']*)')/gi, (m, q, dq, sq) => {
       const cleaned = stripCssBeacons(decodeEntities(dq != null ? dq : sq));
@@ -464,7 +472,7 @@ export async function exportMarkdown(dir, comments) {
   let md = `# Feedback export\n\n`;
   md += `_Generated from \`${d}/comments.json\` (the source of truth). Read-only, human-glance mirror: do not edit or act off this file, act off \`comments.json\` (or the MCP tools)._\n\n`;
   md += `_Generated ${new Date().toISOString()} — ${comments.length} comment(s): ${open} open, ${comments.length - open} resolved._\n\n`;
-  md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin.\n>\n> \`tweak\` lines are exact CSS deltas the user dialled in live on the element (Tweak Mode). Apply them near-verbatim, translated to the project's styling idiom (stylesheet rule, utility class, or design token) — the target values are not suggestions, the *representation* is yours to choose. \`text edit\` lines are the user retyping the element's text in place: apply the exact after-wording at the anchored location (whitespace-flexible match on the before-text; in Markdown edit the \`sourceFile\`). If the before-text no longer matches, do NOT guess — leave it open for a re-pin.\n>\n> Comments are a two-way conversation. Some are authored \`by user\`, some \`by agent\` (a proposal/annotation you or another skill left on a component). Each can have a reply thread (lines marked \`↳\`). Statuses: \`open\` (needs work/decision), \`approved\` (the user said go ahead — implement it), \`rejected\` (do not), \`resolved\` (done). Implement approved items, reply to ask questions, and set the status as you go.\n\n`;
+  md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. \`question\` = the reviewer is ASKING, not requesting a change: answer in a thread reply with a \`file:line\` pointer to where the answer lives, do not edit anything, then resolve. A Markdown document uses its own verbs: \`comment\` = address the note in the text; \`rephrase\` = reword the same point; \`expand\` = say more about it; \`delete\` = remove the passage. For all four, edit the comment's \`sourceFile\` and never the rendered HTML, which is thrown away on the next run. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin.\n>\n> \`tweak\` lines are exact CSS deltas the user dialled in live on the element (Tweak Mode). Apply them near-verbatim, translated to the project's styling idiom (stylesheet rule, utility class, or design token) — the target values are not suggestions, the *representation* is yours to choose. \`text edit\` lines are the user retyping the element's text in place: apply the exact after-wording at the anchored location (whitespace-flexible match on the before-text; in Markdown edit the \`sourceFile\`). If the before-text no longer matches, do NOT guess — leave it open for a re-pin.\n>\n> Comments are a two-way conversation. Some are authored \`by user\`, some \`by agent\` (a proposal/annotation you or another skill left on a component). Each can have a reply thread (lines marked \`↳\`). Statuses: \`open\` (needs work/decision), \`approved\` (the user said go ahead — implement it), \`rejected\` (do not), \`resolved\` (done). Implement approved items, reply to ask questions, and set the status as you go.\n\n`;
   for (const page of [...byPage.keys()].sort()) {
     const items = byPage.get(page).slice().sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
     md += `## ${code(page)}${items[0]?.pageTitle ? ` — ${collapse(items[0].pageTitle)}` : ''}\n\n`;

@@ -33,7 +33,11 @@ question.
    `resolved` comments — they are the verification targets. Note each one's `page`,
    `anchor` (snippet = the OLD state), `text`/`thread` (the asked-for NEW state), and
    `shot` if present (`.feedback/shots/<id>.png` — the pin-time BEFORE image; view it
-   to ground what the element looked like when the reviewer pinned it).
+   to ground what the element looked like when the reviewer pinned it) and `shotAfter`
+   if present (`.feedback/shots/<id>-after.png` — the same element photographed after the
+   reviewer's page reloaded with the change; view both side by side, the pair is the
+   fastest visual verdict there is, and a `shotAfter` that looks identical to `shot` for
+   a visual ask is a reason to look closer).
    **Skip what a previous run already settled:** a comment whose thread holds a reply
    whose text starts with `Verified:` was checked before and is left alone. Say how many
    you skipped. Run with `--again` (or when the user asks to check it all again) to

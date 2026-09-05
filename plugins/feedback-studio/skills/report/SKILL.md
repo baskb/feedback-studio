@@ -18,9 +18,18 @@ someone who wasn't in the session (a PR reviewer, a teammate, the user next week
    temp dir). It is the sole source of truth; never act off `FEEDBACK.md`.
 2. If the working tree is a git repo, check `git status` / `git diff --stat` (and recent
    commits if the round was already committed) to tie comments to actual file changes.
+   In Markdown mode, `.feedback/history/<file>/index.json` lists every version of each
+   reviewed file with what changed (`added` / `removed` line counts, the comment the agent
+   had claimed, the comments resolved since the previous version); use it to state what
+   changed per batch even when git has nothing.
 3. Use each comment's `thread` — replies often record what was done or why it wasn't.
 
 ## Write `.feedback/REPORT.md`
+
+Comments carry a `round` number. Write one digest per round: the current (highest) round
+goes into `REPORT.md`; when earlier rounds exist, keep their digests as `REPORT-round-<n>.md`
+(write one if it is missing) and open the current digest with a line linking to the previous
+round's file. A single round needs none of that.
 
 Structure (keep prose tight; this is a digest, not a transcript):
 
@@ -52,7 +61,8 @@ Rules:
 - Include `file:line` references for every edit you can still locate.
 - A comment with a `shot` has a pin-time screenshot at `.feedback/<shot path>`; reference
   it as a relative Markdown image (`![before](shots/<id>.png)`) under its bullet when the
-  change is visual — the digest then shows reviewers what it looked like before.
+  change is visual — the digest then shows reviewers what it looked like before. When it also
+  has `shotAfter`, put the two side by side (`![before](shots/<id>.png) ![after](shots/<id>-after.png)`).
 - Omit empty sections. If nothing was processed yet, say the round is uncommitted and
   list the open comments instead.
 - End the file with the attribution footer (one line, exactly):

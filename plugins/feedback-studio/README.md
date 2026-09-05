@@ -19,11 +19,18 @@ plugins/feedback-studio/
 ├── bin/feedback-studio.mjs       # local server: static, proxy, markdown, demo, optional HTTPS
 ├── bin/feedback-studio-mcp.mjs   # optional MCP stdio server for other agents
 ├── demo/                         # sample site + seed comments for --demo
+├── hooks/                        # Claude Code hooks that report file edits to a live session
 ├── lib/
-│   ├── store.mjs                 # shared data layer: schema, atomic + locked I/O
+│   ├── store.mjs                 # shared data layer: atomic + locked I/O, FEEDBACK.md export
+│   ├── schema.mjs                # the comment schema constants (shared with the overlay)
+│   ├── anchor.mjs                # how a comment finds its element again (DOM-free, tested)
+│   ├── nav.mjs                   # page key + what a single-page-app route change resets
+│   ├── sort.mjs                  # List sort orders and the search box (DOM-free, tested)
+│   ├── history.mjs               # versions of a reviewed Markdown file + line diff
+│   ├── narration.mjs             # spoken comments: which element each sentence meant
 │   └── markers.mjs               # Markdown @FB marker stamping (unique-match, refuse-to-guess)
 └── public/
-    ├── overlay.js                # in-page commenting UI, mounted in a shadow root
+    ├── overlay/                  # in-page commenting UI as ES modules, mounted in a shadow root
     └── overlay.css               # Claude-flavoured styling
 ```
 

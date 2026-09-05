@@ -96,12 +96,18 @@ belongs to the site whose `.feedback/` it lives in, and its image paths resolve 
 1. Read `.feedback/comments.json` (the SOLE source of truth; `FEEDBACK.md` is a generated,
    possibly-stale mirror, never act off it). Each comment has `page`, `type`, `anchor`
    (selector / attr / xpath / quoted `snippet` / `tag`), `text`, `autonomy`, `status`.
-2. **Put the batch on your task list** (TaskCreate / TodoWrite, whichever you have; skip if
+2. **Markdown mode: mark the batch boundary.** If the server is running and the comments carry a
+   `sourceFile`, take a snapshot of each file before you edit it:
+   `POST $S/history/snapshot` with `{"file":"<sourceFile>","reason":"batch"}` (nothing is written
+   when the file is unchanged). The server also snapshots every change it sees on disk, and the
+   overlay's **History** button shows the reviewer each version, a line diff between any two, and
+   a way to put an older version back. Snapshot again after the batch so the pair brackets it.
+3. **Put the batch on your task list** (TaskCreate / TodoWrite, whichever you have; skip if
    there's only one comment): one task per open comment, subject `<page>: <short summary>`.
    Mark it in_progress when you start that comment and completed the moment you set the
    comment resolved, so the user watches the list tick down as the pins turn green. A comment
    that needs a re-pin keeps its task open.
-3. For each `open` comment, grouped by page:
+4. For each `open` comment, grouped by page:
    - **Locate it with confidence** using the quoted snippet first, cross-checked with the
      selector. **If you cannot identify the exact element (or, in Markdown, the exact source
      line), do NOT edit a guess.** Leave it open and say it needs a re-pin. A confident wrong
@@ -155,7 +161,7 @@ belongs to the site whose `.feedback/` it lives in, and its image paths resolve 
      `object-fit` (or `background-size`), `position` → `object-position` (or
      `background-position`), `w`/`h` if the box should resize. Same confidence rule: if you
      can't confidently locate the element, leave it open and ask for a re-pin.
-4. Present changes as **diffs grouped by page**. Honour `autonomy`: `review` (default) = show
+5. Present changes as **diffs grouped by page**. Honour `autonomy`: `review` (default) = show
    first; `auto` = apply directly. If the server is running, **claim each item before you
    touch it** — `POST /__feedback/api/agent-status` with `{"state":"working","commentId":"<id>"}`
    (one call; see *Watch mode* for the details) — so the person watching the page sees which
@@ -171,7 +177,7 @@ belongs to the site whose `.feedback/` it lives in, and its image paths resolve 
    the overlay's **"Walk me through the changes"** button plays a guided tour that scrolls to
    each element, highlights it, and **reads your reply aloud**. Written for the ear — keep it a
    human, spoken-sounding summary, not a changelog line.
-5. **Auto-refresh the open overlays** once the batch is applied, so the user sees the *updated*
+6. **Auto-refresh the open overlays** once the batch is applied, so the user sees the *updated*
    page under its now-green pins (a stale page under green pins looks like the edits didn't land).
    The pins flip green live over SSE, but page content does not reload itself — so after the batch:
    - For a static `--dir`, rebuild first if the project has a build step.
@@ -181,7 +187,11 @@ belongs to the site whose `.feedback/` it lives in, and its image paths resolve 
      yanking the page. Panel/mode state survives the reload. `--proxy` with live reload already
      refreshes on save; the call is still harmless (belt-and-braces).
    - No server running (you edited `comments.json` on disk)? Then just tell the user to reload.
-6. Summarise by page, and list anything left open (low-confidence anchors, decisions needed).
+7. Summarise by page, and list anything left open (low-confidence anchors, decisions needed).
+   Comments carry a `round` number (the reviewer can start a new round from the List, or you can
+   with `POST $S/round`); when several rounds exist, process the current one first and say which
+   round each change belongs to. A resolved web comment with a pin-time `shot` gets an "after"
+   picture (`shotAfter`) once the reviewer's page reloads, so the card shows before and after.
 
 ## Watch mode (live session)
 
@@ -222,6 +232,12 @@ present while the user reviews — answering questions on pins within seconds an
      implement that variant now, then resolve.
 4. On exit: `POST $S/agent-status` with `{"state":"offline"}` and summarise the session
    (what was applied, answered, still open).
+
+In Markdown mode every edit you make to a `sourceFile` while watching is snapshotted by the
+server (the overlay tells the reviewer "the document changed on disk" and offers the diff), and
+the version is tied to the comment you had claimed, so claim before you edit. The reviewer can
+put an older version back from the History pane; treat a `source` change you did not make as
+their decision, re-read the file, and continue from there.
 
 ## Author your own comments (optional)
 

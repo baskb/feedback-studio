@@ -192,6 +192,28 @@ reverse.
   no heartbeat discipline — the plugin's hooks report file edits by themselves.
 - **Screenshots as ground truth** — each pin captures what you actually saw
   (auto-attached, gitignored, GC'd with the comment; `--no-shots` to disable).
+  Once a comment is resolved and the page has reloaded with the change, the same
+  element is photographed again: the card shows **before and after** with a slider.
+- **A List you can work in** — search across text, quoted anchor, author, page and
+  replies; sort by latest activity, date created, position on the page, what needs
+  attention first (lost pins, proposals to approve, unanswered questions), status,
+  type or most discussed, in either direction; the pins follow the filter and the
+  search. With a filter or search on, one bar resolves, deletes or copies (as
+  Markdown) everything shown.
+- **Keyboard** — `j` / `k` walk the pins, `Enter` opens, `r` replies, `x` resolves,
+  `/` searches, `l` shows the List, `Ctrl+Z` undoes, `?` lists them all.
+- **Undo** — a status change, a retyped comment, a moved pin, a delete, a bulk
+  action: the last ten can be undone from the toast or with `Ctrl+Z`. A deleted
+  comment comes back with its id, thread and screenshots.
+- **Drag a pin** onto another element to move the comment there (the same careful
+  re-pin as the button, with undo).
+- **Review rounds** — start a new round from the List; comments carry their round,
+  a chip narrows to the current one, and `FEEDBACK.md` groups by round.
+- **Share-link commenters own their comments** — a reviewer on a `comment` link can
+  edit or delete what they wrote (while it is still open) from their own browser;
+  nobody else's, and never yours.
+- **English or Dutch** — the overlay follows the browser's language and a switch in
+  the List remembers your choice.
 - **Share with roles** — `--share` mints view / comment / admin capability
   links; your own machine stays frictionless.
 - **Private by default** — binds to `127.0.0.1`; `--tunnel` (real-cert HTTPS)
@@ -229,6 +251,7 @@ Or `npm i -g feedback-studio`, or run `node plugins/feedback-studio/bin/feedback
 | `--spa` | Serve `index.html` for an unknown path that has no file extension. |
 | `--md <file\|dir>` | Render a Markdown file, or a folder of them, as pages you can review. |
 | `--md-html` | With `--md`: render HTML written in the file (only for a document you trust). |
+| `--stamp` | Write the open comments into their Markdown files as `@FB` markers, then exit. |
 | `--label <name>` | Name this session, shown in the overlay so you can tell open tabs apart. |
 | `--data-dir <path>` | Where to store this session's `.feedback` data (default `<cwd>/.feedback`). |
 | `--share [strict]` | Mint view / comment / admin links; "strict" asks this computer for a key too. |
@@ -243,8 +266,9 @@ Or `npm i -g feedback-studio`, or run `node plugins/feedback-studio/bin/feedback
 | `--version` | Print the version and exit. |
 
 The overlay starts in **light theme** (panel toggle for dark, remembered per
-browser). Drag the **Point button** to any corner; on desktop, drag a composer
-by its header. Use **Chrome or Edge** for voice.
+browser) and in **English or Dutch** (from the browser; the `EN`/`NL` button in
+the List remembers a choice). Drag the **Point button** to any corner; on
+desktop, drag a composer by its header. Use **Chrome or Edge** for voice.
 
 ### Several sites in one repo
 
@@ -307,15 +331,32 @@ file is shown as text, because a document you were sent is not code you reviewed
 
 | Type | Marker written onto the line |
 |---|---|
-| comment | `<!-- @FB: your note -->` |
-| rephrase | `<!-- @FB: rephrase as "your note" -->` |
-| expand | `<!-- @FB-EXPAND: your note -->` |
-| delete | `<!-- @FB-DELETE: your note -->` |
-| question | `<!-- @FB-Q: your note -->` |
+| comment | `<!-- @FB#c_1a2b: your note -->` |
+| rephrase | `<!-- @FB#c_1a2b: rephrase as "your note" -->` |
+| expand | `<!-- @FB-EXPAND#c_1a2b: your note -->` |
+| delete | `<!-- @FB-DELETE#c_1a2b: your note -->` |
+| question | `<!-- @FB-Q#c_1a2b: your note -->` |
 
-Stamping is deliberate and careful: the marker lands only on a **uniquely**
-matching line (zero or several matches → the comment stays open for a re-pin
-instead of guessing), a `.bak` is saved first, and re-running never duplicates.
+Each marker carries the comment id, so a stamped line points back at the comment
+it came from. Stamping is deliberate and careful: the marker lands only on a
+**uniquely** matching line (zero or several matches → the comment stays open for
+a re-pin instead of guessing), a `.bak` is saved first, and re-running never
+duplicates (an edited comment replaces its own marker). `feedback-studio --stamp`
+does the same from the command line, without a server.
+
+### Version history of the reviewed document
+
+While a `.md` is being reviewed, the server keeps a copy each time the file
+changes on disk (an agent editing it live while you watch, a processing batch,
+an older version put back), under `.feedback/history/`. The **History** button
+in the List shows every version with when it was taken, how many lines changed,
+which comment the agent was on, and which comments were resolved since the
+previous version; pick any two versions to read the diff line by line, and put
+an older version back with one click (the current text is kept as a new version
+first). When the file changes under you, the overlay says so, offers the diff,
+and reloads the page once that is safe. An agent marks a batch with
+`POST /__feedback/api/history/snapshot`; the processing skill does this before
+and after each batch.
 
 > **Trusted input:** the rendered page shares an origin with the comment API, so
 > Feedback Studio strips active content (scripts, inline handlers, `javascript:`

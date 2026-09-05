@@ -1587,6 +1587,7 @@ button {
   right: 0;
   height: 100%;
   width: 392px; /* mirrored by the --md doc shell's html.kbf-panel-open body padding (feedback-studio.mjs) - keep equal */
+  outline: none; /* the region is focused on open so it is announced; a ring on the whole panel would be noise */
   max-width: 100vw;
   background: var(--kbf-paper);
   border-left: 1px solid var(--kbf-border);

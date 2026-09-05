@@ -110,7 +110,7 @@ export function mountUI() {
     </div>
     <div id="kbf-composer-slot"></div>
 
-    <aside class="kbf-panel ${S.panelOpen ? 'is-open' : ''}" id="kbf-panel" role="region" aria-label="Feedback">
+    <aside class="kbf-panel ${S.panelOpen ? 'is-open' : ''}" id="kbf-panel" role="region" aria-label="Feedback" tabindex="-1">
       <div class="kbf-panel-head">
         <div class="kbf-panel-title">
           <h2>Feedback${LABEL ? ` <span class="kbf-site">${escapeHtml(LABEL)}</span>` : ''}</h2>
@@ -287,6 +287,42 @@ export function setFabRaised(raised) {
 
 // ---------- toast ----------
 // opts: { error?:bool, actionLabel?:string, onAction?:fn, duration?:ms }
+// ---------- keyboard focus ----------
+// Keep Tab inside a dialog while it is open, and put focus back where it was
+// when it closes. Returns the release function. `initial` is focused right
+// away when given. Only elements that are visible take part, so a hidden
+// section of the composer never captures the Tab key.
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+export function trapFocus(container, opts = {}) {
+  const prev = root.activeElement || document.activeElement;
+  const items = () => [...container.querySelectorAll(FOCUSABLE)].filter((el) => el.getClientRects().length);
+  const onKey = (e) => {
+    if (e.key !== 'Tab') return;
+    const list = items();
+    if (!list.length) return;
+    const first = list[0];
+    const last = list[list.length - 1];
+    const cur = root.activeElement;
+    if (e.shiftKey && (cur === first || !container.contains(cur))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (cur === last || !container.contains(cur))) { e.preventDefault(); first.focus(); }
+  };
+  container.addEventListener('keydown', onKey);
+  if (opts.initial) { try { opts.initial.focus(); } catch (e) {} }
+  let released = false;
+  return function release() {
+    if (released) return;
+    released = true;
+    container.removeEventListener('keydown', onKey);
+    // Give focus back only when it is still inside the closing dialog (or was
+    // lost with it); a reviewer who already clicked elsewhere keeps their place.
+    const cur = root.activeElement;
+    const inside = !cur || container.contains(cur);
+    if (inside && prev && prev !== document.body && prev.isConnected && typeof prev.focus === 'function') {
+      try { prev.focus(); } catch (e) {}
+    }
+  };
+}
+
 export function toast(msg, opts = {}) {
   const t = document.createElement('div');
   t.className = 'kbf-toast' + (opts.error ? ' kbf-toast--error' : '');

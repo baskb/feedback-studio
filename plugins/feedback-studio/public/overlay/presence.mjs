@@ -109,8 +109,8 @@ export function renderActivity() {
   if (!S.activityOpen) return;
   if (!S.activity.length) { box.innerHTML = '<div class="kbf-activity-empty">' + escapeHtml(t('Nothing yet — activity shows up here while the agent works.')) + '</div>'; return; }
   box.innerHTML = S.activity.slice().reverse().map((e) => {
-    const t = new Date(e.at);
-    const hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0') + ':' + String(t.getSeconds()).padStart(2, '0');
+    const d = new Date(e.at);
+    const hh = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0');
     const lbl = e.commentId ? pinLabel(e.commentId) : '';
     return `<div class="kbf-act is-${escapeHtml(e.kind)}"><span class="kbf-act-time">${hh}</span><span class="kbf-act-icon" aria-hidden="true">${ACT_ICON[e.kind] || '·'}</span><span class="kbf-act-text">${escapeHtml(activityText(e))}</span>${lbl ? `<button type="button" class="kbf-act-link" data-id="${escapeHtml(e.commentId)}">${escapeHtml(lbl)}</button>` : ''}</div>`;
   }).join('');

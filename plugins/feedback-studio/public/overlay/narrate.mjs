@@ -73,8 +73,8 @@ function updateNarrPointing(text) {
 }
 function updateNarrTicker(text) {
   if (!S.narrBar) return;
-  const t = S.narrBar.querySelector('.kbf-narr-ticker');
-  if (t) t.textContent = text || '';
+  const el = S.narrBar.querySelector('.kbf-narr-ticker');
+  if (el) el.textContent = text || '';
 }
 
 function showNarrBar() {
@@ -365,9 +365,9 @@ const LANG_HINTS = {
   en: /\b(the|a|is|and|to|of|it|this|that|you|for|with|but|should|what|here|your)\b/gi,
 };
 function heuristicLang(text) {
-  const t = ' ' + String(text).toLowerCase() + ' ';
+  const s = ' ' + String(text).toLowerCase() + ' ';
   let best = null, bestN = 1; // need at least 2 hits to claim a language
-  for (const k in LANG_HINTS) { const n = (t.match(LANG_HINTS[k]) || []).length; if (n > bestN) { bestN = n; best = k; } }
+  for (const k in LANG_HINTS) { const n = (s.match(LANG_HINTS[k]) || []).length; if (n > bestN) { bestN = n; best = k; } }
   return best;
 }
 async function detectLang(text) {

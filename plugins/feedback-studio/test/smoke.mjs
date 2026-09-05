@@ -2,8 +2,8 @@
 // surface (injection, API, CSRF guard, path-traversal guard). Not part of the
 // unit suite — run manually: node test/smoke.mjs
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync, utimesSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,6 +41,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
 function check(name, cond) { console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}`); if (!cond) failures++; }
 
+// The Markdown renderer is installed lazily on first use, so a machine with no
+// network has none and the --md page checks have nothing to look at. That is a
+// skip locally and a failure in CI, where a workflow step installs it first.
+function mdRenderMissing(what) {
+  if (process.env.CI) check(`${what} (the Markdown renderer must be installed in CI)`, false);
+  else console.log(`SKIP  ${what} (marked renderer unavailable)`);
+}
+
 // Run the CLI once and wait for it to finish, collecting both output streams
 // together, since which stream a message went to is not what these checks test.
 function runCli(cliArgs, cwd) {
@@ -64,8 +72,16 @@ async function waitForReady(port, tries = 60) {
   return false;
 }
 
+// Wait for every server a block needs. A port that never answers stops the run
+// with one clear line instead of a pile of assertion failures against nothing.
+async function ready(...ports) {
+  for (const p of ports) {
+    if (!(await waitForReady(p))) throw new Error(`no server answered on port ${p}`);
+  }
+}
+
 try {
-  await sleep(700);
+  await ready(PORT);
 
   // --help is generated from the FLAGS list in the CLI, so read the names out of
   // the source: a flag added there without a help line fails this check.
@@ -473,6 +489,133 @@ try {
   const reload = await fetch(ORIGIN + '/__feedback/api/reload', { method: 'POST', headers: { Origin: ORIGIN } });
   check('reload endpoint accepts POST', reload.status === 200 && (await reload.json()).ok === true);
 
+  // The "after" screenshot: the same element once the change has landed, so the
+  // two can be shown side by side. Same route with ?after=1, its own file.
+  const twoShots = (await (await postJ('comments', { page: '/', text: 'before and after', anchor: { snippet: 'Hi' } })).json()).comment;
+  const missingAfter = await fetch(ORIGIN + '/__feedback/api/shot/' + twoShots.id + '?after=1');
+  await postJ('shot/' + twoShots.id, { dataUrl: 'data:image/png;base64,' + PNG_1PX });
+  const afterUp = await postJ('shot/' + twoShots.id + '?after=1', { dataUrl: 'data:image/png;base64,' + PNG_1PX });
+  const afterC = (await afterUp.json()).comment;
+  const afterGet = await fetch(ORIGIN + '/__feedback/api/shot/' + twoShots.id + '?after=1');
+  const beforeGet = await fetch(ORIGIN + '/__feedback/api/shot/' + twoShots.id);
+  const beforeFile = path.join(root, '.feedback', 'shots', twoShots.id + '.png');
+  const afterFile = path.join(root, '.feedback', 'shots', twoShots.id + '-after.png');
+  check('an "after" shot is stored beside the pin-time one and served on its own',
+    missingAfter.status === 404 && afterUp.status === 200
+    && afterC.shotAfter === 'shots/' + twoShots.id + '-after.png' && afterC.shot === 'shots/' + twoShots.id + '.png'
+    && afterGet.status === 200 && afterGet.headers.get('content-type') === 'image/png'
+    && beforeGet.status === 200 && existsSync(beforeFile) && existsSync(afterFile));
+  await fetch(ORIGIN + '/__feedback/api/comments/' + twoShots.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
+  check('deleting the comment moves both of its shots into trash/',
+    !existsSync(beforeFile) && !existsSync(afterFile)
+    && existsSync(path.join(root, '.feedback', 'trash', 'shots', twoShots.id + '.png'))
+    && existsSync(path.join(root, '.feedback', 'trash', 'shots', twoShots.id + '-after.png')));
+
+  // Undo a delete. DELETE moves a comment's pictures into trash/ instead of
+  // destroying them, and PUT puts the whole comment back — same id, same
+  // conversation, same timestamps, and the screenshot fetched back out of trash.
+  const undo = (await (await postJ('comments', { page: '/', text: 'undo me', anchor: { selector: '#t', snippet: 'Hi' } })).json()).comment;
+  await postJ('comments/' + undo.id + '/reply', { author: 'user', text: 'a second thought' });
+  await postJ('shot/' + undo.id, { dataUrl: 'data:image/png;base64,' + PNG_1PX });
+  await fetch(ORIGIN + '/__feedback/api/comments/' + undo.id, { method: 'PATCH', headers: J, body: JSON.stringify({ status: 'approved' }) });
+  const snapshot = (await (await fetch(ORIGIN + '/__feedback/api/comments')).json()).comments.find((c) => c.id === undo.id);
+  const undoShot = path.join(root, '.feedback', 'shots', undo.id + '.png');
+  // Backdate the screenshot two days. Trash is pruned after a day, and a rename
+  // keeps the original timestamp — so without a fresh stamp on the way in, the
+  // delete would trash the picture and destroy it in the same breath, which is
+  // precisely the long review session the undo exists for.
+  const twoDaysAgo = Date.now() / 1000 - 48 * 3600;
+  utimesSync(undoShot, twoDaysAgo, twoDaysAgo);
+  await fetch(ORIGIN + '/__feedback/api/comments/' + undo.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
+  check('deleting a comment moves its screenshot into trash/ instead of destroying it',
+    !existsSync(undoShot) && existsSync(path.join(root, '.feedback', 'trash', 'shots', undo.id + '.png')));
+  const restored = await fetch(ORIGIN + '/__feedback/api/comments/' + undo.id, {
+    method: 'PUT', headers: J,
+    // Two forged file paths ride along: one naming a file that is not there,
+    // one pointing outside the data dir entirely. Neither may be believed.
+    body: JSON.stringify({ ...snapshot, shot: '../../secret.txt', shotAfter: 'shots/' + undo.id + '-after.png' }),
+  });
+  const back = (await restored.json()).comment;
+  check('PUT restores the comment with its id, status, timestamps, thread and screenshot',
+    restored.status === 200 && back.id === undo.id && back.createdAt === snapshot.createdAt
+    && back.status === 'approved' && back.thread.length === 1
+    && back.thread[0].text === 'a second thought' && back.thread[0].id === snapshot.thread[0].id
+    && back.thread[0].createdAt === snapshot.thread[0].createdAt
+    && back.shot === 'shots/' + undo.id + '.png' && existsSync(undoShot));
+  check('PUT ignores a forged file path and drops one with no file behind it',
+    back.shot !== '../../secret.txt' && back.shotAfter === undefined);
+  const putList = (await (await fetch(ORIGIN + '/__feedback/api/comments')).json()).comments.filter((c) => c.id === undo.id);
+  check('PUT replaces the comment in place rather than adding a second one', putList.length === 1);
+  const putBadId = await fetch(ORIGIN + '/__feedback/api/comments/..%2F..%2Fpwn', { method: 'PUT', headers: J, body: JSON.stringify(snapshot) });
+  check('PUT refuses an id that is not a comment id', putBadId.status === 400);
+  await fetch(ORIGIN + '/__feedback/api/comments/' + undo.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
+
+  // Review rounds. A round is the unit of "what I asked this time": new comments
+  // carry it, open pages hear about a new one over the stream, and it survives in
+  // meta.json beside the comments.
+  const round1 = await (await fetch(ORIGIN + '/__feedback/api/round')).json();
+  check('GET round starts at 1 and says when it started',
+    round1.round === 1 && typeof round1.startedAt === 'string' && !Number.isNaN(Date.parse(round1.startedAt)));
+  const roundSse = await fetch(ORIGIN + '/__feedback/events');
+  const roundReader = roundSse.body.getReader();
+  const bumped = await (await postJ('round', {})).json();
+  check('POST round moves to the next one', bumped.round === 2 && bumped.startedAt !== round1.startedAt);
+  let roundText = '';
+  for (let i = 0; i < 6 && !roundText.includes('event: round'); i++) {
+    const { value, done } = await roundReader.read(); if (done) break; roundText += Buffer.from(value).toString();
+  }
+  check('an open page is told about the new round over the live stream',
+    roundText.includes('event: round') && roundText.includes('"round":2'));
+  roundReader.cancel().catch(() => {});
+  const roundMeta = JSON.parse(readFileSync(path.join(root, '.feedback', 'meta.json'), 'utf8'));
+  check('the round is written to meta.json so it survives a restart',
+    roundMeta.round === 2 && roundMeta.roundStartedAt === bumped.startedAt && roundMeta.port === PORT);
+  const roundLog = (await getAgent()).activity;
+  check('starting a round is written to the activity log',
+    roundLog.some((e) => e.kind === 'round' && e.text === 'round 2 started'));
+  const inRound2 = (await (await postJ('comments', { page: '/', text: 'asked in round two', anchor: { snippet: 'Hi' } })).json()).comment;
+  const listWithRound = await (await fetch(ORIGIN + '/__feedback/api/comments')).json();
+  check('a new comment carries the current round, and the list reports it',
+    inRound2.round === 2 && listWithRound.round === 2
+    && listWithRound.comments.find((c) => c.id === inRound2.id).round === 2);
+  const feedbackMd = readFileSync(path.join(root, '.feedback', 'FEEDBACK.md'), 'utf8');
+  check('FEEDBACK.md separates the rounds once there is more than one',
+    feedbackMd.includes('## Round 2') && feedbackMd.includes('## Round 1')
+    && feedbackMd.indexOf('## Round 2') < feedbackMd.indexOf('## Round 1'));
+  await fetch(ORIGIN + '/__feedback/api/comments/' + inRound2.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
+
+  // Element screenshots load a vendored copy of html-to-image through this
+  // route. Its ES build imports its own parts with no file extension, which a
+  // bundler fills in and a browser does not — so the browser asks for the bare
+  // name. Answering 404 there meant no screenshots at all, and no before/after
+  // pair either.
+  const htiHome = process.env.CLAUDE_PLUGIN_DATA || path.join(homedir(), '.feedback-studio');
+  const htiPkg = path.join(htiHome, 'deps', 'node_modules', 'html-to-image', 'package.json');
+  if (existsSync(htiPkg)) {
+    const entry = await fetch(ORIGIN + '/__feedback/vendor/html-to-image/es/index.js');
+    const bare = await fetch(ORIGIN + '/__feedback/vendor/html-to-image/es/clone-node');
+    const bareBody = await bare.text();
+    const asJson = await fetch(ORIGIN + '/__feedback/vendor/html-to-image/package.json');
+    const asDir = await fetch(ORIGIN + '/__feedback/vendor/html-to-image/es');
+    const escape = await fetch(ORIGIN + '/__feedback/vendor/html-to-image/..%2F..%2Fpackage');
+    check('the vendor route serves a part imported without a file extension',
+      entry.status === 200 && bare.status === 200
+      && /javascript/.test(bare.headers.get('content-type') || '')
+      && bareBody.includes('cloneNode'));
+    check('adding the extension does not open the route to anything else',
+      asJson.status === 404 && asDir.status === 404 && escape.status === 404);
+  } else if (process.env.CI) {
+    check('the screenshot library is installed for the vendor-route checks in CI', false);
+  } else {
+    console.log('SKIP  vendor route: html-to-image is not installed (offline run)');
+  }
+
+  // A served site has no source file behind it, so there is no history to keep:
+  // the list is empty and taking a version is refused rather than half-done.
+  const webHist = await (await fetch(ORIGIN + '/__feedback/api/history?file=site/index.html')).json();
+  const webSnap = await postJ('history/snapshot', { file: 'site/index.html', reason: 'manual' });
+  check('a served site keeps no source history', webHist.versions.length === 0 && webSnap.status === 404);
+
   // the agent processing guide is written next to the data on startup
   check('writes HOW-TO-PROCESS.md', existsSync(path.join(root, '.feedback', 'HOW-TO-PROCESS.md')));
 
@@ -488,7 +631,7 @@ try {
   mkdirSync(emptyCwd);
   const emptySrv = spawn(process.execPath, [bin, '--demo', '--no-seed', '--port', String(EMPTY_PORT), '--no-open'], { stdio: 'ignore', cwd: emptyCwd });
   try {
-    await sleep(700);
+    await ready(DEMO_PORT, EMPTY_PORT);
     const demoHome = await fetch(`http://127.0.0.1:${DEMO_PORT}/`);
     const demoBody = await demoHome.text();
     check('demo serves sample page', demoHome.status === 200 && demoBody.includes('Roastly'));
@@ -515,7 +658,7 @@ try {
   const msData = path.join(msCwd, 'sites', 'marketing', '.feedback');
   const msSrv = spawn(process.execPath, [bin, '--dir', site, '--data-dir', msData, '--label', 'Marketing', '--port', String(MS_PORT), '--no-open'], { stdio: 'ignore', cwd: msCwd });
   try {
-    await sleep(700);
+    await ready(MS_PORT);
     const MS = `http://127.0.0.1:${MS_PORT}`;
     let meta = {};
     try { meta = JSON.parse(readFileSync(path.join(msData, 'meta.json'), 'utf-8')); } catch (e) {}
@@ -593,9 +736,24 @@ try {
       method: 'POST', headers: J, body: JSON.stringify({ author: 'user', text: 'try this', variants: [{ label: 'X', html: '<p>x</p>' }] }),
     });
     check('share: comment role cannot inject variants (host/agent privilege)', cVar.status === 403);
+    const vRound = await fetch(SH + `/__feedback/api/round?key=${keys.view}`);
+    const cRoundPost = await fetch(SH + `/__feedback/api/round?key=${keys.comment}`, { method: 'POST', headers: J });
+    check('share: anyone on the link may read the round, only admin may start a new one',
+      vRound.status === 200 && (await vRound.json()).round >= 1 && cRoundPost.status === 403);
+    // This server shares the data dir with the one above, which moved the review
+    // to round 2 — so a second process reading meta.json is the proof that a
+    // round survives a restart instead of dropping back to 1.
+    const restartRound = await (await fetch(SH + `/__feedback/api/round?key=${keys.admin}`)).json();
+    check('share: a second server picks the review up in the round it was left in', restartRound.round === 2);
     const cReload = await fetch(SH + `/__feedback/api/reload?key=${keys.comment}`, { method: 'POST', headers: J });
     const aReload = await fetch(SH + `/__feedback/api/reload?key=${keys.admin}`, { method: 'POST', headers: J });
     check('share: reload is admin-only', cReload.status === 403 && aReload.status === 200);
+    // md-export writes markers into the project's own source files — the one
+    // route that touches the repo, so a reviewer's link must never reach it.
+    const mdExpView = await fetch(SH + `/__feedback/api/md-export?key=${keys.view}`, { method: 'POST', headers: J });
+    const mdExpComment = await fetch(SH + `/__feedback/api/md-export?key=${keys.comment}`, { method: 'POST', headers: J });
+    check('share: md-export is admin-only (no share link may write into source files)',
+      mdExpView.status === 403 && mdExpComment.status === 403);
     const aPatch = await fetch(SH + `/__feedback/api/comments/${cc.id}?key=${keys.admin}`, {
       method: 'PATCH', headers: J, body: JSON.stringify({ status: 'resolved' }),
     });
@@ -651,6 +809,79 @@ try {
     })).json();
     check('share: comment role cannot spoof author:"agent" on comments or replies (admin can)',
       spoofC.comment.author === 'user' && spoofR.reply.author === 'user' && realA.reply.author === 'agent');
+    // Own-comment edit and delete. A browser on a share link invents its own
+    // random author token and sends it with every write; only that browser may
+    // fix or take back the comment it left, and only while it is still open.
+    const TOK_A = 'author-token-alpha-' + 'a'.repeat(21);
+    const TOK_B = 'author-token-bravo-' + 'b'.repeat(21);
+    const withTok = (tok) => ({ ...J, 'X-Feedback-Author': tok });
+    const postAs = (tok, text) => fetch(SH + `/__feedback/api/comments?key=${keys.comment}`, {
+      method: 'POST', headers: withTok(tok), body: JSON.stringify({ page: '/', text, anchor: { snippet: 'Hi' } }),
+    });
+    const mine = (await (await postAs(TOK_A, 'my typo')).json()).comment;
+    const mineEdit = await fetch(SH + `/__feedback/api/comments/${mine.id}?key=${keys.comment}`, {
+      method: 'PATCH', headers: withTok(TOK_A),
+      // status and autonomy are in the body on purpose: they are not the
+      // author's to set, and must be ignored rather than refused.
+      body: JSON.stringify({ text: 'my typo, fixed', type: 'improve', status: 'resolved', autonomy: 'auto' }),
+    });
+    const mineEdited = (await mineEdit.json()).comment;
+    check('share: a commenter may fix the wording and type of their own open comment, nothing else',
+      mineEdit.status === 200 && mineEdited.text === 'my typo, fixed' && mineEdited.type === 'improve'
+      && mineEdited.status === 'open' && mineEdited.autonomy === 'review');
+    const otherEdit = await fetch(SH + `/__feedback/api/comments/${mine.id}?key=${keys.comment}`, {
+      method: 'PATCH', headers: withTok(TOK_B), body: JSON.stringify({ text: 'not mine' }),
+    });
+    const otherDelete = await fetch(SH + `/__feedback/api/comments/${mine.id}?key=${keys.comment}`, { method: 'DELETE', headers: withTok(TOK_B) });
+    const noTokEdit = await fetch(SH + `/__feedback/api/comments/${mine.id}?key=${keys.comment}`, {
+      method: 'PATCH', headers: J, body: JSON.stringify({ text: 'no token at all' }),
+    });
+    const viewEdit = await fetch(SH + `/__feedback/api/comments/${mine.id}?key=${keys.view}`, {
+      method: 'PATCH', headers: withTok(TOK_A), body: JSON.stringify({ text: 'from a view link' }),
+    });
+    check('share: another browser, a missing token and a view link are all refused',
+      otherEdit.status === 403 && otherDelete.status === 403 && noTokEdit.status === 403 && viewEdit.status === 403);
+    // The author hash lives in the file, so the comment can still be recognised
+    // as theirs after a restart — but it never travels back out.
+    const onDisk = JSON.parse(readFileSync(path.join(root, '.feedback', 'comments.json'), 'utf8')).comments.find((c) => c.id === mine.id);
+    const listedRaw = await (await fetch(SH + `/__feedback/api/comments?key=${keys.view}`)).text();
+    check('share: the author hash is written to disk and never sent out',
+      !!onDisk && /^[0-9a-f]{64}$/.test(onDisk.authorHash || '')
+      && !('authorHash' in mine) && !('authorHash' in mineEdited) && !listedRaw.includes('authorHash'));
+    // Once the host side has acted on it, the comment is part of the record.
+    await fetch(SH + `/__feedback/api/comments/${mine.id}?key=${keys.admin}`, {
+      method: 'PATCH', headers: J, body: JSON.stringify({ status: 'resolved' }),
+    });
+    const lateEdit = await fetch(SH + `/__feedback/api/comments/${mine.id}?key=${keys.comment}`, {
+      method: 'PATCH', headers: withTok(TOK_A), body: JSON.stringify({ text: 'too late' }),
+    });
+    const lateDelete = await fetch(SH + `/__feedback/api/comments/${mine.id}?key=${keys.comment}`, { method: 'DELETE', headers: withTok(TOK_A) });
+    check('share: a resolved comment can no longer be changed by its author',
+      lateEdit.status === 403 && lateDelete.status === 403);
+    const putDeny = await fetch(SH + `/__feedback/api/comments/${mine.id}?key=${keys.comment}`, {
+      method: 'PUT', headers: withTok(TOK_A), body: JSON.stringify(mine),
+    });
+    check('share: restoring a deleted comment is admin-only', putDeny.status === 403);
+    const histDeny = await fetch(SH + `/__feedback/api/history/snapshot?key=${keys.comment}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ file: 'index.html', reason: 'manual' }),
+    });
+    const restoreDeny = await fetch(SH + `/__feedback/api/history/restore?key=${keys.comment}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ file: 'index.html', n: 1 }),
+    });
+    const histProbe = await fetch(SH + `/__feedback/api/history/snapshot?key=${keys.comment}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ file: '../../etc/passwd', reason: 'manual' }),
+    });
+    check('share: taking or restoring a version of a source file is admin-only',
+      histDeny.status === 403 && restoreDeny.status === 403
+      // Refused on the role alone: a different answer for a path outside the
+      // project would tell a reviewer which files are inside it.
+      && histProbe.status === 403);
+    const mine2 = (await (await postAs(TOK_A, 'never mind this one')).json()).comment;
+    const mineDelete = await fetch(SH + `/__feedback/api/comments/${mine2.id}?key=${keys.comment}`, { method: 'DELETE', headers: withTok(TOK_A) });
+    const afterDelete = await (await fetch(SH + `/__feedback/api/comments?key=${keys.view}`)).json();
+    check('share: a commenter can take back their own open comment',
+      mineDelete.status === 200 && !afterDelete.comments.some((c) => c.id === mine2.id));
+
     const page = await fetch(SH + `/?key=${keys.view}`, { redirect: 'manual' });
     const cookie = page.headers.get('set-cookie') || '';
     check('share: page key exchanges into an HttpOnly cookie + clean redirect',
@@ -721,7 +952,7 @@ try {
   const NS_PORT = PORT + 3;
   const nsSrv = spawn(process.execPath, [bin, '--dir', site, '--no-shots', '--port', String(NS_PORT), '--no-open'], { stdio: 'ignore', cwd: root });
   try {
-    await sleep(700);
+    await ready(NS_PORT);
     const NS = `http://127.0.0.1:${NS_PORT}`;
     const nsc = (await (await fetch(NS + '/__feedback/api/comments', {
       method: 'POST', headers: { 'Content-Type': 'application/json', Origin: NS },
@@ -746,7 +977,7 @@ try {
   const SPA_PORT = PORT + 10;
   const spaSrv = spawn(process.execPath, [bin, '--dir', site, '--spa', '--port', String(SPA_PORT), '--no-open'], { stdio: 'ignore', cwd: root });
   try {
-    await waitForReady(SPA_PORT);
+    await ready(SPA_PORT);
     const SPA = `http://127.0.0.1:${SPA_PORT}`;
     const spaDeep = await fetch(SPA + '/some/route');
     const spaBody = await spaDeep.text();
@@ -786,7 +1017,7 @@ try {
   const mdaSrv = spawn(process.execPath, [bin, '--md', 'docs/a.md', '--port', String(MDA_PORT), '--no-open'], { stdio: 'ignore', cwd: mdCwd });
   const mdbSrv = spawn(process.execPath, [bin, '--md', 'docs/b.md', '--port', String(MDB_PORT), '--no-open', '--md-html'], { stdio: 'ignore', cwd: mdCwd });
   try {
-    await sleep(700);
+    await ready(MDA_PORT, MDB_PORT);
     const MDA = `http://127.0.0.1:${MDA_PORT}`;
     const MDB = `http://127.0.0.1:${MDB_PORT}`;
     // Pin one comment from each session; both land in the SAME shared .feedback
@@ -841,7 +1072,11 @@ try {
         blank(aHtml, 'example\\.com/x') && blank(aHtml, 'b\\.md')
         && !/<a[^>]*href="#alpha"[^>]*target=/.test(aHtml));
     } else {
-      console.log('SKIP  --md: __kbfSource render check (marked renderer unavailable)');
+      // Locally a missing renderer only means "offline, nothing was installed" —
+      // the data-layer checks above still stand, so skip. In CI the renderer is
+      // installed by a step before this run, so a page that does not render is a
+      // real break and has to fail.
+      mdRenderMissing('--md: __kbfSource render check');
     }
   } finally {
     mdaSrv.kill(); mdbSrv.kill();
@@ -858,8 +1093,7 @@ try {
   const mdcSrv = spawn(process.execPath, [bin, '--md', 'docs/c.md', '--port', String(MDC_PORT), '--no-open'], { stdio: 'ignore', cwd: mdCwd });
   const mddSrv = spawn(process.execPath, [bin, '--md', 'docs/c.md', '--port', String(MDD_PORT), '--no-open', '--md-html'], { stdio: 'ignore', cwd: mdCwd });
   try {
-    await waitForReady(MDC_PORT);
-    await waitForReady(MDD_PORT);
+    await ready(MDC_PORT, MDD_PORT);
     const strictRes = await fetch(`http://127.0.0.1:${MDC_PORT}/`);
     const strictHtml = await strictRes.text();
     // Same guard as above: without the lazily-installed renderer there is no
@@ -878,11 +1112,146 @@ try {
       check('--md-html: the HTML renders again and the script is stripped, as before',
         loose.includes('<b>bold</b>') && !loose.includes('<script>alert(1)') && !loose.includes('&lt;b&gt;bold&lt;/b&gt;'));
     } else {
-      console.log('SKIP  --md: strict / --md-html render checks (marked renderer unavailable)');
+      mdRenderMissing('--md: strict / --md-html render checks');
     }
   } finally {
     mdcSrv.kill(); mddSrv.kill();
   }
+
+  // md-export stamps each open Markdown comment into its source file as an
+  // <!-- @FB#<id> --> marker on the line holding the quoted text. It runs in its
+  // own temp project: exportMarkers stamps EVERY open comment that has a
+  // sourceFile, and the folder above already holds several from earlier checks.
+  const stampCwd = mkdtempSync(path.join(tmpdir(), 'fbs-stamp-'));
+  writeFileSync(path.join(stampCwd, 'notes.md'), '# Notes\n\nThe kettle boils at ninety degrees.\n\nAnother line entirely.\n');
+  const ME_PORT = PORT + 13;
+  const meSrv = spawn(process.execPath, [bin, '--md', 'notes.md', '--port', String(ME_PORT), '--no-open'], { stdio: 'ignore', cwd: stampCwd });
+  try {
+    await ready(ME_PORT);
+    const ME = `http://127.0.0.1:${ME_PORT}`;
+    const MEJ = { 'Content-Type': 'application/json', Origin: ME };
+    await fetch(ME + '/__feedback/api/comments', {
+      method: 'POST', headers: MEJ,
+      body: JSON.stringify({
+        page: '/', text: 'say why ninety', type: 'comment', sourceFile: 'notes.md',
+        anchor: { type: 'range', rangeText: 'kettle boils at ninety' },
+      }),
+    });
+    const stamp = await fetch(ME + '/__feedback/api/md-export', { method: 'POST', headers: MEJ });
+    const stampBody = await stamp.json();
+    const stampedLine = readFileSync(path.join(stampCwd, 'notes.md'), 'utf8')
+      .split(/\r?\n/).find((l) => l.includes('<!-- @FB#'));
+    check('md-export stamps one marker onto the line holding the quoted text',
+      stamp.status === 200 && stampBody.stamped === 1 && stampBody.files === 1 && stampBody.notFound === 0
+      && !!stampedLine && stampedLine.includes('kettle boils at ninety') && stampedLine.includes('say why ninety'));
+  } finally {
+    meSrv.kill();
+    await sleep(200);
+    try { rmSync(stampCwd, { recursive: true, force: true }); } catch (e) { /* temp dir, OS will reap */ }
+  }
+
+  // Version history for a reviewed Markdown file: the copy it opened with, a
+  // copy each time it changes on disk, a diff between any two, and putting an
+  // older one back. Its own temp project so the file is only touched here.
+  const histCwd = mkdtempSync(path.join(tmpdir(), 'fbs-hist-'));
+  const histMd = path.join(histCwd, 'report.md');
+  writeFileSync(histMd, '# Report\n\nThe first paragraph.\n\nThe second paragraph.\n');
+  const HI_PORT = PORT + 14;
+  const hiSrv = spawn(process.execPath, [bin, '--md', 'report.md', '--port', String(HI_PORT), '--no-open'], { stdio: 'ignore', cwd: histCwd });
+  try {
+    await ready(HI_PORT);
+    const HI = `http://127.0.0.1:${HI_PORT}`;
+    const HIJ = { 'Content-Type': 'application/json', Origin: HI };
+    const hist = (q) => fetch(HI + '/__feedback/api/history' + q).then((r) => r.json());
+    const opened = await fetch(HI + '/');
+    const openedHtml = await opened.text();
+    if (opened.status === 200 && openedHtml.includes('Report')) {
+      const v1 = await hist('?file=report.md');
+      check('opening a Markdown file keeps the copy it started from',
+        v1.file === 'report.md' && v1.versions.length === 1 && v1.versions[0].n === 1 && v1.versions[0].reason === 'opened');
+
+      // Watch the live stream, then change the file the way an agent would.
+      const hiSse = await fetch(HI + '/__feedback/events');
+      const hiReader = hiSse.body.getReader();
+      writeFileSync(histMd, '# Report\n\nThe first paragraph, rewritten.\n\nThe second paragraph.\n');
+      let hiText = '';
+      for (let i = 0; i < 8 && !hiText.includes('event: source'); i++) {
+        const { value, done } = await hiReader.read(); if (done) break; hiText += Buffer.from(value).toString();
+      }
+      hiReader.cancel().catch(() => {});
+      check('an edit on disk reaches the open page as a source event',
+        hiText.includes('event: source') && hiText.includes('"file":"report.md"')
+        && hiText.includes('"added":1') && hiText.includes('"removed":1'));
+      const v2 = await hist('?file=report.md');
+      check('the change is kept as a second version with what it added and removed',
+        v2.versions.length === 2 && v2.versions[1].n === 2 && v2.versions[1].reason === 'changed'
+        && v2.versions[1].added === 1 && v2.versions[1].removed === 1);
+      const one = await hist('/1?file=report.md');
+      check('a single version comes back with its content',
+        one.n === 1 && one.content.includes('The first paragraph.') && !one.content.includes('rewritten'));
+      const diff = await hist('/diff?file=report.md&from=1&to=2');
+      check('the diff reports the changed line and no more',
+        diff.from.n === 1 && diff.to.n === 2 && diff.stats.added === 1 && diff.stats.removed === 1
+        && diff.hunks.length === 1 && diff.ops === undefined
+        && JSON.stringify(diff.hunks[0].ops).includes('The first paragraph, rewritten.'));
+
+      const same = await fetch(HI + '/__feedback/api/history/snapshot', {
+        method: 'POST', headers: HIJ, body: JSON.stringify({ file: 'report.md', reason: 'batch' }),
+      });
+      const sameOut = await same.json();
+      check('a snapshot of unchanged content adds nothing', same.status === 200 && sameOut.changed === false);
+
+      const undoEdit = await fetch(HI + '/__feedback/api/history/restore', {
+        method: 'POST', headers: HIJ, body: JSON.stringify({ file: 'report.md', n: 1 }),
+      });
+      const undoOut = await undoEdit.json();
+      const restoredText = readFileSync(histMd, 'utf8');
+      const v3 = await hist('?file=report.md');
+      check('restoring an older version rewrites the file and is itself kept',
+        undoEdit.status === 200 && undoOut.ok === true
+        && restoredText.includes('The first paragraph.') && !restoredText.includes('rewritten')
+        && v3.versions.length >= 3 && v3.versions[v3.versions.length - 1].reason === 'restore');
+
+      const outside = await fetch(HI + '/__feedback/api/history?file=../../etc/passwd');
+      check('a file outside the project is refused', outside.status === 400);
+      const missingVersion = await hist('/99?file=report.md');
+      check('an unknown version is a 404', missingVersion.error === 'no such version');
+    } else {
+      mdRenderMissing('--md: history checks');
+    }
+  } finally {
+    hiSrv.kill();
+    await sleep(200);
+    try { rmSync(histCwd, { recursive: true, force: true }); } catch (e) { /* temp dir, OS will reap */ }
+  }
+
+  // --stamp does the same stamping from the command line, with no server at all.
+  // Its own project again, so it stamps exactly the one comment put in front of it.
+  const cliStampCwd = mkdtempSync(path.join(tmpdir(), 'fbs-cli-stamp-'));
+  writeFileSync(path.join(cliStampCwd, 'plan.md'), '# Plan\n\nShip the widget on Friday.\n');
+  const stampNoData = await runCli(['--stamp'], cliStampCwd);
+  check('--stamp with no comments file exits 1 and says what is missing',
+    stampNoData.code === 1 && stampNoData.out.includes('No comments to stamp'));
+  mkdirSync(path.join(cliStampCwd, '.feedback'));
+  writeFileSync(path.join(cliStampCwd, '.feedback', 'comments.json'), JSON.stringify({
+    version: 1,
+    comments: [{
+      id: 'c_stamp-cli-0001', schemaVersion: 6, page: '/', sourceFile: 'plan.md',
+      type: 'comment', text: 'name the widget', status: 'open', thread: [],
+      anchor: { type: 'range', rangeText: 'Ship the widget on Friday' },
+    }],
+  }, null, 2));
+  const stampCli = await runCli(['--stamp'], cliStampCwd);
+  const planMd = readFileSync(path.join(cliStampCwd, 'plan.md'), 'utf8');
+  check('--stamp writes the marker, reports one line, exits 0 and starts no server',
+    stampCli.code === 0 && stampCli.out.trim() === 'Stamped 1 marker into 1 file'
+    && !stampCli.out.includes('Ctrl+C to stop')
+    && planMd.includes('<!-- @FB#c_stamp-cli-0001: name the widget -->'));
+  const stampAgain = await runCli(['--stamp'], cliStampCwd);
+  check('--stamp is idempotent (a second run adds nothing)',
+    stampAgain.code === 0 && stampAgain.out.trim() === 'Stamped 0 markers into 0 files'
+    && (readFileSync(path.join(cliStampCwd, 'plan.md'), 'utf8').match(/@FB#/g) || []).length === 1);
+  try { rmSync(cliStampCwd, { recursive: true, force: true }); } catch (e) { /* temp dir, OS will reap */ }
 } catch (e) {
   console.log('FAIL  exception:', e.message);
   failures++;

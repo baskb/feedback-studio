@@ -1,6 +1,6 @@
 // Live smoke test for the MCP stdio server. Run: node test/mcp-smoke.mjs
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,6 +90,17 @@ try {
   check('set_status refuses a status outside the enum', badStatus.result.isError === true);
   const listAll = JSON.parse((await rpc({ jsonrpc: '2.0', id: 27, method: 'tools/call', params: { name: 'list_comments', arguments: { status: 'all' } } })).result.content[0].text);
   check('list_comments status=all still shows the resolved one', listAll.count === 1 && listAll.comments[0].status === 'resolved');
+
+  // Review rounds. A comment made with no meta.json belongs to round 1; once the
+  // review server has moved the review on, an agent's own pin has to land in the
+  // round the person is looking at, not back at the start.
+  const onDiskRound = JSON.parse(readFileSync(path.join(dir, 'comments.json'), 'utf8')).comments[0].round;
+  writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ label: 'Marketing', round: 3, roundStartedAt: new Date().toISOString() }));
+  const addR3 = await rpc({ jsonrpc: '2.0', id: 40, method: 'tools/call', params: { name: 'add_comment', arguments: { page: '/', text: 'agent pin in round three' } } });
+  const r3Id = JSON.parse(addR3.result.content[0].text).id;
+  const r3 = JSON.parse(readFileSync(path.join(dir, 'comments.json'), 'utf8')).comments.find((c) => c.id === r3Id);
+  check('add_comment stamps the round: 1 with no meta.json, the current one with it',
+    onDiskRound === 1 && !addR3.result.isError && r3.round === 3);
 
   const notFound = await rpc({ jsonrpc: '2.0', id: 8, method: 'frobnicate' });
   check('unknown method => -32601', notFound.error && notFound.error.code === -32601);

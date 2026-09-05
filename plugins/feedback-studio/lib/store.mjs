@@ -25,7 +25,7 @@ import crypto from 'node:crypto';
 export * from './schema.mjs';
 import {
   SCHEMA_VERSION, FILE_VERSION, WEB_TYPES, MD_TYPES, UNIVERSAL_TYPES,
-  ALLOWED_TYPES, AUTONOMY, TWEAKABLE_PROPS,
+  ALLOWED_TYPES, AUTONOMY, TWEAKABLE_PROPS, coerceRound, DEFAULT_ROUND,
 } from './schema.mjs';
 
 const ANCHOR_KEYS = ['type', 'selector', 'attrSelector', 'xpath', 'tag', 'id', 'snippet', 'rangeText'];
@@ -149,6 +149,11 @@ export function sanitizeEdits(edits) {
 
 // The one place a comment object is constructed. Both servers call this so the
 // stored shape (and the default type per mode) is identical regardless of author.
+//
+// `authorHash` and `shotAfter` are deliberately NOT read from `input`: the first
+// is set by the server from a request header, the second by the "after"
+// screenshot route. A client sending either would otherwise claim ownership of a
+// comment, or point it at a file that is not on disk.
 export function makeComment(input = {}) {
   const now = new Date().toISOString();
   const sourceFile = str(input.sourceFile, 300);
@@ -179,6 +184,9 @@ export function makeComment(input = {}) {
     via: input.via === 'narration' ? 'narration' : undefined,
     thread: [],
     autonomy: AUTONOMY.includes(input.autonomy) ? input.autonomy : 'review',
+    // Which review round this belongs to. Junk becomes 1, so a bad client value
+    // can never push a comment into a round nobody will look at.
+    round: coerceRound(input.round),
     status: 'open',
     createdAt: now,
     updatedAt: now,
@@ -447,22 +455,20 @@ const collapse = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
 // Escape a value for use inside an inline `code span` (backticks would break it).
 const code = (s) => '`' + String(s == null ? '' : s).replace(/`/g, 'ˋ') + '`';
 
-export async function exportMarkdown(dir, comments) {
-  const d = dataDirDisplay(dir); // real data-dir path (e.g. sites/marketing/.feedback), not a literal
+// One `## <page>` section per page, with its comments under it. Split out of
+// exportMarkdown so the round grouping can call it once per round; `heading` is
+// the marker for the page lines, which drops a level when rounds are shown.
+function renderPages(comments, d, heading) {
   const byPage = new Map();
   for (const c of comments) {
     const key = c.page || '/';
     if (!byPage.has(key)) byPage.set(key, []);
     byPage.get(key).push(c);
   }
-  const open = comments.filter((c) => c.status !== 'resolved').length;
-  let md = `# Feedback export\n\n`;
-  md += `_Generated from \`${d}/comments.json\` (the source of truth). Read-only, human-glance mirror: do not edit or act off this file, act off \`comments.json\` (or the MCP tools)._\n\n`;
-  md += `_Generated ${new Date().toISOString()} — ${comments.length} comment(s): ${open} open, ${comments.length - open} resolved._\n\n`;
-  md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. \`question\` = the reviewer is ASKING, not requesting a change: answer in a thread reply with a \`file:line\` pointer to where the answer lives, do not edit anything, then resolve. A Markdown document uses its own verbs: \`comment\` = address the note in the text; \`rephrase\` = reword the same point; \`expand\` = say more about it; \`delete\` = remove the passage. For all four, edit the comment's \`sourceFile\` and never the rendered HTML, which is thrown away on the next run. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin.\n>\n> \`tweak\` lines are exact CSS deltas the user dialled in live on the element (Tweak Mode). Apply them near-verbatim, translated to the project's styling idiom (stylesheet rule, utility class, or design token) — the target values are not suggestions, the *representation* is yours to choose. \`text edit\` lines are the user retyping the element's text in place: apply the exact after-wording at the anchored location (whitespace-flexible match on the before-text; in Markdown edit the \`sourceFile\`). If the before-text no longer matches, do NOT guess — leave it open for a re-pin.\n>\n> Comments are a two-way conversation. Some are authored \`by user\`, some \`by agent\` (a proposal/annotation you or another skill left on a component). Each can have a reply thread (lines marked \`↳\`). Statuses: \`open\` (needs work/decision), \`approved\` (the user said go ahead — implement it), \`rejected\` (do not), \`resolved\` (done). Implement approved items, reply to ask questions, and set the status as you go.\n\n`;
+  let md = '';
   for (const page of [...byPage.keys()].sort()) {
     const items = byPage.get(page).slice().sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
-    md += `## ${code(page)}${items[0]?.pageTitle ? ` — ${collapse(items[0].pageTitle)}` : ''}\n\n`;
+    md += `${heading} ${code(page)}${items[0]?.pageTitle ? ` — ${collapse(items[0].pageTitle)}` : ''}\n\n`;
     let i = 0;
     for (const c of items) {
       i++;
@@ -504,6 +510,32 @@ export async function exportMarkdown(dir, comments) {
       }
       md += `\n`;
     }
+  }
+  return md;
+}
+
+export async function exportMarkdown(dir, comments) {
+  const d = dataDirDisplay(dir); // real data-dir path (e.g. sites/marketing/.feedback), not a literal
+  const open = comments.filter((c) => c.status !== 'resolved').length;
+  let md = `# Feedback export\n\n`;
+  md += `_Generated from \`${d}/comments.json\` (the source of truth). Read-only, human-glance mirror: do not edit or act off this file, act off \`comments.json\` (or the MCP tools)._\n\n`;
+  md += `_Generated ${new Date().toISOString()} — ${comments.length} comment(s): ${open} open, ${comments.length - open} resolved._\n\n`;
+  md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. \`question\` = the reviewer is ASKING, not requesting a change: answer in a thread reply with a \`file:line\` pointer to where the answer lives, do not edit anything, then resolve. A Markdown document uses its own verbs: \`comment\` = address the note in the text; \`rephrase\` = reword the same point; \`expand\` = say more about it; \`delete\` = remove the passage. For all four, edit the comment's \`sourceFile\` and never the rendered HTML, which is thrown away on the next run. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin.\n>\n> \`tweak\` lines are exact CSS deltas the user dialled in live on the element (Tweak Mode). Apply them near-verbatim, translated to the project's styling idiom (stylesheet rule, utility class, or design token) — the target values are not suggestions, the *representation* is yours to choose. \`text edit\` lines are the user retyping the element's text in place: apply the exact after-wording at the anchored location (whitespace-flexible match on the before-text; in Markdown edit the \`sourceFile\`). If the before-text no longer matches, do NOT guess — leave it open for a re-pin.\n>\n> Comments are a two-way conversation. Some are authored \`by user\`, some \`by agent\` (a proposal/annotation you or another skill left on a component). Each can have a reply thread (lines marked \`↳\`). Statuses: \`open\` (needs work/decision), \`approved\` (the user said go ahead — implement it), \`rejected\` (do not), \`resolved\` (done). Implement approved items, reply to ask questions, and set the status as you go.\n\n`;
+  // Rounds first, newest at the top: what was asked THIS time is what an agent
+  // opens this file for, and the earlier rounds are the record behind it. With
+  // only one round there is nothing to separate, so the file keeps the layout
+  // it has always had.
+  const byRound = new Map();
+  for (const c of comments) {
+    const r = coerceRound(c.round);
+    if (!byRound.has(r)) byRound.set(r, []);
+    byRound.get(r).push(c);
+  }
+  const rounds = [...byRound.keys()].sort((a, b) => b - a);
+  const showRounds = rounds.length > 1;
+  for (const round of rounds) {
+    if (showRounds) md += `## Round ${round}\n\n`;
+    md += renderPages(byRound.get(round), d, showRounds ? '###' : '##');
   }
   if (!comments.length) md += `_No comments yet._\n`;
   await writeFile(mdFile(dir), md);
@@ -551,6 +583,15 @@ file directly.
 Each comment has: \`page\`, \`type\`, \`anchor\` (a quoted \`snippet\` plus css \`selector\` /
 \`attr\` / \`xpath\`), \`text\`, a reply \`thread\`, \`autonomy\`, and \`status\`. In Markdown mode it
 also carries a \`sourceFile\`.
+
+Comments also carry a \`round\` number. When several rounds exist, process the current (highest)
+one first and say which round each change belongs to; \`GET /__feedback/api/round\` tells the
+current one while the server runs.
+
+In Markdown mode, take a snapshot of each \`sourceFile\` before and after a batch:
+\`POST /__feedback/api/history/snapshot\` with \`{"file":"<sourceFile>","reason":"batch"}\`. The
+reviewer's History pane then shows the batch as a pair of versions with the diff between them.
+The server also keeps a version of every change it sees on disk, so nothing is lost if you skip this.
 
 ## 2. For each OPEN (or APPROVED) comment, grouped by page
 

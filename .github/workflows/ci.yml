@@ -28,7 +28,17 @@ jobs:
           node -e "JSON.parse(require('fs').readFileSync('plugins/feedback-studio/.claude-plugin/plugin.json','utf8'))"
 
       - name: Unit tests
-        run: node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs plugins/feedback-studio/test/narration.test.mjs plugins/feedback-studio/test/anchor.test.mjs plugins/feedback-studio/test/interop.test.mjs
+        run: node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs plugins/feedback-studio/test/narration.test.mjs plugins/feedback-studio/test/anchor.test.mjs plugins/feedback-studio/test/interop.test.mjs plugins/feedback-studio/test/nav.test.mjs plugins/feedback-studio/test/sort.test.mjs plugins/feedback-studio/test/i18n.test.mjs plugins/feedback-studio/test/history.test.mjs
+
+      # The server fetches these two itself on first use. Doing it here instead
+      # means the --md checks and the vendor-route checks in the smoke test
+      # always have something real to look at, so they can fail on a real break
+      # rather than skip. Same folder and same flags the server would use.
+      - name: Install the lazy helpers the smoke test checks
+        run: |
+          mkdir -p ~/.feedback-studio/deps
+          echo '{"name":"feedback-studio-deps","private":true}' > ~/.feedback-studio/deps/package.json
+          cd ~/.feedback-studio/deps && npm install marked@^12 html-to-image@^1 --no-audit --no-fund --ignore-scripts --loglevel=error
 
       - name: HTTP smoke test
         run: node plugins/feedback-studio/test/smoke.mjs

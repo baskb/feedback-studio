@@ -44,7 +44,15 @@ jobs:
       # Gate the publish on the SAME suite CI runs, so a release can't ship a
       # regression that the per-PR checks would have caught.
       - name: Unit tests
-        run: node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs plugins/feedback-studio/test/narration.test.mjs plugins/feedback-studio/test/anchor.test.mjs plugins/feedback-studio/test/interop.test.mjs
+        run: node --test plugins/feedback-studio/test/store.test.mjs plugins/feedback-studio/test/markers.test.mjs plugins/feedback-studio/test/narration.test.mjs plugins/feedback-studio/test/anchor.test.mjs plugins/feedback-studio/test/interop.test.mjs plugins/feedback-studio/test/nav.test.mjs plugins/feedback-studio/test/sort.test.mjs plugins/feedback-studio/test/i18n.test.mjs plugins/feedback-studio/test/history.test.mjs
+
+      # Same as CI: install the two helpers the server would fetch lazily, so the
+      # --md and vendor-route checks in the smoke test run for real rather than skip.
+      - name: Install the lazy helpers the smoke test checks
+        run: |
+          mkdir -p ~/.feedback-studio/deps
+          echo '{"name":"feedback-studio-deps","private":true}' > ~/.feedback-studio/deps/package.json
+          cd ~/.feedback-studio/deps && npm install marked@^12 html-to-image@^1 --no-audit --no-fund --ignore-scripts --loglevel=error
 
       - name: HTTP smoke test
         run: node plugins/feedback-studio/test/smoke.mjs

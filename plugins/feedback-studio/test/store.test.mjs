@@ -15,6 +15,7 @@ import {
   sanitizeImageReplace,
   readComments, writeComments, writeJson, mutate, exportMarkdown,
   exportProcessInstructions, seedAgentsFile, AGENTS_SNIPPET_MARKER, UNIVERSAL_TYPES,
+  SCHEMA_VERSION, DEFAULT_ROUND, coerceRound, AUTHOR_HASH_RE,
 } from '../lib/store.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,7 +43,7 @@ test('coerceType respects the mode', () => {
 
 test('makeComment has a stable, complete schema and unique ids', () => {
   const c = makeComment({ page: '/p', text: '  hi  ', author: 'agent', authorName: 'bot' });
-  assert.equal(c.schemaVersion, 6);
+  assert.equal(c.schemaVersion, 7);
   assert.equal(c.text, 'hi');
   assert.equal(c.author, 'agent');
   assert.equal(c.status, 'open');
@@ -475,4 +476,87 @@ test('the overlay tweak controls are a subset of TWEAKABLE_PROPS (no drift)', ()
   const props = [...block.matchAll(/prop:\s*'([a-z-]+)'/g)].map((m) => m[1]);
   assert.ok(props.length >= 5, 'expected the overlay to declare tweak controls');
   for (const p of props) assert.ok(TWEAKABLE_PROPS.includes(p), `overlay tweak prop "${p}" is not in TWEAKABLE_PROPS`);
+});
+
+// ---------- schema 7: rounds, author hash, "after" screenshot ----------
+
+test('schema 7: makeComment stamps the round, coercing junk to 1', () => {
+  assert.equal(SCHEMA_VERSION, 7);
+  assert.equal(makeComment({ text: 'x' }).round, DEFAULT_ROUND);
+  assert.equal(makeComment({ text: 'x', round: 3 }).round, 3);
+  for (const junk of [0, -2, 1.5, 'two', null, {}, NaN, Infinity, 1e9]) {
+    assert.equal(makeComment({ text: 'x', round: junk }).round, 1, `round ${String(junk)}`);
+  }
+});
+
+test('coerceRound accepts whole rounds from 1 up and rejects the rest', () => {
+  assert.equal(coerceRound(1), 1);
+  assert.equal(coerceRound(42), 42);
+  assert.equal(coerceRound('7'), 7); // a query string or JSON number as text
+  assert.equal(coerceRound(undefined), 1);
+  assert.equal(coerceRound(0), 1);
+  assert.equal(coerceRound(-1), 1);
+  assert.equal(coerceRound('abc'), 1);
+});
+
+test('schema 7: authorHash and shotAfter are never taken from client input', () => {
+  const c = makeComment({
+    text: 'x',
+    authorHash: 'f'.repeat(64),
+    shotAfter: 'shots/c_someone-else-after.png',
+  });
+  assert.equal(c.authorHash, undefined);
+  assert.equal(c.shotAfter, undefined);
+});
+
+test('schema 7: AUTHOR_HASH_RE matches a sha256 hex digest only', () => {
+  assert.ok(AUTHOR_HASH_RE.test('a'.repeat(64)));
+  assert.ok(AUTHOR_HASH_RE.test('0123456789abcdef'.repeat(4)));
+  assert.ok(!AUTHOR_HASH_RE.test('A'.repeat(64)));   // uppercase
+  assert.ok(!AUTHOR_HASH_RE.test('a'.repeat(63)));   // too short
+  assert.ok(!AUTHOR_HASH_RE.test('a'.repeat(65)));   // too long
+  assert.ok(!AUTHOR_HASH_RE.test('g'.repeat(64)));   // not hex
+  assert.ok(!AUTHOR_HASH_RE.test(''));
+});
+
+test('schema 7: a comment written before rounds existed is still readable as round 1', async () => {
+  const dir = freshDir();
+  // Exactly what a schema-6 file looks like: no round, no authorHash, no shotAfter.
+  const old = { id: 'c_old', schemaVersion: 6, page: '/', type: 'change', text: 'old one', status: 'open', thread: [], anchor: { type: 'element' } };
+  writeFileSync(path.join(dir, 'comments.json'), JSON.stringify({ version: 1, comments: [old] }));
+  const [read] = await readComments(dir);
+  assert.equal(read.round, undefined);
+  assert.equal(coerceRound(read.round), 1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('exportMarkdown: one round keeps the old layout, several group newest first', async () => {
+  const dir = freshDir();
+  try {
+    const first = makeComment({ page: '/', text: 'first round note', round: 1 });
+    await exportMarkdown(dir, [first]);
+    let md = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf-8');
+    assert.ok(!md.includes('## Round'), 'a single round needs no round heading');
+    assert.match(md, /^## `\/`/m, 'pages stay at the top level');
+
+    const second = makeComment({ page: '/pricing', text: 'second round note', round: 2 });
+    await exportMarkdown(dir, [first, second]);
+    md = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf-8');
+    assert.ok(md.indexOf('## Round 2') < md.indexOf('## Round 1'), 'the newest round comes first');
+    assert.ok(md.indexOf('second round note') < md.indexOf('first round note'));
+    assert.match(md, /^### `\/pricing`/m, 'pages nest a level under the round');
+    assert.doesNotMatch(md, /^## `\/pricing`/m);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('exportMarkdown: a comment with no round field lands in round 1', async () => {
+  const dir = freshDir();
+  try {
+    const old = { id: 'c_old', page: '/', type: 'change', text: 'no round field', status: 'open', thread: [], anchor: { type: 'element' } };
+    const now = makeComment({ page: '/', text: 'round two note', round: 2 });
+    await exportMarkdown(dir, [old, now]);
+    const md = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf-8');
+    assert.ok(md.includes('## Round 2') && md.includes('## Round 1'));
+    assert.ok(md.indexOf('round two note') < md.indexOf('no round field'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

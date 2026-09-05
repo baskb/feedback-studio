@@ -18,17 +18,20 @@ import tls from 'node:tls';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { exec, execSync, spawn } from 'node:child_process';
-import { readFile, writeFile, mkdir, stat, readdir, chmod, unlink, mkdtemp, cp } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, stat, readdir, chmod, unlink, rename, utimes, mkdtemp, cp } from 'node:fs/promises';
 import { existsSync, readFileSync, statSync, watch, createReadStream, createWriteStream, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  ALLOWED_TYPES, STATUSES, AUTONOMY,
+  ALLOWED_TYPES, STATUSES, AUTONOMY, AUTHOR_HASH_RE, coerceRound,
   readComments, writeComments, writeJson, mutate, makeComment, makeReply, exportMarkdown,
   exportProcessInstructions, seedAgentsFile, sanitizeEdits, sanitizeTextEdit,
   coerceType, modeFor, schemeIsEvil, sanitizeImageReplace, sanitizeAnchor,
 } from '../lib/store.mjs';
 import { exportMarkers as stampMarkers } from '../lib/markers.mjs';
+import {
+  listVersions, readVersion as readHistoryVersion, diffVersions, recordSnapshot, latestVersion,
+} from '../lib/history.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -55,6 +58,7 @@ const FLAGS = [
   { name: '--https', arg: '', help: 'Serve over TLS with a self-signed certificate (voice on phones).' },
   { name: '--no-open', arg: '', help: "Don't open the browser automatically." },
   { name: '--seed-agents', arg: '', help: 'Append the processing workflow to ./CLAUDE.md and ./AGENTS.md, then exit.' },
+  { name: '--stamp', arg: '', help: 'Write the open comments into their Markdown files as @FB markers, then exit.' },
   { name: '--help', arg: '', help: 'Show this help and exit.' },
   { name: '--version', arg: '', help: 'Print the version and exit.' },
 ];
@@ -341,8 +345,18 @@ async function serveVendorHti(res, url) {
   if (!SHOTS) return notFound('screenshots disabled (--no-shots)');
   if (!(await ensureHtmlToImage())) return notFound('html-to-image unavailable');
   const rel = decodeURIComponent(url.pathname.slice('/__feedback/vendor/html-to-image/'.length));
-  const file = path.resolve(HTI_DIR, rel);
-  if (!file.startsWith(HTI_DIR + path.sep) || !/\.(js|mjs)$/.test(file) || !existsSync(file) || !statSync(file).isFile()) {
+  let file = path.resolve(HTI_DIR, rel);
+  // Containment BEFORE anything is added to the path, so the check can never be
+  // read against a name we changed afterwards.
+  if (!file.startsWith(HTI_DIR + path.sep)) return notFound('not found');
+  // The package's ES build imports its own parts with no file extension
+  // (`import { cloneNode } from './clone-node'`). A bundler fills that in; a
+  // browser does not, so it asks us for the bare name and used to get a 404 —
+  // which meant no element screenshots at all. Add the extension the bundler
+  // would have added. Only for a path that has none: a request for a .json or a
+  // .map is still refused by the check below.
+  if (!path.extname(file)) file += '.js';
+  if (!/\.(js|mjs)$/.test(file) || !existsSync(file) || !statSync(file).isFile()) {
     return notFound('not found');
   }
   res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'max-age=3600' });
@@ -484,6 +498,37 @@ function hostAllowed(req) {
 // filesystem as a shots/<id>.png path.
 const SAFE_SHOT_ID = /^c_[A-Za-z0-9-]{8,64}$/;
 
+// ---------- who left this comment (share links, no accounts) ----------
+// A browser on a share link makes one random author token for itself and sends
+// it as `X-Feedback-Author` on every write. We store only its SHA-256, so the
+// file never holds the token, and we never send the hash back out — that pair is
+// what lets a person fix a typo in their own comment without an account, and
+// stops anyone else editing it. The token shape is fixed so a junk header can
+// never become a hash that happens to match something.
+const AUTHOR_TOKEN_RE = /^[A-Za-z0-9_-]{32,64}$/;
+function authorTokenHash(req) {
+  const tok = String(req.headers['x-feedback-author'] || '');
+  if (!AUTHOR_TOKEN_RE.test(tok)) return '';
+  return crypto.createHash('sha256').update(tok).digest('hex');
+}
+// Compare in constant time. Both sides are checked for shape first: a stored
+// value that is missing or malformed is simply not a match, and timingSafeEqual
+// throws outright on a length mismatch.
+function authorMatches(hash, stored) {
+  if (!hash || typeof stored !== 'string' || !AUTHOR_HASH_RE.test(stored)) return false;
+  const a = Buffer.from(hash);
+  const b = Buffer.from(stored);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+// The shape of a comment as it leaves this process — over the API, over the SSE
+// stream, anywhere. `authorHash` stays on disk and never travels: handing it
+// back would let anyone holding a copy of the data claim a comment as theirs.
+function publicComment(c) {
+  if (!c || typeof c !== 'object') return c;
+  const { authorHash, ...rest } = c;
+  return rest;
+}
+
 // Staged replacement images (raster only). Stored as media/<id>.<ext>.
 const MEDIA_EXTS = ['png', 'jpg', 'webp'];
 const mediaMime = (f) => (f.endsWith('.webp') ? 'image/webp' : f.endsWith('.png') ? 'image/png' : 'image/jpeg');
@@ -518,6 +563,184 @@ function validImageBuffer(fmt, b) {
   return false;
 }
 
+// ---------- watching the reviewed Markdown source ----------
+// In --md mode the reviewed file is a file on disk that the agent is about to
+// edit. Keeping a copy of it every time it changes is what lets the reviewer see
+// what the agent did to their document, and put it back if they do not like it.
+// The store itself lives in lib/history.mjs; this is the watching and the
+// telling-the-page part.
+//
+// One watch per directory, not per file (a directory watch is one handle and
+// picks up a file that is created later), and not recursive: Node 18 on Linux
+// has no recursive watch.
+const SOURCE_DEBOUNCE_MS = 300;
+const watchedSourceDirs = new Set();
+const sourceTimers = new Map();
+
+// The exact path form comments and history use: relative to the folder the
+// server runs in, forward slashes.
+const relFromCwd = (file) => path.relative(CWD, file).split(path.sep).join('/');
+
+function broadcastSource(file, version) {
+  const payload = 'event: source\ndata: ' + JSON.stringify({
+    file, version: version.n, added: version.added, removed: version.removed,
+  }) + '\n\n';
+  for (const res of [...sseClients]) writeSse(res, payload);
+}
+
+async function onSourceChanged(rel, full) {
+  try {
+    const content = await readFile(full, 'utf-8');
+    // Which comments were marked done since the last copy: that is what this
+    // change is most likely to be about.
+    const prev = await latestVersion(DATA_DIR, rel);
+    const since = prev && prev.at ? Date.parse(prev.at) : 0;
+    let resolved = [];
+    try {
+      resolved = (await readComments(DATA_DIR))
+        .filter((c) => c.sourceFile === rel && c.status === 'resolved' && Date.parse(c.updatedAt || 0) > since)
+        .map((c) => c.id);
+    } catch (e) { /* unreadable comments must not stop us keeping the copy */ }
+    const out = await recordSnapshot(DATA_DIR, rel, content, {
+      reason: 'changed',
+      commentId: agentStatus.state === 'working' ? agentStatus.commentId : '',
+      resolved,
+    });
+    if (out.changed) broadcastSource(rel, out.version);
+  } catch (e) { /* the file may be half-written or gone; the next event picks it up */ }
+}
+
+function watchSourceDir(dir) {
+  if (!MD_MODE || watchedSourceDirs.has(dir)) return;
+  watchedSourceDirs.add(dir);
+  try {
+    watch(dir, (ev, fn) => {
+      const name = fn ? String(fn) : '';
+      if (!/\.md$/i.test(name)) return;
+      const full = path.join(dir, name);
+      const rel = relFromCwd(full);
+      // An editor saves in several steps; wait for it to settle.
+      clearTimeout(sourceTimers.get(rel));
+      sourceTimers.set(rel, setTimeout(() => { sourceTimers.delete(rel); onSourceChanged(rel, full); }, SOURCE_DEBOUNCE_MS));
+    });
+  } catch (e) { /* no watch on this platform; the history routes still work */ }
+}
+
+// Called for every .md page we serve: start watching its folder, and take the
+// first copy if this file has no history yet, so there is always something to
+// compare against.
+async function noteSourceServed(rel, file, content) {
+  watchSourceDir(path.dirname(file));
+  try {
+    const { versions } = await listVersions(DATA_DIR, rel);
+    if (!versions.length) await recordSnapshot(DATA_DIR, rel, content, { reason: 'opened' });
+  } catch (e) { /* history is a convenience — never let it stop a page being served */ }
+}
+
+// `file` as a request gives it, resolved against the folder the server runs in
+// and refused unless it stays inside that folder or the --md root.
+function resolveSourceFile(raw) {
+  const rel = typeof raw === 'string' ? raw : '';
+  if (!rel || rel.length > 500) return null;
+  const full = path.normalize(path.resolve(CWD, rel));
+  const roots = MD_ROOT ? [CWD, MD_ROOT] : [CWD];
+  if (!roots.some((r) => within(r, full))) return null;
+  return { rel: relFromCwd(full), full };
+}
+
+// ---------- review rounds ----------
+// A review runs in rounds: the person comments, the agent applies, the person
+// looks again. The current round is stamped on every new comment, so FEEDBACK.md
+// and the panel can show what was asked this time apart from what came before.
+// It belongs to the review, not to this process, so it lives in meta.json beside
+// the comments and survives a restart.
+let currentRound = 1;
+let roundStartedAt = new Date().toISOString();
+const metaFile = () => path.join(DATA_DIR, 'meta.json');
+
+async function readMeta() {
+  try { return JSON.parse(await readFile(metaFile(), 'utf-8')) || {}; }
+  catch (e) { return {}; }
+}
+async function loadRound() {
+  const m = await readMeta();
+  if (m.round !== undefined) currentRound = coerceRound(m.round);
+  roundStartedAt = isoOr(m.roundStartedAt, roundStartedAt);
+}
+// Read-modify-write, so bumping the round keeps everything else meta.json holds.
+async function persistRound() {
+  const prev = await readMeta();
+  await writeJson(metaFile(), { ...prev, round: currentRound, roundStartedAt }).catch(() => {});
+}
+
+// ---------- trash (so a delete can be undone) ----------
+// Deleting a comment used to remove its screenshot and its staged replacement
+// image at once, which made the overlay's undo a half-undo: the comment came
+// back, the pictures did not. They are moved here instead. The subfolder is
+// kept — shots/<id>.png and media/<id>.png share a filename, and a flat trash
+// would have one overwrite the other.
+const TRASH_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const trashDir = (kind) => path.join(DATA_DIR, 'trash', kind);
+
+async function moveAside(kind, name) {
+  const from = path.join(DATA_DIR, kind, name);
+  if (!existsSync(from)) return false;
+  const to = path.join(trashDir(kind), name);
+  await mkdir(trashDir(kind), { recursive: true });
+  // A file we cannot move is removed, as before: leaving it in place would show
+  // the picture of a comment that no longer exists.
+  try { await rename(from, to); } catch (e) { await unlink(from).catch(() => {}); return false; }
+  // Stamp it with the time it was thrown away. A rename keeps the original
+  // timestamp, so without this a screenshot taken yesterday would be pruned by
+  // the very same request that trashed it — losing the pictures of exactly the
+  // comment the undo is for.
+  const now = Date.now() / 1000;
+  await utimes(to, now, now).catch(() => {});
+  return true;
+}
+async function bringBack(kind, name) {
+  const from = path.join(trashDir(kind), name);
+  if (!existsSync(from)) return false;
+  await mkdir(path.join(DATA_DIR, kind), { recursive: true });
+  try { await rename(from, path.join(DATA_DIR, kind, name)); return true; }
+  catch (e) { return false; }
+}
+// Undo is a matter of seconds, so a day is generous. Run on each delete, which
+// is the only thing that puts files here.
+async function pruneTrash() {
+  for (const kind of ['shots', 'media']) {
+    let names = [];
+    try { names = await readdir(trashDir(kind)); } catch (e) { continue; }
+    for (const n of names) {
+      const f = path.join(trashDir(kind), n);
+      try { if (Date.now() - (await stat(f)).mtimeMs > TRASH_MAX_AGE_MS) await unlink(f); } catch (e) {}
+    }
+  }
+}
+
+// ---------- restoring a comment (PUT) ----------
+// A timestamp is kept only when it is really an ISO instant, byte for byte;
+// anything else becomes the time of the restore.
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+const isoOr = (v, fallback) => (typeof v === 'string' && ISO_RE.test(v) && Number.isFinite(Date.parse(v)) ? v : fallback);
+const REPLY_ID_RE = /^r_[A-Za-z0-9-]{8,64}$/;
+const THREAD_MAX = 200;
+// Every reply is rebuilt through makeReply, so a restore re-runs the same
+// sanitizers a fresh reply goes through. Its id and time are kept when they are
+// well-formed, so the conversation reads exactly as it did.
+function restoreThread(thread) {
+  if (!Array.isArray(thread)) return [];
+  const out = [];
+  for (const entry of thread.slice(0, THREAD_MAX)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const r = makeReply(entry);
+    if (REPLY_ID_RE.test(String(entry.id || ''))) r.id = entry.id;
+    r.createdAt = isoOr(entry.createdAt, r.createdAt);
+    out.push(r);
+  }
+  return out;
+}
+
 // ---------- API ----------
 async function handleApi(req, res, url) {
   const parts = url.pathname.replace(/^\/__feedback\/api\/?/, '').split('/').filter(Boolean);
@@ -532,6 +755,12 @@ async function handleApi(req, res, url) {
   const canComment = role !== 'view';
   const canManage = role === 'full' || role === 'admin';
   const deny = () => sendJSON(res, 403, { error: 'your share link does not allow this' });
+  // The browser's own author token (share links only), hashed. Empty when the
+  // header is absent or malformed.
+  const authorHash = authorTokenHash(req);
+  // A reviewer on a comment link may change their OWN comment, and only while it
+  // is still open — once the host side has acted on it, it is part of the record.
+  const ownsAndOpen = (c) => role === 'comment' && authorMatches(authorHash, c.authorHash) && c.status === 'open';
   // Implicit heartbeat: the agent's own calls (its poll loop, replies, PATCHes)
   // prove it is alive — no separate heartbeat discipline needed from an LLM.
   const fromAgent = canManage && isAgentRequest(req);
@@ -540,7 +769,9 @@ async function handleApi(req, res, url) {
   try {
     if (resource === 'comments') {
       const id = parts[1];
-      if (req.method === 'GET') return sendJSON(res, 200, { comments: await readComments(DATA_DIR) });
+      if (req.method === 'GET') {
+        return sendJSON(res, 200, { comments: (await readComments(DATA_DIR)).map(publicComment), round: currentRound });
+      }
 
       // POST /comments/:id/reply — add a message to a comment's conversation thread
       if (req.method === 'POST' && id && parts[2] === 'reply') {
@@ -572,7 +803,7 @@ async function handleApi(req, res, url) {
           if (finishes) releasePresence(id, line, 'reply');
           else logActivity({ kind: 'reply', commentId: id, text: line });
         }
-        return sendJSON(res, 201, out);
+        return sendJSON(res, 201, { ...out, comment: publicComment(out.comment) });
       }
 
       if (req.method === 'POST' && !id) {
@@ -581,16 +812,45 @@ async function handleApi(req, res, url) {
         const comment = await mutate(DATA_DIR, (list) => {
           // Same rule as replies: only full/admin may author as the agent.
           const c = makeComment(canManage ? body : { ...body, author: 'user' });
+          // Set here, never from the body: makeComment ignores an input
+          // authorHash on purpose, so a client cannot claim someone else's.
+          if (authorHash) c.authorHash = authorHash;
+          c.round = currentRound; // a new comment always belongs to the round we are in
+
           list.push(c);
           return { comments: list, value: c };
         });
         broadcastSoon();
-        return sendJSON(res, 201, { comment });
+        return sendJSON(res, 201, { comment: publicComment(comment) });
       }
 
       if (req.method === 'PATCH' && id) {
-        if (!canManage) return deny();
         const body = await readJson(req);
+        // Below admin: the only allowed PATCH is a person tidying up their own
+        // still-open comment, and only its wording and type. Anything else in
+        // the body is ignored rather than refused — the request is legitimate,
+        // those fields simply are not theirs to set. Checked on a plain read
+        // first so a refusal never rewrites the file.
+        if (!canManage) {
+          const found = (await readComments(DATA_DIR)).find((x) => x.id === id);
+          if (!found) return sendJSON(res, 404, { error: 'not found' });
+          if (!ownsAndOpen(found)) return deny();
+          let refused = false;
+          const own = await mutate(DATA_DIR, (list) => {
+            const c = list.find((x) => x.id === id);
+            if (!c) return { comments: list, value: { notFound: true } };
+            // Re-checked under the lock: the status may have moved on since the read.
+            if (!ownsAndOpen(c)) { refused = true; return { comments: list, value: {} }; }
+            if (typeof body.text === 'string') c.text = body.text.trim().slice(0, 10000);
+            if (ALLOWED_TYPES.includes(body.type)) c.type = coerceType(body.type, modeFor(c.sourceFile));
+            c.updatedAt = new Date().toISOString();
+            return { comments: list, value: { comment: c } };
+          });
+          if (refused) return deny();
+          if (own.notFound) return sendJSON(res, 404, { error: 'not found' });
+          broadcastSoon();
+          return sendJSON(res, 200, { comment: publicComment(own.comment) });
+        }
         let clearedMedia = false; // a cleared imageReplace orphans its staged file — GC it below
         const out = await mutate(DATA_DIR, (list) => {
           const c = list.find((x) => x.id === id);
@@ -629,20 +889,75 @@ async function handleApi(req, res, url) {
             else logActivity({ kind: 'resolve', commentId: id, text: body.status });
           }
         }
-        return sendJSON(res, 200, out);
+        return sendJSON(res, 200, { ...out, comment: publicComment(out.comment) });
+      }
+
+      // PUT /comments/:id — put a deleted comment back the way it was (the
+      // overlay's undo). The body is a comment this API handed out earlier, but
+      // it has been out of our hands since, so it is rebuilt through makeComment
+      // and only the fields that are safe to carry are copied over it. Every
+      // field that names a file is set from what is actually on disk, never from
+      // the body: a restore must not be able to point a comment at a file the
+      // person sending it should not be able to read.
+      if (req.method === 'PUT' && id) {
+        if (!canManage) return deny();
+        if (!SAFE_SHOT_ID.test(id)) return sendJSON(res, 400, { error: 'bad id' });
+        const body = await readJson(req);
+        // Its pictures are probably in the trash from the delete. Fetch them
+        // back FIRST, so the checks below see the files they are asking about.
+        await bringBack('shots', id + '.png');
+        await bringBack('shots', id + '-after.png');
+        for (const ext of MEDIA_EXTS) await bringBack('media', id + '.' + ext);
+
+        const c = makeComment(body); // re-sanitizes text, anchor, type, edits, imageReplace, via
+        c.id = id;
+        c.createdAt = isoOr(body.createdAt, c.createdAt);
+        c.updatedAt = isoOr(body.updatedAt, c.updatedAt);
+        if (STATUSES.includes(body.status)) c.status = body.status;
+        c.round = coerceRound(body.round);
+        c.thread = restoreThread(body.thread);
+        if (existsSync(path.join(DATA_DIR, 'shots', id + '.png'))) c.shot = 'shots/' + id + '.png';
+        if (existsSync(path.join(DATA_DIR, 'shots', id + '-after.png'))) c.shotAfter = 'shots/' + id + '-after.png';
+        // Only the format is read off the body; the name is always the comment id.
+        const claimed = body.imageReplace && typeof body.imageReplace === 'object' ? String(body.imageReplace.media || '') : '';
+        const ext = MEDIA_EXTS.find((e) => claimed === 'media/' + id + '.' + e);
+        if (c.imageReplace && ext && existsSync(path.join(DATA_DIR, 'media', id + '.' + ext))) {
+          c.imageReplace.media = 'media/' + id + '.' + ext;
+        }
+        const comment = await mutate(DATA_DIR, (list) => {
+          const at = list.findIndex((x) => x.id === id);
+          if (at >= 0) list[at] = c; else list.push(c);
+          return { comments: list, value: c };
+        });
+        broadcastSoon();
+        return sendJSON(res, 200, { comment: publicComment(comment) });
       }
 
       if (req.method === 'DELETE' && id) {
-        if (!canManage) return deny();
+        // Same rule as PATCH: a reviewer may take back their own comment while
+        // it is still open, nothing else.
+        if (!canManage) {
+          const found = (await readComments(DATA_DIR)).find((x) => x.id === id);
+          if (!found) return sendJSON(res, 404, { error: 'not found' });
+          if (!ownsAndOpen(found)) return deny();
+        }
+        let refusedDelete = false;
         const out = await mutate(DATA_DIR, (list) => {
-          const next = list.filter((x) => x.id !== id);
-          if (next.length === list.length) return { comments: list, value: { notFound: true } };
-          return { comments: next, value: { ok: true } };
+          const c = list.find((x) => x.id === id);
+          if (!c) return { comments: list, value: { notFound: true } };
+          // Re-checked under the lock: the status may have moved on since the read.
+          if (!canManage && !ownsAndOpen(c)) { refusedDelete = true; return { comments: list, value: {} }; }
+          return { comments: list.filter((x) => x.id !== id), value: { ok: true } };
         });
+        if (refusedDelete) return deny();
         if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
         if (SAFE_SHOT_ID.test(id)) {
-          await unlink(path.join(DATA_DIR, 'shots', id + '.png')).catch(() => {}); // GC its screenshot
-          await gcMedia(id); // …and any staged replacement image
+          // Moved aside rather than destroyed, so PUT can bring the whole
+          // comment back — pictures included. Old trash is cleared as we go.
+          await moveAside('shots', id + '.png');       // the pin-time screenshot
+          await moveAside('shots', id + '-after.png'); // …and the "after" one
+          for (const ext of MEDIA_EXTS) await moveAside('media', id + '.' + ext);
+          await pruneTrash();
         }
         broadcastSoon();
         return sendJSON(res, 200, { ok: true });
@@ -654,7 +969,12 @@ async function handleApi(req, res, url) {
     if (resource === 'shot' && parts[1]) {
       const id = parts[1];
       if (!SAFE_SHOT_ID.test(id)) return sendJSON(res, 400, { error: 'bad id' });
-      const file = path.join(DATA_DIR, 'shots', id + '.png');
+      // ?after=1 is the second picture: the same element once the change has
+      // landed, so the two can be shown side by side. Same route, same checks,
+      // its own file and its own field on the comment.
+      const after = ['1', 'true'].includes(url.searchParams.get('after'));
+      const shotPath = 'shots/' + id + (after ? '-after' : '') + '.png';
+      const file = path.join(DATA_DIR, shotPath);
       if (req.method === 'GET') {
         if (!existsSync(file)) return sendJSON(res, 404, { error: 'no shot' });
         res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
@@ -675,13 +995,13 @@ async function handleApi(req, res, url) {
           if (!c) return { comments: list, value: { notFound: true } };
           await mkdir(path.join(DATA_DIR, 'shots'), { recursive: true });
           await writeFile(file, buf);
-          c.shot = 'shots/' + id + '.png';
+          if (after) c.shotAfter = shotPath; else c.shot = shotPath;
           c.updatedAt = new Date().toISOString();
           return { comments: list, value: { comment: c } };
         });
         if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
         broadcastSoon();
-        return sendJSON(res, 200, out);
+        return sendJSON(res, 200, { ...out, comment: publicComment(out.comment) });
       }
     }
 
@@ -724,7 +1044,7 @@ async function handleApi(req, res, url) {
         });
         if (out.notFound) return sendJSON(res, 404, { error: 'not found' });
         broadcastSoon();
-        return sendJSON(res, 200, out);
+        return sendJSON(res, 200, { ...out, comment: publicComment(out.comment) });
       }
     }
     // Watch-mode presence: an agent announces itself (online / working / offline)
@@ -763,6 +1083,88 @@ async function handleApi(req, res, url) {
     // themselves and show the edited page under the now-green pins — no manual
     // refresh. The overlay reloads only when it's safe (no composer / variant
     // preview / in-progress typing open); otherwise it surfaces a "reload" nudge.
+    // The version history of a reviewed Markdown file: what it looked like when
+    // it was opened, after each change, and what changed between any two copies.
+    // Reading is open to everyone on the link (a version holds the document they
+    // are already reading, nothing more); writing is the host side's.
+    if (resource === 'history') {
+      const sub = parts[1] || '';
+      const isPost = req.method === 'POST';
+      // Role first, before anything looks at the path: a 400 for a path outside
+      // the project and a 403 for one inside it would tell a reviewer who may
+      // not write here which files exist.
+      if (isPost && !canManage) return deny();
+      const body = isPost ? await readJson(req) : {};
+      const target = resolveSourceFile(isPost ? body.file : url.searchParams.get('file'));
+      if (!target) return sendJSON(res, 400, { error: 'file must be a path inside the project' });
+      try {
+        if (req.method === 'GET') {
+          // Web mode keeps no history: there is no source file behind a page.
+          if (!MD_MODE) {
+            if (!sub) return sendJSON(res, 200, { file: target.rel, versions: [] });
+            return sendJSON(res, 404, { error: 'no such version' });
+          }
+          if (!sub) return sendJSON(res, 200, await listVersions(DATA_DIR, target.rel));
+          if (sub === 'diff') {
+            const d = await diffVersions(DATA_DIR, target.rel, url.searchParams.get('from'), url.searchParams.get('to'));
+            if (!d) return sendJSON(res, 404, { error: 'no such version' });
+            // The flat op list is the same lines again; the hunks carry what a
+            // reader needs and keep the answer small.
+            const { ops, ...rest } = d;
+            return sendJSON(res, 200, rest);
+          }
+          if (/^\d+$/.test(sub)) {
+            const v = await readHistoryVersion(DATA_DIR, target.rel, Number(sub));
+            if (!v) return sendJSON(res, 404, { error: 'no such version' });
+            return sendJSON(res, 200, v);
+          }
+        }
+        if (isPost && (sub === 'snapshot' || sub === 'restore')) {
+          if (!canManage) return deny();
+          if (!MD_MODE) return sendJSON(res, 404, { error: 'history is for --md sessions' });
+          if (sub === 'snapshot') {
+            // The processing skill calls this on either side of a batch, so the
+            // whole batch reads as one change rather than a dozen saves.
+            const reason = ['batch', 'manual'].includes(body.reason) ? body.reason : 'manual';
+            const content = await readFile(target.full, 'utf-8').catch(() => null);
+            if (content == null) return sendJSON(res, 404, { error: 'no such file' });
+            const out = await recordSnapshot(DATA_DIR, target.rel, content, { reason });
+            if (out.changed) broadcastSource(target.rel, out.version);
+            return sendJSON(res, 200, { changed: out.changed, version: out.version });
+          }
+          const want = await readHistoryVersion(DATA_DIR, target.rel, body.n);
+          if (!want) return sendJSON(res, 404, { error: 'no such version' });
+          const current = await readFile(target.full, 'utf-8').catch(() => null);
+          if (current == null) return sendJSON(res, 404, { error: 'no such file' });
+          // Keep what is there now before overwriting it: going back must never
+          // be the thing that loses work.
+          await recordSnapshot(DATA_DIR, target.rel, current, { reason: 'restore' });
+          await writeFile(target.full, want.content);
+          const out = await recordSnapshot(DATA_DIR, target.rel, want.content, { reason: 'restore' });
+          if (out.changed) broadcastSource(target.rel, out.version);
+          return sendJSON(res, 200, { ok: true, version: out.version });
+        }
+      } catch (e) {
+        if (e.code === 'ECORRUPT') return sendJSON(res, 500, { error: 'the version history for this file is unreadable — remove its folder under .feedback/history/' });
+        throw e;
+      }
+      return sendJSON(res, 404, { error: 'unknown endpoint' });
+    }
+
+    // Which review round we are in, and when it started. Everyone on the link
+    // may read it; starting a new one is the host side's call.
+    if (resource === 'round') {
+      if (req.method === 'GET') return sendJSON(res, 200, { round: currentRound, startedAt: roundStartedAt });
+      if (req.method === 'POST') {
+        if (!canManage) return deny();
+        currentRound += 1;
+        roundStartedAt = new Date().toISOString();
+        await persistRound();
+        broadcastRound();
+        logActivity({ kind: 'round', text: 'round ' + currentRound + ' started' });
+        return sendJSON(res, 200, { round: currentRound, startedAt: roundStartedAt });
+      }
+    }
     if (resource === 'reload' && req.method === 'POST') {
       if (!canManage) return deny();
       broadcastReload();
@@ -1030,7 +1432,8 @@ function handleSSE(req, res) {
   res.on('error', cleanup);
 }
 function broadcastComments(comments) {
-  const payload = 'event: comments\ndata: ' + JSON.stringify({ comments }) + '\n\n';
+  // Same rule as the API: the author hashes stay on disk (see publicComment).
+  const payload = 'event: comments\ndata: ' + JSON.stringify({ comments: comments.map(publicComment) }) + '\n\n';
   // Skip if identical to the last payload (file-watch + our own write both fire).
   const h = crypto.createHash('sha1').update(payload).digest('hex');
   if (h === _lastBroadcast) return;
@@ -1160,7 +1563,7 @@ function logActivity(entry) {
   const e = {
     id: 'a' + (++_activitySeq),
     at: Date.now(),
-    kind: ['edit', 'note', 'reply', 'resolve', 'claim', 'done', 'idle'].includes(entry.kind) ? entry.kind : 'note',
+    kind: ['edit', 'note', 'reply', 'resolve', 'claim', 'done', 'idle', 'round'].includes(entry.kind) ? entry.kind : 'note',
     text: String(entry.text == null ? '' : entry.text).slice(0, 200),
     file: entry.file ? String(entry.file).slice(0, 200) : '',
     // An untagged entry (a hook's "edited file X") belongs to whatever is being worked on now.
@@ -1186,6 +1589,12 @@ async function applyPresenceFile() {
     if (p.state) setPresence(p);
     else touchPresence();
   } catch (e) { /* missing or half-written — the next write will land */ }
+}
+// A new review round has started: open overlays retitle themselves and start
+// separating what comes in now from what came before.
+function broadcastRound() {
+  const payload = 'event: round\ndata: ' + JSON.stringify({ round: currentRound, startedAt: roundStartedAt }) + '\n\n';
+  for (const res of [...sseClients]) writeSse(res, payload);
 }
 function broadcastReload() {
   const payload = 'event: reload\ndata: ' + JSON.stringify({ at: Date.now() }) + '\n\n';
@@ -1570,7 +1979,9 @@ async function renderMd(file) {
   // addresses, so a plain Markdown link can still point at a javascript:
   // address with no raw HTML involved anywhere.
   const body = linksOpenNewTab(sanitizeRenderedHtml(marked.parse(src, opts)));
-  const rel = path.relative(CWD, file).split(path.sep).join('/');
+  const rel = relFromCwd(file);
+  // Start watching this document for changes, and keep the copy it opened with.
+  await noteSourceServed(rel, file, src);
   // Header display: a file outside the cwd would show a ../../../ chain of
   // machine internals — show it relative to the --md root instead (which for a
   // single file is just its name). The STORED sourceFile stays `rel`, exact.
@@ -1783,14 +2194,23 @@ function warnIfDataFarFromSource() {
 }
 
 // ---------- banner ----------
+// Read first, then write: this file also carries the review round, which belongs
+// to the review rather than to this run. Overwriting the whole file on every
+// start would silently put a round-3 review back to round 1.
 async function writeSiteMeta(url) {
-  await writeJson(path.join(DATA_DIR, 'meta.json'), {
+  const prev = await readMeta();
+  if (prev.round !== undefined) currentRound = coerceRound(prev.round);
+  roundStartedAt = isoOr(prev.roundStartedAt, roundStartedAt);
+  await writeJson(metaFile(), {
+    ...prev,
     label: LABEL || undefined,
     url,
     served: PROXY || (MD_MODE ? String(args.md) : (STATIC_DIR ? path.relative(CWD, STATIC_DIR).split(path.sep).join('/') : '')) || undefined,
     mode: PROXY ? 'proxy' : (MD_MODE ? 'md' : 'static'),
     port: PORT,
     startedAt: new Date().toISOString(),
+    round: currentRound,
+    roundStartedAt,
   }).catch(() => {});
 }
 
@@ -1918,9 +2338,33 @@ async function seedAgents() {
   console.log(`\n  Your agent now knows to process .feedback/ comments on "process the feedback" (or PPF).\n`);
 }
 
+// ---------- stamp markers and stop (--stamp) ----------
+// The same work POST /md-export does, without a server or a browser: useful in a
+// script, or when the review session is already closed. --md may be given
+// alongside so a document outside this folder counts as an allowed target, and
+// --data-dir picks a different set of comments.
+async function stampAndExit() {
+  if (!existsSync(DATA_FILE)) {
+    const where = path.relative(CWD, DATA_FILE).split(path.sep).join('/') || DATA_FILE;
+    console.error(`\n  No comments to stamp: ${where} does not exist.`);
+    console.error(`  Run a review session first, or point --data-dir at the folder that holds them.\n`);
+    process.exit(1);
+  }
+  const roots = MD_ROOT ? [CWD, MD_ROOT] : [CWD];
+  const r = await stampMarkers(DATA_DIR, CWD, roots);
+  const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  const extra = [];
+  if (r.updated) extra.push(`${plural(r.updated, 'marker')} updated`);
+  if (r.notFound) extra.push(`${r.notFound} skipped: no unique matching line`);
+  console.log(`Stamped ${plural(r.stamped, 'marker')} into ${plural(r.files, 'file')}${extra.length ? ` (${extra.join(', ')})` : ''}`);
+  process.exit(0);
+}
+
 // ---------- main ----------
 async function main() {
   if (args['seed-agents']) { await seedAgents(); return; }
+  // Before the build-directory check below: stamping needs no site to serve.
+  if (args.stamp) { await stampAndExit(); return; }
   if (DEMO) await setupDemo();
   if (!PROXY && !MD_MODE && !STATIC_DIR) {
     console.error(`\n  No build directory found. Tried: ${AUTODETECT.join(', ')}.`);
@@ -1936,6 +2380,9 @@ async function main() {
   // the write. The no-op mutate re-reads under the lock, so it creates-if-absent
   // and preserves whatever another process just wrote.
   if (!existsSync(DATA_FILE)) await mutate(DATA_DIR, (list) => ({ comments: list }));
+  // Pick the review back up where it was left: which round we are in is read
+  // before the first request can arrive.
+  await loadRound();
   // Drop the self-contained processing guide next to the data (regenerated each run,
   // like FEEDBACK.md) so any agent — plugin or not — has the workflow on hand.
   await exportProcessInstructions(DATA_DIR, LABEL).catch(() => {});

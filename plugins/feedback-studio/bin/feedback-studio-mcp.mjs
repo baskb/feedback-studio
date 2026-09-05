@@ -20,7 +20,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  STATUSES, ALLOWED_TYPES, WEB_TYPES, MD_TYPES,
+  STATUSES, ALLOWED_TYPES, WEB_TYPES, MD_TYPES, coerceRound,
   readComments, mutate, makeComment, makeReply, exportProcessInstructions, writeJson,
 } from '../lib/store.mjs';
 
@@ -33,6 +33,14 @@ const FEEDBACK_DIR = process.env.FEEDBACK_DIR
 function siteLabel() {
   try { const m = JSON.parse(readFileSync(path.join(FEEDBACK_DIR, 'meta.json'), 'utf8')); return m && m.label ? String(m.label) : ''; }
   catch (e) { return ''; }
+}
+
+// The review round the site is in, written to meta.json by the review server.
+// Read fresh on each use: the round can change while this process is running.
+// No meta.json, or nothing sensible in it, means the review is on its first round.
+function siteRound() {
+  try { const m = JSON.parse(readFileSync(path.join(FEEDBACK_DIR, 'meta.json'), 'utf8')); return coerceRound(m && m.round); }
+  catch (e) { return 1; }
 }
 
 // Single-source the version from the plugin manifest (don't hand-maintain it here).
@@ -205,6 +213,7 @@ async function callTool(name, rawArgs) {
         anchor: { type: 'element', selector: args.anchor && args.anchor.selector, snippet: args.anchor && args.anchor.snippet },
         author: 'agent',
         authorName: args.authorName || 'agent',
+        round: siteRound(), // the round the review is in, same as an HTTP comment
       });
       list.push(comment);
       return { comments: list, value: comment };

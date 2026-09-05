@@ -26,6 +26,7 @@ import { captureShot } from '/__feedback/overlay/shots.mjs';
 import { setMode, pickElement } from '/__feedback/overlay/mode.mjs';
 import { closeComposer } from '/__feedback/overlay/composer.mjs';
 import { setPanel, refresh } from '/__feedback/overlay/panel.mjs';
+import { t, tn } from '/__feedback/overlay/i18n.mjs';
 
 let _narrEngine = null;
 async function loadNarrEngine() {
@@ -40,7 +41,7 @@ function narrKeyFor(el) {
   const a = buildElementAnchor(el);
   return { key: a.selector || a.xpath || a.tag, text: a.snippet || '', anchor: a };
 }
-function narrCloseHover(t) { if (S.narrCur) { S.narrCur.t1 = t; S.narrHovers.push(S.narrCur); S.narrCur = null; } }
+function narrCloseHover(at) { if (S.narrCur) { S.narrCur.t1 = at; S.narrHovers.push(S.narrCur); S.narrCur = null; } }
 
 const narrMove = (e) => {
   if (!S.narrating || isInUI(e)) return;
@@ -68,7 +69,7 @@ const narrClick = (e) => {
 function updateNarrPointing(text) {
   if (!S.narrBar) return;
   const p = S.narrBar.querySelector('.kbf-narr-point');
-  if (p) p.textContent = text ? ('pointing at: ' + text.slice(0, 40)) : '';
+  if (p) p.textContent = text ? t('pointing at: {text}', { text: text.slice(0, 40) }) : '';
 }
 function updateNarrTicker(text) {
   if (!S.narrBar) return;
@@ -82,16 +83,16 @@ function showNarrBar() {
   S.narrBar.innerHTML = `
     <span class="kbf-narr-dot"></span>
     <span class="kbf-narr-live">
-      <span class="kbf-narr-ticker">Listening… talk me through the page.</span>
+      <span class="kbf-narr-ticker">${t('Listening… talk me through the page.')}</span>
       <span class="kbf-narr-point"></span>
     </span>
-    <label class="kbf-langwrap kbf-narr-lang" title="Voice language: ${escapeHtml(langName(S.speechLang))}">
+    <label class="kbf-langwrap kbf-narr-lang" title="${escapeHtml(t('Voice language: {name}', { name: langName(S.speechLang) }))}">
       <span class="kbf-lang" aria-hidden="true">${escapeHtml(langShort(S.speechLang))}</span>
-      <select class="kbf-langselect" aria-label="Voice language">
+      <select class="kbf-langselect" aria-label="${t('Voice language')}">
         ${LANGS.map((l) => `<option value="${l.code}"${l.code === S.speechLang ? ' selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}
       </select>
     </label>
-    <button type="button" class="kbf-narr-stop" data-narr="stop">${I.stop}<span>Stop &amp; review</span></button>`;
+    <button type="button" class="kbf-narr-stop" data-narr="stop">${I.stop}<span>${escapeHtml(t('Stop & review'))}</span></button>`;
   root.appendChild(S.narrBar);
   S.narrBar.querySelector('[data-narr="stop"]').addEventListener('click', stopNarrate);
   // Blur after picking so the <select> doesn't keep focus — otherwise pressing
@@ -104,18 +105,18 @@ function setNarrLang(code) {
   LS.set('kbf-voicelang', code);
   if (S.narrBar) {
     const chip = S.narrBar.querySelector('.kbf-narr-lang .kbf-lang'); if (chip) chip.textContent = langShort(code);
-    const w = S.narrBar.querySelector('.kbf-narr-lang'); if (w) w.title = 'Voice language: ' + langName(code);
+    const w = S.narrBar.querySelector('.kbf-narr-lang'); if (w) w.title = t('Voice language: {name}', { name: langName(code) });
   }
   // switch the running recogniser to the new language mid-session (onend restarts it)
   if (S.narrating && S.narrRec) { S.narrRec.lang = code; try { S.narrRec.stop(); } catch (e) {} }
-  toast('Voice language: ' + langName(code));
+  toast(t('Voice language: {name}', { name: langName(code) }));
 }
 function hideNarrBar() { if (S.narrBar) { try { S.narrBar.remove(); } catch (e) {} S.narrBar = null; } }
 
 export function startNarrate() {
   if (!CAN_COMMENT) return;
   if (S.narrating) { stopNarrate(); return; }
-  if (!SR) { toastError('Voice needs Chrome or Edge over a secure connection'); return; }
+  if (!SR) { toastError(t('Voice needs Chrome or Edge over a secure connection')); return; }
   // narration is its own mode; make sure comment mode / composer / walkthrough
   // are off (a live walkthrough speaks aloud — the mic would hear the agent).
   if (S.mode) setMode(false);
@@ -158,17 +159,17 @@ export function startNarrate() {
         }
       } else interim += seg;
     }
-    updateNarrTicker(norm(interim) || (S.narrTranscript.length ? '“' + S.narrTranscript[S.narrTranscript.length - 1].text + '”' : 'Listening…'));
+    updateNarrTicker(norm(interim) || (S.narrTranscript.length ? '“' + S.narrTranscript[S.narrTranscript.length - 1].text + '”' : t('Listening…')));
   };
-  narrRec.onerror = (ev) => { if (session === S.narrSession && (ev.error === 'not-allowed' || ev.error === 'service-not-allowed')) { toastError('Microphone blocked — allow mic access'); stopNarrate(); } };
+  narrRec.onerror = (ev) => { if (session === S.narrSession && (ev.error === 'not-allowed' || ev.error === 'service-not-allowed')) { toastError(t('Microphone blocked — allow mic access')); stopNarrate(); } };
   narrRec.onend = () => { if (session === S.narrSession && S.narrating) { try { S.narrRec.start(); } catch (e) {} } };
   try { narrRec.start(); } catch (e) {}
   clearTimeout(S.narrTimeout);
-  S.narrTimeout = setTimeout(() => { if (S.narrating) { toast('Narration auto-stopped after 10 min'); stopNarrate(); } }, 600000);
+  S.narrTimeout = setTimeout(() => { if (S.narrating) { toast(t('Narration auto-stopped after 10 min')); stopNarrate(); } }, 600000);
   // One-time privacy note: continuous capture routes audio through the
   // browser's cloud speech recognizer (shown once per browser).
-  if (!LS.get('kbf-narr-privacy')) { LS.set('kbf-narr-privacy', '1'); toast('Narrating — talk and point. (Voice is transcribed by your browser’s speech service.) Hit Stop when done.', { duration: 5000 }); }
-  else toast('Narrating — talk and point. Hit Stop when done.');
+  if (!LS.get('kbf-narr-privacy')) { LS.set('kbf-narr-privacy', '1'); toast(t('Narrating — talk and point. (Voice is transcribed by your browser’s speech service.) Hit Stop when done.'), { duration: 5000 }); }
+  else toast(t('Narrating — talk and point. Hit Stop when done.'));
 }
 
 export async function stopNarrate() {
@@ -188,10 +189,10 @@ export async function stopNarrate() {
   // resets these arrays) can't make us correlate the wrong session's data.
   const transcript = S.narrTranscript.slice(), hovers = S.narrHovers.slice(), clicks = S.narrClicks.slice();
   const eng = await loadNarrEngine();
-  if (!eng) { toastError('Could not load the narration engine'); return; }
+  if (!eng) { toastError(t('Could not load the narration engine')); return; }
   // `mode` picks the verb set: a spoken note on a document becomes rephrase / expand / delete / comment, not fix / change.
   const drafts = eng.correlate(transcript, { hovers, clicks }, { mode: MODE }).filter((d) => (d.text || '').trim());
-  if (!drafts.length) { toast('No feedback caught — nothing to review'); return; }
+  if (!drafts.length) { toast(t('No feedback caught — nothing to review')); return; }
   // Confident ones behave exactly like a manual comment: they're pinned right
   // away and PPF picks them up — no accept step. Only the ones we couldn't
   // confidently place ask the reviewer to point at the element.
@@ -200,11 +201,11 @@ export async function stopNarrate() {
   let saved = 0;
   const failed = [];
   for (const d of confident) { try { if (await saveNarrationComment(d)) saved++; else failed.push(d); } catch (e) { failed.push(d); } }
-  if (saved) { refresh(); toast(saved + ' spoken comment' + (saved === 1 ? '' : 's') + ' pinned'); }
-  if (failed.length) toastError(failed.length + ' comment' + (failed.length === 1 ? "" : 's') + " couldn't save — review below");
+  if (saved) { refresh(); toast(tn('{n} spoken comment pinned', '{n} spoken comments pinned', saved)); }
+  if (failed.length) toastError(tn('{n} comment couldn’t save — review below', '{n} comments couldn’t save — review below', failed.length));
   const review = needPin.concat(failed); // don't drop failed saves — surface them for retry/pin
   if (review.length) openDraftTray(review);
-  else if (!saved) toast('No feedback caught — nothing to review');
+  else if (!saved) toast(t('No feedback caught — nothing to review'));
 }
 
 // POST one narration draft as a real comment (the confident path + the "placed
@@ -229,15 +230,15 @@ function openDraftTray(drafts) {
   S.draftTray.className = 'kbf-drafts';
   S.draftTray.innerHTML = `
     <div class="kbf-drafts-head">
-      <b>${n} spoken comment${n === 1 ? '' : 's'} need${n === 1 ? 's' : ''} a spot</b>
-      <span class="kbf-drafts-sub">I heard ${n === 1 ? 'this' : 'these'} but wasn’t sure where — point at the element</span>
-      <button type="button" class="kbf-x" data-dr="close" title="Dismiss">${I.close}</button>
+      <b>${tn('{n} spoken comment needs a spot', '{n} spoken comments need a spot', n)}</b>
+      <span class="kbf-drafts-sub">${tn('I heard this but wasn’t sure where — point at the element', 'I heard these but wasn’t sure where — point at the element', n)}</span>
+      <button type="button" class="kbf-x" data-dr="close" title="${t('Dismiss')}">${I.close}</button>
     </div>
     <div class="kbf-drafts-list"></div>
     <div class="kbf-drafts-foot">
-      <button type="button" class="kbf-btn kbf-btn--ghost" data-dr="discardall">Discard all</button>
+      <button type="button" class="kbf-btn kbf-btn--ghost" data-dr="discardall">${t('Discard all')}</button>
       <div class="kbf-spacer"></div>
-      <button type="button" class="kbf-btn kbf-btn--ghost" data-dr="saveall">Save all without pins</button>
+      <button type="button" class="kbf-btn kbf-btn--ghost" data-dr="saveall">${t('Save all without pins')}</button>
     </div>`;
   root.appendChild(S.draftTray);
   setChromeHidden(true);
@@ -260,16 +261,16 @@ function renderDraftRow(d, i) {
   row._draft = d;
   row.innerHTML = `
     <div class="kbf-draft-top">
-      <span class="kbf-draft-conf kbf-conf-${d.confidence}" title="anchor confidence: ${d.confidence}"></span>
+      <span class="kbf-draft-conf kbf-conf-${d.confidence}" title="${t('anchor confidence: {level}', { level: d.confidence })}"></span>
       <span class="kbf-draft-type-tag kbf-type-${d.type}">${d.type}</span>
-      <span class="kbf-draft-nopin">${needsSpot ? 'unsure where' : 'couldn’t save'}</span>
+      <span class="kbf-draft-nopin">${needsSpot ? t('unsure where') : t('couldn’t save')}</span>
     </div>
     <textarea class="kbf-draft-text" rows="1">${escapeHtml(d.text)}</textarea>
     <div class="kbf-draft-foot">
-      ${needsSpot ? '<button type="button" class="kbf-chip-btn kbf-draft-pin" data-d="pin">' + I.jump + ' Point to it</button>' : ''}
+      ${needsSpot ? '<button type="button" class="kbf-chip-btn kbf-draft-pin" data-d="pin">' + I.jump + ' ' + t('Point to it') + '</button>' : ''}
       <div class="kbf-spacer"></div>
-      <button type="button" class="kbf-chip-btn kbf-draft-discard" data-d="discard">${I.reject} Discard</button>
-      <button type="button" class="kbf-chip-btn kbf-draft-accept" data-d="accept">${I.check} ${needsSpot ? 'Save anyway' : 'Retry'}</button>
+      <button type="button" class="kbf-chip-btn kbf-draft-discard" data-d="discard">${I.reject} ${t('Discard')}</button>
+      <button type="button" class="kbf-chip-btn kbf-draft-accept" data-d="accept">${I.check} ${needsSpot ? t('Save anyway') : t('Retry')}</button>
     </div>`;
   const ta = row.querySelector('.kbf-draft-text');
   ta.addEventListener('input', () => { d.text = ta.value; autoGrow(ta, 120); });
@@ -286,7 +287,7 @@ function renderDraftRow(d, i) {
 }
 function startDraftPin(d, row) {
   if (S.draftTray) S.draftTray.style.display = 'none';
-  toast('Click the element this is about', { duration: 4000 });
+  toast(t('Click the element this is about'), { duration: 4000 });
   pickElement(async (el) => {
     if (S.draftTray) S.draftTray.style.display = '';
     if (el instanceof Element && el !== document.body) {
@@ -297,19 +298,19 @@ function startDraftPin(d, row) {
 }
 async function acceptDraft(d, row) {
   if (d._saving) return; // idempotent: ignore repeat clicks while the POST is in flight
-  if (!(d.text || '').trim()) { toastError('Add a note or discard this'); return; }
+  if (!(d.text || '').trim()) { toastError(t('Add a note or discard this')); return; }
   d._saving = true;
   if (row) row.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   try {
     await saveNarrationComment(d);
     if (row) row.remove();
     refresh();
-    toast('Comment added');
+    toast(t('Comment added'));
     updateDraftCount();
   } catch (e) {
     d._saving = false; // let them retry
     if (row) row.querySelectorAll('button').forEach((b) => { b.disabled = false; });
-    toastError('Save failed — ' + e.message);
+    toastError(t('Save failed — {error}', { error: e.message }));
   }
 }
 async function saveAllUnpinned() {
@@ -325,9 +326,9 @@ function updateDraftCount() {
   const n = S.draftTray.querySelectorAll('.kbf-draft').length;
   if (!n) { closeDraftTray(); return; }
   const b = S.draftTray.querySelector('.kbf-drafts-head b');
-  if (b) b.textContent = n + ' spoken comment' + (n === 1 ? '' : 's') + ' need' + (n === 1 ? 's' : '') + ' a spot';
+  if (b) b.textContent = tn('{n} spoken comment needs a spot', '{n} spoken comments need a spot', n);
   const sub = S.draftTray.querySelector('.kbf-drafts-sub');
-  if (sub) sub.textContent = 'I heard ' + (n === 1 ? 'this' : 'these') + ' but wasn’t sure where — point at the element';
+  if (sub) sub.textContent = tn('I heard this but wasn’t sure where — point at the element', 'I heard these but wasn’t sure where — point at the element', n);
 }
 export function closeDraftTray() { if (S.draftTray) { try { S.draftTray.remove(); } catch (e) {} S.draftTray = null; setChromeHidden(false); } }
 
@@ -420,9 +421,9 @@ function stopWalkSpeak() {
 }
 
 export function startWalkthrough() {
-  if (S.narrating) { toast('Stop narrating first'); return; }
+  if (S.narrating) { toast(t('Stop narrating first')); return; }
   const list = walkComments();
-  if (!list.length) { toast('No changes to walk through yet — run “Please process feedback” first.'); return; }
+  if (!list.length) { toast(t('No changes to walk through yet — run “Please process feedback” first.')); return; }
   getLangDetector(); // warm up the language detector so the first step isn't laggy
   closeWalkthrough();
   closeDraftTray(); // mutually exclusive bottom surfaces
@@ -432,17 +433,17 @@ export function startWalkthrough() {
   S.walkBar = document.createElement('div');
   S.walkBar.className = 'kbf-walk-bar';
   S.walkBar.setAttribute('role', 'group');
-  S.walkBar.setAttribute('aria-label', 'Walkthrough of changes');
+  S.walkBar.setAttribute('aria-label', t('Walkthrough of changes'));
   S.walkBar.innerHTML = `
     <div class="kbf-walk-body">
       <span class="kbf-walk-step"></span>
       <span class="kbf-walk-text"></span>
     </div>
     <div class="kbf-walk-ctrls">
-      <button type="button" data-walk="prev" title="Previous" aria-label="Previous">${I.prev}</button>
-      <button type="button" data-walk="playpause" title="Play / pause" aria-label="Play or pause">${I.pause}</button>
-      <button type="button" data-walk="next" title="Next" aria-label="Next">${I.next}</button>
-      <button type="button" class="kbf-walk-x" data-walk="close" title="Close" aria-label="Close walkthrough">${I.close}</button>
+      <button type="button" data-walk="prev" title="${t('Previous')}" aria-label="${t('Previous')}">${I.prev}</button>
+      <button type="button" data-walk="playpause" title="${t('Play / pause')}" aria-label="${t('Play or pause')}">${I.pause}</button>
+      <button type="button" data-walk="next" title="${t('Next')}" aria-label="${t('Next')}">${I.next}</button>
+      <button type="button" class="kbf-walk-x" data-walk="close" title="${t('Close')}" aria-label="${t('Close walkthrough')}">${I.close}</button>
     </div>`;
   root.appendChild(S.walkBar);
   S.walkBar.addEventListener('click', (e) => {
@@ -457,7 +458,7 @@ export function startWalkthrough() {
 function walkGo(i) {
   if (!S.walkState) return;
   stopWalkSpeak();
-  if (i >= S.walkState.list.length) { closeWalkthrough(); toast('That’s everything I changed.'); return; }
+  if (i >= S.walkState.list.length) { closeWalkthrough(); toast(t('That’s everything I changed.')); return; }
   if (i < 0) i = 0;
   S.walkState.i = i;
   const c = S.walkState.list[i];

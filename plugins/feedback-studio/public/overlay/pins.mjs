@@ -5,6 +5,8 @@ import { S, pageComments, filtered, agentRepliedAfter, editsSummary } from '/__f
 import { I, pinsLayer } from '/__feedback/overlay/ui.mjs';
 import { makePool, resolveWithConfidence, norm } from '/__feedback/overlay/dom.mjs';
 import { emit } from '/__feedback/overlay/events.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
+import { makePinDraggable } from '/__feedback/overlay/drag.mjs';
 
 export function renderPins() {
   pinsLayer.innerHTML = '';
@@ -40,18 +42,22 @@ export function renderPins() {
       + (c.status === 'rejected' ? ' is-rejected' : '')
       + (shaky ? ' is-shaky' : '')
       + (S.agent.state === 'working' && S.agent.commentId === c.id ? ' is-working' : '')
-      + (S.agent.queue.includes(c.id) && S.agent.commentId !== c.id ? ' is-queued' : '');
+      + (S.agent.queue.includes(c.id) && S.agent.commentId !== c.id ? ' is-queued' : '')
+      + (c.id === S.cursorId ? ' is-cursor' : '');
     pin.innerHTML = c.author === 'agent' ? I.bot : String(idx + 1);
     const gist = c.text || (c.textEdit && c.textEdit.after ? '“' + c.textEdit.after + '”' : editsSummary(c));
-    pin.title = (changedAfterReply ? '[text changed after the agent replied — resolve it in the List if the change is what you asked for] ' : shaky ? '[pin may be off — re-pin from the List] ' : '') + (c.author === 'agent' ? '[agent] ' : '') + gist;
+    pin.title = (changedAfterReply ? t('[text changed after the agent replied — resolve it in the List if the change is what you asked for] ') : shaky ? t('[pin may be off — re-pin from the List] ') : '') + (c.author === 'agent' ? t('[agent] ') : '') + gist;
     pin.setAttribute('role', 'button');
     pin.tabIndex = 0;
     // Hidden until positionPins() gives it real coordinates — a fixed-position
     // pin with no left/top paints at the top-left corner otherwise (the flash
     // seen when clicking through pages before the anchor is measured).
     pin.style.display = 'none';
-    pin.setAttribute('aria-label', (c.author === 'agent' ? 'Agent comment: ' : 'Comment: ') + norm(gist).slice(0, 80));
-    const activate = () => emit('comment:focus', c.id);
+    pin.setAttribute('aria-label', (c.author === 'agent' ? t('Agent comment: ') : t('Comment: ')) + norm(gist).slice(0, 80));
+    // A click focuses the card; a drag (see drag.mjs) moves the pin instead and
+    // marks the pin so the click that ends the drag is ignored.
+    const activate = () => { if (pin._kbfDragged) { pin._kbfDragged = false; return; } emit('comment:focus', c.id); };
+    makePinDraggable(pin, c);
     pin.addEventListener('click', activate);
     pin.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
     pinsLayer.appendChild(pin);

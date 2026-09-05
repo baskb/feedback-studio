@@ -6,18 +6,19 @@
 
 import { S, LS } from '/__feedback/overlay/state.mjs';
 import { $, I, host } from '/__feedback/overlay/ui.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
 
 const THEME_CYCLE = { light: 'dark', dark: 'light' };
 const THEME_ICON = { light: I.sun, dark: I.moon };
 
-function applyTheme(t) {
-  S.theme = t === 'dark' ? 'dark' : 'light';
+function applyTheme(mode) {
+  S.theme = mode === 'dark' ? 'dark' : 'light';
   host.setAttribute('data-kbf-theme', S.theme);
   LS.set('kbf-theme', S.theme);
   const themeBtn = $('kbf-theme-toggle');
   themeBtn.innerHTML = THEME_ICON[S.theme];
-  const label = 'Theme: ' + S.theme;
-  themeBtn.title = label + ' — click to switch';
+  const label = t('Theme: {mode}', { mode: S.theme === 'dark' ? t('dark') : t('light') });
+  themeBtn.title = t('{label} — click to switch', { label });
   themeBtn.setAttribute('aria-label', label);
 }
 

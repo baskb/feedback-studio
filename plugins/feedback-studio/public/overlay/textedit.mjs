@@ -8,6 +8,7 @@
 import { MODE, addTeardown } from '/__feedback/overlay/state.mjs';
 import { I, toastError } from '/__feedback/overlay/ui.mjs';
 import { norm } from '/__feedback/overlay/dom.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
 
 const PHRASING_RE = /^(a|abbr|b|bdi|bdo|br|cite|code|data|dfn|em|i|kbd|mark|q|rp|rt|ruby|s|samp|small|span|strong|sub|sup|time|u|var|wbr)$/i;
 
@@ -33,8 +34,8 @@ export function setupTextEdit(box, opts, hooks) {
   const row = document.createElement('div');
   row.className = 'kbf-editext';
   row.innerHTML = `
-    <button type="button" class="kbf-editext-btn">${I.edit}<span class="kbf-editext-label">Edit text on page</span></button>
-    <button type="button" class="kbf-editext-undo" title="Restore the original text" aria-label="Restore the original text" hidden>${I.undo}</button>`;
+    <button type="button" class="kbf-editext-btn">${I.edit}<span class="kbf-editext-label">${t('Edit text on page')}</span></button>
+    <button type="button" class="kbf-editext-undo" title="${t('Restore the original text')}" aria-label="${t('Restore the original text')}" hidden>${I.undo}</button>`;
   const ta = box.querySelector('.kbf-textarea');
   ta.parentElement.insertBefore(row, ta);
 
@@ -46,15 +47,15 @@ export function setupTextEdit(box, opts, hooks) {
   function refreshRow() {
     row.classList.toggle('is-editing', editing);
     row.classList.toggle('is-changed', changed());
-    label.textContent = editing ? 'Editing… Enter = done · Esc = cancel'
+    label.textContent = editing ? t('Editing… Enter = done · Esc = cancel')
       : changed() ? '“' + norm(el.textContent).slice(0, 42) + (norm(el.textContent).length > 42 ? '…' : '') + '”'
-      : 'Edit text on page';
+      : t('Edit text on page');
     undoBtn.hidden = !changed();
     if (hooks.validate) hooks.validate();
   }
   function start() {
     if (editing) { finish(); return; }
-    if (!getEl() || !el.isConnected) { toastError('The element changed — re-pin to edit its text.'); return; }
+    if (!getEl() || !el.isConnected) { toastError(t('The element changed — re-pin to edit its text.')); return; }
     // First edit of the session snapshots the CURRENT content as "before"
     // (drift-proof); resuming an in-progress edit keeps the same baseline.
     if (!baseline || !changed()) baseline = { html: el.innerHTML, text: norm(el.textContent) };
@@ -107,7 +108,9 @@ export function setupTextEdit(box, opts, hooks) {
   // Reopening a comment that already carries a text edit: surface it without
   // re-applying (the page may already contain the new wording).
   if (opts.kind === 'edit' && opts.comment?.textEdit?.after) {
-    label.textContent = 'Saved: “' + opts.comment.textEdit.after.slice(0, 38) + (opts.comment.textEdit.after.length > 38 ? '…' : '') + '” — click to redo';
+    label.textContent = t('Saved: “{text}” — click to redo', {
+      text: opts.comment.textEdit.after.slice(0, 38) + (opts.comment.textEdit.after.length > 38 ? '…' : ''),
+    });
   }
 
   addTeardown('textEdit', () => {

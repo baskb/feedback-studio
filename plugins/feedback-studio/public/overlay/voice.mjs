@@ -3,6 +3,7 @@
 import { S, SR, LS, langName, langShort } from '/__feedback/overlay/state.mjs';
 import { toast } from '/__feedback/overlay/ui.mjs';
 import { norm } from '/__feedback/overlay/dom.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
 
 export function stopRecognition() {
   S.voiceManualStop = true;
@@ -26,10 +27,10 @@ export function setVoiceLang(code, box, micBtn, hintText) {
   if (wrap) wrap.title = 'Voice language: ' + langName(code);
   const sel = box.querySelector('.kbf-langselect');
   if (sel && sel.value !== code) sel.value = code;
-  if (hintText) hintText.textContent = 'Listening… (' + langName(code) + ')';
+  if (hintText) hintText.textContent = t('Listening… ({name})', { name: langName(code) });
   // a live language switch takes effect on the next dictation start
   if (S.recognizing) { stopRecognition(); if (micBtn) micBtn.classList.remove('is-recording'); }
-  toast('Voice language: ' + langName(code));
+  toast(t('Voice language: {name}', { name: langName(code) }));
 }
 
 export function toggleRecognition(ta, micBtn, hint, hintText, validate, autoGrow) {
@@ -42,7 +43,7 @@ export function toggleRecognition(ta, micBtn, hint, hintText, validate, autoGrow
   if (S.recognizing) { stopRecognition(); setPressed(false); return; }
   S.voiceManualStop = false;
   let voiceErrored = false;
-  if (hintText) hintText.textContent = 'Listening… (' + langName(S.speechLang) + ')';
+  if (hintText) hintText.textContent = t('Listening… ({name})', { name: langName(S.speechLang) });
   const recognition = new SR();
   S.recognition = recognition;
   recognition.lang = S.speechLang;
@@ -87,11 +88,11 @@ export function toggleRecognition(ta, micBtn, hint, hintText, validate, autoGrow
   recognition.onerror = (ev) => {
     voiceErrored = true;
     const msg = {
-      'not-allowed': 'Microphone blocked — allow mic access',
-      'service-not-allowed': 'Microphone blocked — allow mic access',
-      'no-speech': 'No speech detected — try again',
-      'audio-capture': 'No microphone found',
-      'network': 'Voice recognition network error',
+      'not-allowed': t('Microphone blocked — allow mic access'),
+      'service-not-allowed': t('Microphone blocked — allow mic access'),
+      'no-speech': t('No speech detected — try again'),
+      'audio-capture': t('No microphone found'),
+      'network': t('Voice recognition network error'),
     }[ev.error];
     if (msg) toast(msg);
   };

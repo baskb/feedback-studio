@@ -14,6 +14,7 @@ import { api } from '/__feedback/overlay/api.mjs';
 import { schedulePos } from '/__feedback/overlay/pins.mjs';
 import { closeComposer } from '/__feedback/overlay/composer.mjs';
 import { refresh, setPanel } from '/__feedback/overlay/panel.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
 
 // Second, AUTHORITATIVE sanitation layer, run immediately before injection.
 // The server sanitizes at write time with regexes, but regexes over raw
@@ -119,7 +120,7 @@ function showVariant(index) {
   const use = v.bar.querySelector('.kbf-vuse');
   use.disabled = index < 0;
   const note = v.bar.querySelector('.kbf-vnote');
-  note.textContent = index < 0 ? 'Original' : (v.reply.variants[index].note || v.reply.variants[index].label);
+  note.textContent = index < 0 ? t('Original') : (v.reply.variants[index].note || v.reply.variants[index].label);
   requestAnimationFrame(positionVariantBar);
 }
 
@@ -133,7 +134,7 @@ async function pickVariant() {
       body: JSON.stringify({
         author: 'user',
         authorName: ROLE === 'comment' ? (LS.get('kbf-name') || '') : '',
-        text: 'Picked: ' + chosen.label + (chosen.note ? ' — ' + chosen.note : ''),
+        text: t('Picked: {label}', { label: chosen.label }) + (chosen.note ? ' — ' + chosen.note : ''),
         pick: { of: v.reply.id, index: v.index, label: chosen.label },
       }),
     });
@@ -149,9 +150,9 @@ async function pickVariant() {
     }
     closeVariantPreview();
     refresh();
-    toast('Choice recorded — your agent implements “' + chosen.label + '”');
+    toast(t('Choice recorded — your agent implements “{label}”', { label: chosen.label }));
   } catch (e) {
-    toastError('Could not record the pick — ' + e.message);
+    toastError(t('Could not record the pick — {error}', { error: e.message }));
   }
 }
 
@@ -163,7 +164,7 @@ export function openVariantPreview(comment, reply) {
   // 'medium' (buried-text) match is not trustworthy enough to replace.
   const { el, confidence } = resolveWithConfidence(comment.anchor);
   if (!el || confidence !== 'high') {
-    toastError("Couldn't confidently locate this element — re-pin the comment first.");
+    toastError(t("Couldn't confidently locate this element — re-pin the comment first."));
     return;
   }
   if (panelIsFullScreen()) setPanel(false); // the page must be visible to compare
@@ -185,13 +186,13 @@ export function openVariantPreview(comment, reply) {
   bar.className = 'kbf-vbar';
   bar.style.visibility = 'hidden'; // no top-left flash before positionVariantBar runs
   bar.setAttribute('role', 'toolbar');
-  bar.setAttribute('aria-label', 'Try the proposed options');
+  bar.setAttribute('aria-label', t('Try the proposed options'));
   bar.innerHTML = `
-    <button type="button" class="kbf-vchip is-active" data-v="-1">Original</button>
+    <button type="button" class="kbf-vchip is-active" data-v="-1">${t('Original')}</button>
     ${reply.variants.map((vv, i) => `<button type="button" class="kbf-vchip" data-v="${i}" title="${escapeHtml(vv.note || '')}">${escapeHtml(vv.label)}</button>`).join('')}
-    <span class="kbf-vnote">Original</span>
-    <button type="button" class="kbf-vuse" disabled>${I.check} Use this</button>
-    <button type="button" class="kbf-vx" title="Close (Esc)" aria-label="Close variant preview">${I.close}</button>`;
+    <span class="kbf-vnote">${t('Original')}</span>
+    <button type="button" class="kbf-vuse" disabled>${I.check} ${t('Use this')}</button>
+    <button type="button" class="kbf-vx" title="${t('Close (Esc)')}" aria-label="${t('Close variant preview')}">${I.close}</button>`;
   root.appendChild(bar);
   bar.addEventListener('click', (e) => {
     const chip = e.target.closest('.kbf-vchip');

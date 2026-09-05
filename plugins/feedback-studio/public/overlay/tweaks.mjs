@@ -12,6 +12,27 @@ import { S, placeholderFor } from '/__feedback/overlay/state.mjs';
 import { I } from '/__feedback/overlay/ui.mjs';
 import { norm, resolveWithConfidence } from '/__feedback/overlay/dom.mjs';
 import { schedulePos } from '/__feedback/overlay/pins.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
+
+// Translate a TWEAK_CONTROLS label. Kept as a literal-per-case switch (rather
+// than t(ctl.label)) so every Dutch string stays a static, greppable translation call.
+function tLabel(en) {
+  switch (en) {
+    case 'Text size': return t('Text size');
+    case 'Weight': return t('Weight');
+    case 'Align': return t('Align');
+    case 'Text color': return t('Text color');
+    case 'Line height': return t('Line height');
+    case 'Background color': return t('Background color');
+    case 'Padding': return t('Padding');
+    case 'Margin': return t('Margin');
+    case 'Corners': return t('Corners');
+    case 'Gap': return t('Gap');
+    case 'Opacity': return t('Opacity');
+    default: return en;
+  }
+}
+const ALIGN_LABEL = { left: () => t('Align left'), center: () => t('Align center'), right: () => t('Align right') };
 
 export const TWEAK_ATTR = 'data-kbf-tweak';
 export const TWEAK_STYLE_ID = 'kbf-tweak-style';
@@ -78,11 +99,11 @@ export function isTranslucent(v) {
 }
 const fmtPx = (n) => (Math.round(n * 10) / 10) + 'px';
 // 4 side/corner values → the shortest CSS shorthand ("16px", "16px 24px", …).
-function shorthand4(t, r, b, l) {
-  if (t === r && r === b && b === l) return t;
-  if (t === b && r === l) return t + ' ' + r;
-  if (r === l) return t + ' ' + r + ' ' + b;
-  return t + ' ' + r + ' ' + b + ' ' + l;
+function shorthand4(top, r, b, l) {
+  if (top === r && r === b && b === l) return top;
+  if (top === b && r === l) return top + ' ' + r;
+  if (r === l) return top + ' ' + r + ' ' + b;
+  return top + ' ' + r + ' ' + b + ' ' + l;
 }
 
 // Read the element's current computed values for every knob (the "from" side).
@@ -174,7 +195,7 @@ export function setupTweaks(box, opts, hooks) {
   wrap.className = 'kbf-tweak';
   wrap.innerHTML = `
     <button type="button" class="kbf-tweak-toggle" aria-expanded="false">
-      ${I.sliders}<span class="kbf-tweak-title">Tweak style</span>
+      ${I.sliders}<span class="kbf-tweak-title">${t('Tweak style')}</span>
       <span class="kbf-tweak-count" hidden></span>
       <span class="kbf-tweak-chev">${I.down}</span>
     </button>
@@ -183,43 +204,44 @@ export function setupTweaks(box, opts, hooks) {
       ${TWEAK_CONTROLS.map((ctl) => {
         const st = base[ctl.prop];
         const off = ctl.when && !ctl.when(info);
+        const label = tLabel(ctl.label);
         let control = '';
         if (ctl.kind === 'px' || ctl.kind === 'px4' || ctl.kind === 'pct') {
           const unit = ctl.kind === 'pct' ? '%' : 'px';
           control = `
             <span class="kbf-tweak-num">
-              <button type="button" class="kbf-tweak-step" data-step="-1" title="Decrease (Shift: ±10)" aria-label="Decrease ${ctl.label}">−</button>
-              <input class="kbf-tweak-input" type="number" step="1" value="${st.num}" aria-label="${ctl.label} in ${unit === '%' ? 'percent' : 'pixels'}">
+              <button type="button" class="kbf-tweak-step" data-step="-1" title="${t('Decrease (Shift: ±10)')}" aria-label="${t('Decrease {label}', { label })}">−</button>
+              <input class="kbf-tweak-input" type="number" step="1" value="${st.num}" aria-label="${unit === '%' ? t('{label} in percent', { label }) : t('{label} in pixels', { label })}">
               <span class="kbf-tweak-unit">${unit}</span>
-              <button type="button" class="kbf-tweak-step" data-step="1" title="Increase (Shift: ±10)" aria-label="Increase ${ctl.label}">+</button>
+              <button type="button" class="kbf-tweak-step" data-step="1" title="${t('Increase (Shift: ±10)')}" aria-label="${t('Increase {label}', { label })}">+</button>
             </span>`;
         } else if (ctl.kind === 'weight') {
           const ws = [100, 200, 300, 400, 500, 600, 700, 800, 900];
           if (!ws.includes(st.num)) { ws.push(st.num); ws.sort((a, b) => a - b); }
-          control = `<select class="kbf-tweak-select" aria-label="${ctl.label}">${ws.map((w) => `<option value="${w}"${w === st.num ? ' selected' : ''}>${w}</option>`).join('')}</select>`;
+          control = `<select class="kbf-tweak-select" aria-label="${label}">${ws.map((w) => `<option value="${w}"${w === st.num ? ' selected' : ''}>${w}</option>`).join('')}</select>`;
         } else if (ctl.kind === 'align') {
           control = `
-            <span class="kbf-tweak-alignseg" role="group" aria-label="${ctl.label}">
-              ${['left', 'center', 'right'].map((a) => `<button type="button" class="kbf-tweak-alignbtn${st.val === a ? ' is-active' : ''}" data-align="${a}" title="Align ${a}" aria-label="Align ${a}">${I['align' + a[0].toUpperCase()]}</button>`).join('')}
+            <span class="kbf-tweak-alignseg" role="group" aria-label="${label}">
+              ${['left', 'center', 'right'].map((a) => `<button type="button" class="kbf-tweak-alignbtn${st.val === a ? ' is-active' : ''}" data-align="${a}" title="${ALIGN_LABEL[a]()}" aria-label="${ALIGN_LABEL[a]()}">${I['align' + a[0].toUpperCase()]}</button>`).join('')}
             </span>`;
         } else if (ctl.kind === 'color') {
           const bg = st.hex || (st.translucent ? st.raw : '');
           control = `
-            <span class="kbf-tweak-colorwrap${bg ? '' : ' is-none'}" title="${ctl.label}${st.translucent ? ': ' + st.raw : ''}">
+            <span class="kbf-tweak-colorwrap${bg ? '' : ' is-none'}" title="${label}${st.translucent ? ': ' + st.raw : ''}">
               <span class="kbf-tweak-swatch"${bg ? ` style="background:${bg}"` : ''}></span>
-              <span class="kbf-tweak-hex">${st.hex || (st.translucent ? 'alpha' : 'none')}</span>
-              <input class="kbf-tweak-color" type="color" value="${st.hex || '#888888'}" aria-label="${ctl.label}">
+              <span class="kbf-tweak-hex">${st.hex || (st.translucent ? t('alpha') : t('none'))}</span>
+              <input class="kbf-tweak-color" type="color" value="${st.hex || '#888888'}" aria-label="${label}">
             </span>`;
         }
         return `
-          <div class="kbf-tweak-row${off ? ' kbf-tweak-row--off' : ''}" data-prop="${ctl.prop}" data-kind="${ctl.kind}"${st.mixed ? ` title="Sides differ (${st.css}) — changing sets all sides"` : ''}>
-            <span class="kbf-tweak-label">${ctl.label}${st.mixed ? ' <em class="kbf-tweak-mixed">mixed</em>' : ''}</span>
+          <div class="kbf-tweak-row${off ? ' kbf-tweak-row--off' : ''}" data-prop="${ctl.prop}" data-kind="${ctl.kind}"${st.mixed ? ` title="${t('Sides differ ({css}) — changing sets all sides', { css: st.css })}"` : ''}>
+            <span class="kbf-tweak-label">${label}${st.mixed ? ' <em class="kbf-tweak-mixed">' + t('mixed') + '</em>' : ''}</span>
             ${control}
-            <button type="button" class="kbf-tweak-undo" title="Reset ${ctl.label}" aria-label="Reset ${ctl.label}">${I.undo}</button>
+            <button type="button" class="kbf-tweak-undo" title="${t('Reset {label}', { label })}" aria-label="${t('Reset {label}', { label })}">${I.undo}</button>
           </div>`;
       }).join('')}
         <div class="kbf-tweak-foot">
-          <button type="button" class="kbf-tweak-resetall" hidden>Reset all</button>
+          <button type="button" class="kbf-tweak-resetall" hidden>${t('Reset all')}</button>
         </div>
       </div>
     </div>`;
@@ -255,7 +277,7 @@ export function setupTweaks(box, opts, hooks) {
     countBadge.hidden = !tweaks.size;
     countBadge.textContent = String(tweaks.size);
     resetAllBtn.hidden = !tweaks.size;
-    ta.placeholder = tweaks.size ? 'Optional note — the tweaks above are the change' : placeholderFor(S.ctype);
+    ta.placeholder = tweaks.size ? t('Optional note — the tweaks above are the change') : placeholderFor(S.ctype);
     applyPreview();
     if (hooks.validate) hooks.validate();
   }

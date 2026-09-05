@@ -6,7 +6,17 @@
 // exported element references are undefined by design — they are live bindings,
 // so importers see the real nodes the moment they exist.
 
-import { S, LABEL } from '/__feedback/overlay/state.mjs';
+import { S, LABEL, CAN_MANAGE } from '/__feedback/overlay/state.mjs';
+import { t, getLang } from '/__feedback/overlay/i18n.mjs';
+import { SORT_KEYS } from '/__feedback/lib/sort.mjs';
+
+// The wording of each sort key in the List's menu (lib/sort.mjs owns the keys).
+export function sortLabel(key) {
+  return {
+    activity: t('Latest activity'), created: t('Date created'), position: t('Position on page'),
+    attention: t('Needs attention'), status: t('Status'), type: t('Type'), replies: t('Most discussed'),
+  }[key] || key;
+}
 
 // ---------- icons ----------
 export const I = {
@@ -41,6 +51,14 @@ export const I = {
   pause: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
   prev: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 5h2v14H7zM20 5v14l-10-7z"/></svg>',
   next: '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M15 5h2v14h-2zM4 5v14l10-7z"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>',
+  sortDesc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="4" x2="12" y2="20"/><polyline points="6 14 12 20 18 14"/></svg>',
+  sortAsc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="4"/><polyline points="6 10 12 4 18 10"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>',
+  drag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></svg>',
+  back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>',
 };
 
 // ---------- the shadow host and everything inside it ----------
@@ -63,6 +81,8 @@ export let countEl;
 export let readyEl;
 export let modeBtn;
 export let toastsEl;
+export let historyEl;
+export let helpEl;
 
 export const $ = (id) => root.getElementById(id);
 
@@ -110,13 +130,15 @@ export function mountUI() {
     </div>
     <div id="kbf-composer-slot"></div>
 
-    <aside class="kbf-panel ${S.panelOpen ? 'is-open' : ''}" id="kbf-panel" role="region" aria-label="Feedback" tabindex="-1">
+    <aside class="kbf-panel ${S.panelOpen ? 'is-open' : ''}" id="kbf-panel" role="region" aria-label="${t('Feedback')}" tabindex="-1">
       <div class="kbf-panel-head">
         <div class="kbf-panel-title">
-          <h2>Feedback${LABEL ? ` <span class="kbf-site">${escapeHtml(LABEL)}</span>` : ''}</h2>
+          <h2>${t('Feedback')}${LABEL ? ` <span class="kbf-site">${escapeHtml(LABEL)}</span>` : ''}</h2>
           <div class="kbf-panel-actions">
-            <button class="kbf-x" id="kbf-theme-toggle" title="Theme" aria-label="Theme"></button>
-            <button class="kbf-x" id="kbf-panel-close" title="Close" aria-label="Close feedback panel">${I.close}</button>
+            <button class="kbf-x kbf-lang-btn" id="kbf-lang-toggle" title="${t('Switch language')}" aria-label="${t('Switch language')}">${getLang() === 'nl' ? 'NL' : 'EN'}</button>
+            <button class="kbf-x" id="kbf-help-btn" title="${t('Keyboard shortcuts')} (?)" aria-label="${t('Keyboard shortcuts')}">?</button>
+            <button class="kbf-x" id="kbf-theme-toggle" title="${t('Theme')}" aria-label="${t('Theme')}"></button>
+            <button class="kbf-x" id="kbf-panel-close" title="${t('Close')}" aria-label="${t('Close feedback panel')}">${I.close}</button>
           </div>
         </div>
         <div class="kbf-panel-sub" id="kbf-panel-sub"></div>
@@ -126,34 +148,63 @@ export function mountUI() {
         </div>
         <div class="kbf-agent-note" id="kbf-agent-note" hidden></div>
         <div class="kbf-activity" id="kbf-activity" hidden aria-label="Agent activity"></div>
-        <div class="kbf-filters" role="group" aria-label="Filter comments">
-          <button class="kbf-filter" data-filter="all" aria-pressed="false">All</button>
-          <button class="kbf-filter" data-filter="open" aria-pressed="false">Open</button>
-          <button class="kbf-filter" data-filter="resolved" aria-pressed="false">Resolved</button>
-          <button class="kbf-filter" data-filter="today" aria-pressed="false" title="Comments added or changed today">Today</button>
+        <div class="kbf-filters" role="group" aria-label="${t('Filter comments')}">
+          <button class="kbf-filter" data-filter="all" aria-pressed="false">${t('All')}</button>
+          <button class="kbf-filter" data-filter="open" aria-pressed="false">${t('Open')}</button>
+          <button class="kbf-filter" data-filter="resolved" aria-pressed="false">${t('Resolved')}</button>
+          <button class="kbf-filter" data-filter="today" aria-pressed="false" title="${t('Comments added or changed today')}">${t('Today')}</button>
+          <button class="kbf-filter" data-filter="round" aria-pressed="false" title="${t('Comments from the current review round')}" id="kbf-filter-round" hidden>${t('This round')}</button>
+        </div>
+        <div class="kbf-tools">
+          <label class="kbf-search">
+            ${I.search}
+            <input type="search" id="kbf-search" placeholder="${t('Search…')}" aria-label="${t('Search comments')}" autocomplete="off" spellcheck="false">
+            <button type="button" class="kbf-search-clear" id="kbf-search-clear" title="${t('Clear search')}" aria-label="${t('Clear search')}" hidden>${I.close}</button>
+          </label>
+          <label class="kbf-sortwrap" title="${t('Sort by')}">
+            <select id="kbf-sort" aria-label="${t('Sort by')}">
+              ${SORT_KEYS.map((k) => `<option value="${k.key}">${escapeHtml(sortLabel(k.key))}</option>`).join('')}
+            </select>
+          </label>
+          <button type="button" class="kbf-sortdir" id="kbf-sortdir" title="${t('Flip the sort direction')}" aria-label="${t('Flip the sort direction')}">${I.sortDesc}</button>
+        </div>
+        <div class="kbf-bulk" id="kbf-bulk" hidden>
+          <span class="kbf-bulk-count" id="kbf-bulk-count"></span>
+          <button type="button" class="kbf-chip-btn" data-bulk="copy" title="${t('Copy the comments shown as Markdown')}">${I.copy}<span>${t('Copy')}</span></button>
+          ${CAN_MANAGE ? `
+          <button type="button" class="kbf-chip-btn kbf-approve" data-bulk="resolve" title="${t('Resolve every comment shown')}">${I.check}<span>${t('Resolve all')}</span></button>
+          <button type="button" class="kbf-chip-btn kbf-rejectb" data-bulk="delete" title="${t('Delete every comment shown')}">${I.trash}<span>${t('Delete all')}</span></button>` : ''}
         </div>
       </div>
       <div class="kbf-list" id="kbf-list"></div>
+      <div class="kbf-history" id="kbf-history" hidden></div>
       <div class="kbf-panel-foot">
-        <span class="kbf-readyline" id="kbf-ready" title="Saved to .feedback/comments.json + FEEDBACK.md"></span>
-        <button class="kbf-btn kbf-btn--ghost kbf-walk-btn" id="kbf-walk" title="Play a guided tour of what the agent changed, read aloud" style="display:none">${I.play} Walk me through the changes</button>
-        <button class="kbf-btn kbf-btn--ghost kbf-stamp" id="kbf-stamp" title="Write these comments into the .md as @FB markers (portable + greppable)" style="display:none">Stamp .md</button>
-        <span class="kbf-copyfb-caption" title="Saved to .feedback/ — say this to your coding agent to apply the comments">Tell your agent: <strong>“Please process feedback”</strong> (PPF)</span>
+        <span class="kbf-readyline" id="kbf-ready" title="${t('Saved to .feedback/comments.json + FEEDBACK.md')}"></span>
+        <span class="kbf-round" id="kbf-round" hidden>
+          <span class="kbf-round-label" id="kbf-round-label"></span>
+          ${CAN_MANAGE ? `<button type="button" class="kbf-mini kbf-round-new" id="kbf-round-new" title="${t('Start a new review round')}">${I.plus}<span>${t('New round')}</span></button>` : ''}
+        </span>
+        <button class="kbf-btn kbf-btn--ghost kbf-walk-btn" id="kbf-walk" title="${t('Play a guided tour of what the agent changed, read aloud')}" style="display:none">${I.play} ${t('Walk me through the changes')}</button>
+        <button class="kbf-btn kbf-btn--ghost kbf-stamp" id="kbf-stamp" title="${t('Write these comments into the .md as @FB markers (portable + greppable)')}" style="display:none">${t('Stamp .md')}</button>
+        <button class="kbf-btn kbf-btn--ghost kbf-history-btn" id="kbf-history-btn" title="${t('Versions of this document and what changed between them')}" style="display:none">${I.history} ${t('History')}</button>
+        <span class="kbf-copyfb-caption" title="${t('Saved to .feedback/ — say this to your coding agent to apply the comments')}">${t('Tell your agent:')} <strong>“Please process feedback”</strong> (PPF)</span>
       </div>
     </aside>
 
     <div class="kbf-fab-wrap">
-      ${LABEL ? `<div class="kbf-fab-site" title="This feedback session: ${escapeHtml(LABEL)}">${escapeHtml(LABEL)}</div>` : ''}
-      <button class="kbf-fab kbf-fab--mini" id="kbf-toggle-panel" title="Feedback list" aria-label="Open feedback list" aria-expanded="${S.panelOpen ? 'true' : 'false'}">
-        <span class="kbf-fab-label">List</span><span class="kbf-fab-ico">${I.list}<span class="kbf-count" id="kbf-count"></span></span>
+      ${LABEL ? `<div class="kbf-fab-site" title="${escapeHtml(t('This feedback session: {label}', { label: LABEL }))}">${escapeHtml(LABEL)}</div>` : ''}
+      <button class="kbf-fab kbf-fab--mini" id="kbf-toggle-panel" title="${t('Feedback list')}" aria-label="${t('Open feedback list')}" aria-expanded="${S.panelOpen ? 'true' : 'false'}">
+        <span class="kbf-fab-label">${t('List')}</span><span class="kbf-fab-ico">${I.list}<span class="kbf-count" id="kbf-count"></span></span>
       </button>
-      <button class="kbf-fab kbf-fab--talk" id="kbf-narrate" title="Talk — narrate the page by voice (T)" aria-label="Talk (narrate the page), shortcut T" aria-pressed="false">
-        <span class="kbf-fab-label">Talk</span><span class="kbf-fab-ico">${I.narrate}</span>
+      <button class="kbf-fab kbf-fab--talk" id="kbf-narrate" title="${t('Talk — narrate the page by voice (T)')}" aria-label="${t('Talk (narrate the page), shortcut T')}" aria-pressed="false">
+        <span class="kbf-fab-label">${t('Talk')}</span><span class="kbf-fab-ico">${I.narrate}</span>
       </button>
-      <button class="kbf-fab" id="kbf-toggle-mode" title="Point at an element to comment (P)" aria-pressed="false">
-        <span class="kbf-fab-label" id="kbf-mode-label">Point</span><span class="kbf-fab-ico">${I.point}</span>
+      <button class="kbf-fab" id="kbf-toggle-mode" title="${t('Point at an element to comment (P)')}" aria-pressed="false">
+        <span class="kbf-fab-label" id="kbf-mode-label">${t('Point')}</span><span class="kbf-fab-ico">${I.point}</span>
       </button>
     </div>
+
+    <div class="kbf-help" id="kbf-help" hidden role="dialog" aria-label="${t('Keyboard shortcuts')}"></div>
 
     <div class="kbf-toasts" id="kbf-toasts" role="status" aria-live="polite"></div>
   `;
@@ -174,6 +225,8 @@ export function mountUI() {
   readyEl = $('kbf-ready');
   modeBtn = $('kbf-toggle-mode');
   toastsEl = $('kbf-toasts');
+  historyEl = $('kbf-history');
+  helpEl = $('kbf-help');
 }
 
 // ---------- small shared helpers ----------
@@ -183,13 +236,13 @@ export function escapeHtml(s) {
 
 export function timeAgo(iso) {
   if (!iso) return '';
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return '';
-  const d = (Date.now() - t) / 1000;
-  if (d < 60) return 'just now';
-  if (d < 3600) return Math.floor(d / 60) + 'm ago';
-  if (d < 86400) return Math.floor(d / 3600) + 'h ago';
-  return Math.floor(d / 86400) + 'd ago';
+  const ms = new Date(iso).getTime();
+  if (isNaN(ms)) return '';
+  const d = (Date.now() - ms) / 1000;
+  if (d < 60) return t('just now');
+  if (d < 3600) return t('{n}m ago', { n: Math.floor(d / 60) });
+  if (d < 86400) return t('{n}h ago', { n: Math.floor(d / 3600) });
+  return t('{n}d ago', { n: Math.floor(d / 86400) });
 }
 
 // Grow a textarea to fit its content, up to `max` px. Used by every multi-line

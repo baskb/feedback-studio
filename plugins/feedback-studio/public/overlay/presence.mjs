@@ -11,6 +11,7 @@
 import { S, agentName, fmtDur, pinLabel, activityText } from '/__feedback/overlay/state.mjs';
 import { $, root, escapeHtml } from '/__feedback/overlay/ui.mjs';
 import { renderPanel, focusOrOpen } from '/__feedback/overlay/panel.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
 
 const QUIET_AFTER_MS = 90000;
 
@@ -18,13 +19,14 @@ function agentLine() {
   const st = S.agent.state;
   if (st === 'offline') return '';
   const quiet = S.agent.lastSeen ? Date.now() - S.agent.lastSeen : 0;
-  let s = agentName();
+  const name = agentName();
+  let s;
   if (st === 'working') {
     const lbl = S.agent.commentId ? pinLabel(S.agent.commentId) : '';
-    s += ' · working on ' + (lbl || 'a comment');
+    s = t('{name} · working on {what}', { name, what: lbl || t('a comment') });
     if (S.agent.since) s += ' · ' + fmtDur(Date.now() - S.agent.since);
-  } else s += ' is online';
-  if (quiet > QUIET_AFTER_MS) s += ' · quiet for ' + fmtDur(quiet).replace(/ \d+s$/, '');
+  } else s = t('{name} is online', { name });
+  if (quiet > QUIET_AFTER_MS) s += ' · ' + t('quiet for {dur}', { dur: fmtDur(quiet).replace(/ \d+s$/, '') });
   return s;
 }
 
@@ -38,7 +40,7 @@ export function applyAgentStatus(a) {
   if (chip) {
     chip.hidden = !on;
     chip.classList.toggle('is-working', S.agent.state === 'working');
-    chip.title = S.agent.state === 'working' && S.agent.commentId ? 'Jump to the comment being worked on' : '';
+    chip.title = S.agent.state === 'working' && S.agent.commentId ? t('Jump to the comment being worked on') : '';
   }
   const fw = root.querySelector('.kbf-fab-wrap');
   if (fw) {
@@ -105,7 +107,7 @@ export function renderActivity() {
   if (!box) return;
   box.hidden = !S.activityOpen;
   if (!S.activityOpen) return;
-  if (!S.activity.length) { box.innerHTML = '<div class="kbf-activity-empty">Nothing yet — activity shows up here while the agent works.</div>'; return; }
+  if (!S.activity.length) { box.innerHTML = '<div class="kbf-activity-empty">' + escapeHtml(t('Nothing yet — activity shows up here while the agent works.')) + '</div>'; return; }
   box.innerHTML = S.activity.slice().reverse().map((e) => {
     const t = new Date(e.at);
     const hh = String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0') + ':' + String(t.getSeconds()).padStart(2, '0');

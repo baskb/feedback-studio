@@ -6,6 +6,7 @@
 
 import { S, LS } from '/__feedback/overlay/state.mjs';
 import { root, toast } from '/__feedback/overlay/ui.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
 
 // How far the pointer must travel before a press becomes a drag. Separates tap
 // from drag on touch, and click from drag on desktop — the same idea as the
@@ -13,7 +14,17 @@ import { root, toast } from '/__feedback/overlay/ui.mjs';
 const FAB_DRAG_SLOP = 8;
 
 const FAB_CORNERS = ['br', 'bl', 'tr', 'tl'];
-const CORNER_NAME = { br: 'bottom-right', bl: 'bottom-left', tr: 'top-right', tl: 'top-left' };
+// Literal-per-case (not a plain lookup table) so each Dutch string stays a
+// static, greppable translation call.
+function cornerLabel(c) {
+  switch (c) {
+    case 'br': return t('bottom-right');
+    case 'bl': return t('bottom-left');
+    case 'tr': return t('top-right');
+    case 'tl': return t('top-left');
+    default: return c;
+  }
+}
 
 export function initFab() {
   const fabWrap = root.querySelector('.kbf-fab-wrap');
@@ -79,7 +90,7 @@ export function initFab() {
         fabWrap.addEventListener('transitionend', landHandler);
         landTimer = setTimeout(settleLanding, 320); // safety net if transitionend is missed
       }
-      toast('Buttons moved to ' + CORNER_NAME[corner]);
+      toast(t('Buttons moved to {corner}', { corner: cornerLabel(corner) }));
       S.justDraggedFab = true; // swallow the click that fires right after this pointerup
       setTimeout(() => { S.justDraggedFab = false; }, 0);
     }

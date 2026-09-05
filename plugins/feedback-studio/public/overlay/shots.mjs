@@ -17,9 +17,8 @@ function loadHti() {
   if (_hti) return Promise.resolve(_hti);
   if (_htiLoading) return _htiLoading;
   _htiLoading = (async () => {
-    for (const entry of ['es/index.js', 'dist/html-to-image.esm.js']) {
-      try { _hti = await import(ROOT + '/vendor/html-to-image/' + entry); break; } catch (e) {}
-    }
+    // The package's ES build; its extensionless imports are completed by the server.
+    try { _hti = await import(ROOT + '/vendor/html-to-image/es/index.js'); } catch (e) {}
     return _hti; // null = disabled/unavailable; we don't retry per save
   })();
   return _htiLoading;
@@ -65,7 +64,8 @@ export async function captureShot(commentId, opts) {
       backgroundColor: shotBackground(),
     });
     if (!dataUrl || dataUrl.length > 780000) return; // keep under the server's cap
-    await api('/shot/' + commentId, {
+    // `after: true` stores the picture as the "after" half of a before/after pair.
+    await api('/shot/' + commentId + (opts.after ? '?after=1' : ''), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }),
     });
   } catch (e) { /* best-effort by design */ }

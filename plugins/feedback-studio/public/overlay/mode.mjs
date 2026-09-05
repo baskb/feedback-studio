@@ -9,6 +9,7 @@ import {
 } from '/__feedback/overlay/ui.mjs';
 import { norm, buildElementAnchor, buildRangeAnchor, buildRangeAnchorFromRange } from '/__feedback/overlay/dom.mjs';
 import { openComposer, closeComposer } from '/__feedback/overlay/composer.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
 
 // How far a pointer may travel and still count as a tap rather than a scroll,
 // swipe or drag. (The FAB uses its own, smaller threshold — see fab.mjs.)
@@ -27,7 +28,7 @@ export function setMode(on, announce) {
   document.documentElement.style.cursor = on ? 'crosshair' : '';
   if (!on) { hideHighlight(); closeComposer(); }
   // Uniform with Talk: announce the mode when the user turns it on (not on load).
-  if (on && !was && announce) toast('Point mode — click any element, or select text, to comment');
+  if (on && !was && announce) toast(t('Point mode — click any element, or select text, to comment'));
 }
 
 // ---------- sentence-level aiming (md mode) ----------

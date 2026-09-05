@@ -17,6 +17,9 @@ import { setupTextEdit } from '/__feedback/overlay/textedit.mjs';
 import { setupImageReplace } from '/__feedback/overlay/image.mjs';
 import { captureShot } from '/__feedback/overlay/shots.mjs';
 import { stopRecognition, toggleRecognition, setVoiceLang } from '/__feedback/overlay/voice.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
+import { toastUndo } from '/__feedback/overlay/undo.mjs';
+import { markMine } from '/__feedback/overlay/state.mjs';
 
 export function closeComposer() {
   stopRecognition();
@@ -134,37 +137,37 @@ export function openComposer(opts) {
   const isEdit = opts.kind === 'edit';
   if (!isEdit) S.ctype = TYPES[0].id; // new comment: back to the mode default, never the previous pick
   const anchor = opts.anchor;
-  const kindLabel = anchor.type === 'range' ? 'text' : (anchor.tag || 'element');
+  const kindLabel = anchor.type === 'range' ? t('text') : (anchor.tag || t('element'));
   const snippet = norm(anchor.snippet || anchor.rangeText) || ('<' + (anchor.tag || 'element') + '>');
 
   const box = document.createElement('div');
   box.className = 'kbf-composer';
   box.setAttribute('role', 'dialog');
-  box.setAttribute('aria-label', isEdit ? 'Edit comment' : 'Add a comment');
+  box.setAttribute('aria-label', isEdit ? t('Edit comment') : t('Add a comment'));
   box.innerHTML = `
     <div class="kbf-composer-head">
       <span class="kbf-chip">${escapeHtml(kindLabel)}</span>
       <span class="kbf-snippet" title="${escapeHtml(snippet)}">${escapeHtml(snippet)}</span>
-      <button class="kbf-x" data-act="cancel" title="Cancel">${I.close}</button>
+      <button class="kbf-x" data-act="cancel" title="${t('Cancel')}">${I.close}</button>
     </div>
     <div class="kbf-composer-body">
       <div class="kbf-types">
         ${TYPES.map((t) => `<button class="kbf-type${t.id === S.ctype ? ' is-active' : ''}" data-type="${t.id}" title="${escapeHtml(t.hint)}">${t.label}</button>`).join('')}
       </div>
-      ${ROLE === 'comment' ? `<input class="kbf-name-input" maxlength="60" placeholder="Your name (shown with your comment)" value="${escapeHtml(LS.get('kbf-name') || '')}" aria-label="Your name">` : ''}
+      ${ROLE === 'comment' ? `<input class="kbf-name-input" maxlength="60" placeholder="${t('Your name (shown with your comment)')}" value="${escapeHtml(LS.get('kbf-name') || '')}" aria-label="${t('Your name')}">` : ''}
       <textarea class="kbf-textarea" placeholder="${escapeHtml(placeholderFor(S.ctype))}"></textarea>
-      <div class="kbf-rec-hint" role="status" aria-live="polite"><span class="kbf-rec-dot"></span> <span class="kbf-rec-text">Listening…</span></div>
+      <div class="kbf-rec-hint" role="status" aria-live="polite"><span class="kbf-rec-dot"></span> <span class="kbf-rec-text">${t('Listening…')}</span></div>
       <div class="kbf-composer-foot">
-        <button class="kbf-mic" data-act="mic" aria-pressed="false" aria-label="Dictate (voice to text)" title="${SR ? 'Dictate (voice to text)' : 'Voice not supported in this browser'}">${I.mic}</button>
-        <label class="kbf-langwrap" title="Voice language: ${escapeHtml(langName(S.speechLang))}">
+        <button class="kbf-mic" data-act="mic" aria-pressed="false" aria-label="${t('Dictate (voice to text)')}" title="${SR ? t('Dictate (voice to text)') : t('Voice not supported in this browser')}">${I.mic}</button>
+        <label class="kbf-langwrap" title="${escapeHtml(t('Voice language: {name}', { name: langName(S.speechLang) }))}">
           <span class="kbf-lang" aria-hidden="true">${escapeHtml(langShort(S.speechLang))}</span>
-          <select class="kbf-langselect" aria-label="Voice language">
+          <select class="kbf-langselect" aria-label="${t('Voice language')}">
             ${LANGS.map((l) => `<option value="${l.code}"${l.code === S.speechLang ? ' selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}
           </select>
         </label>
         <div class="kbf-spacer"></div>
-        <button class="kbf-btn kbf-btn--ghost" data-act="cancel">Cancel</button>
-        <button class="kbf-btn kbf-btn--primary" data-act="save" title="${isEdit ? 'Update' : 'Save'} (⌘↵ / Ctrl+Enter)" disabled>${isEdit ? 'Update' : 'Save'} <span class="kbf-kbd-hint">⌘↵</span></button>
+        <button class="kbf-btn kbf-btn--ghost" data-act="cancel">${t('Cancel')}</button>
+        <button class="kbf-btn kbf-btn--primary" data-act="save" title="${t('{action} (⌘↵ / Ctrl+Enter)', { action: isEdit ? t('Update') : t('Save') })}" disabled>${isEdit ? t('Update') : t('Save')} <span class="kbf-kbd-hint">⌘↵</span></button>
       </div>
     </div>`;
   composerSlot.appendChild(box);
@@ -303,13 +306,23 @@ async function doSave(opts, text) {
       // Enter/blur must still reach the save, never be silently dropped.
       if (opts.textEditApi && (opts.textEditApi.dirty() || opts.textEditApi.changed())) body.textEdit = textEdit;
       if (opts.imageReplace && opts.imageReplace.dirty()) body.imageReplace = imageReplace; // null clears it
+      // What the comment said before, so the edit can be undone.
+      const prev = { text: opts.comment.text, type: opts.comment.type };
+      if ('edits' in body) prev.edits = opts.comment.edits || [];
+      if ('textEdit' in body) prev.textEdit = opts.comment.textEdit || null;
+      if ('imageReplace' in body) prev.imageReplace = opts.comment.imageReplace || null;
       const data = await api('/comments/' + opts.comment.id, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       const i = S.comments.findIndex((c) => c.id === data.comment.id);
       if (i >= 0) S.comments[i] = data.comment;
       if (imageReplace && imageDataUrl) savedNew = data.comment; // upload the new bytes below
-      toast('Comment updated');
+      const id = data.comment.id;
+      toastUndo(t('Comment updated'), t('the text change'), async () => {
+        const back = await api('/comments/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(prev) });
+        const j = S.comments.findIndex((c) => c.id === id);
+        if (j >= 0) S.comments[j] = back.comment;
+      });
     } else {
       // shared "comment" links attach the reviewer's name (persisted locally)
       const nameEl = composerSlot.querySelector('.kbf-name-input');
@@ -320,7 +333,8 @@ async function doSave(opts, text) {
         body: JSON.stringify({ page: S.page, pageTitle: document.title, url: location.href, anchor: opts.anchor, text, type: S.ctype, edits, textEdit, imageReplace, authorName, sourceFile: SOURCE }),
       });
       S.comments.push(data.comment);
-      toast(edits.length || textEdit || imageReplace ? 'Saved — the page reverts; your agent applies it to source' : 'Comment saved');
+      markMine(data.comment.id);
+      toast(edits.length || textEdit || imageReplace ? t('Saved — the page reverts; your agent applies it to source') : t('Comment saved'));
       savedNew = data.comment;
     }
     // Upload the replacement image bytes to .feedback/media (needs the id), then
@@ -335,7 +349,7 @@ async function doSave(opts, text) {
       } catch (e) {
         // Upload failed — clear the dangling imageReplace so the comment doesn't
         // persist as a bare "image intended, none here" bullet.
-        toastError('Image upload failed — ' + e.message);
+        toastError(t('Image upload failed — {error}', { error: e.message }));
         try {
           const cl = await api('/comments/' + savedNew.id, {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ imageReplace: null }),
@@ -350,6 +364,6 @@ async function doSave(opts, text) {
     // capture AFTER previews reverted: the shot is the page as reviewed
     if (savedNew && !imageReplace) captureShot(savedNew.id, opts);
   } catch (e) {
-    toastError('Save failed — ' + e.message);
+    toastError(t('Save failed — {error}', { error: e.message }));
   }
 }

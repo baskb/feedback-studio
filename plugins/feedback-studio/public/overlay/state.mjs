@@ -14,7 +14,9 @@
 import { WEB_TYPES, MD_TYPES, UNIVERSAL_TYPES } from '/__feedback/lib/schema.mjs';
 import { norm } from '/__feedback/lib/anchor.mjs';
 import { normalizePath } from '/__feedback/lib/nav.mjs';
-export { normalizePath };
+import { lastTouch, matchesQuery, SORT_DEFAULT, isSortKey, defaultDir } from '/__feedback/lib/sort.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
+export { normalizePath, lastTouch };
 
 // ---------- role / config ----------
 // Share role (injected by the server under --share): 'full' when absent.
@@ -89,7 +91,7 @@ export const DEFAULT_LANG = 'en-US';
 export const langName = (code) => (LANGS.find((l) => l.code === code) || LANGS[0]).name;
 export const langShort = (code) => code.split('-')[0].toUpperCase();
 
-export const PLACEHOLDER = 'What needs to change here? (typed or spoken)';
+export const PLACEHOLDER = t('What needs to change here? (typed or spoken)');
 
 // ---------- comment types ----------
 // Comment types decide how much latitude the AI agent gets. Websites and
@@ -98,17 +100,17 @@ export const PLACEHOLDER = 'What needs to change here? (typed or spoken)';
 // the two can no longer drift apart.
 const TYPE_META = {
   web: {
-    fix: { label: 'Fix', hint: 'Something is broken or wrong — reproduce and patch it.', placeholder: 'What’s broken, and what should happen instead? (typed or spoken)' },
-    change: { label: 'Change', hint: 'Make it exactly this — apply near-verbatim, no redesign.', placeholder: 'What should this say or look like? (typed or spoken)' },
-    improve: { label: 'Improve', hint: 'This is weak — rewrite or redesign with judgement.', placeholder: 'What could be better here? (typed or spoken)' },
-    question: { label: 'Ask', hint: 'Ask about this — the agent answers in a reply, and does not change it.', placeholder: 'What’s your question about this? (typed or spoken)' },
+    fix: { label: t('Fix'), hint: t('Something is broken or wrong — reproduce and patch it.'), placeholder: t('What’s broken, and what should happen instead? (typed or spoken)') },
+    change: { label: t('Change'), hint: t('Make it exactly this — apply near-verbatim, no redesign.'), placeholder: t('What should this say or look like? (typed or spoken)') },
+    improve: { label: t('Improve'), hint: t('This is weak — rewrite or redesign with judgement.'), placeholder: t('What could be better here? (typed or spoken)') },
+    question: { label: t('Ask'), hint: t('Ask about this — the agent answers in a reply, and does not change it.'), placeholder: t('What’s your question about this? (typed or spoken)') },
   },
   md: {
-    comment: { label: 'Comment', hint: 'A general note about this passage.', placeholder: 'Your note on this passage (typed or spoken)' },
-    rephrase: { label: 'Rephrase', hint: 'Propose specific replacement wording.', placeholder: 'How should this be reworded? (typed or spoken)' },
-    expand: { label: 'Expand', hint: 'Add more detail / content here.', placeholder: 'What should be added or expanded on? (typed or spoken)' },
-    delete: { label: 'Delete', hint: 'Remove this passage.', placeholder: 'Why should this be removed? (optional, typed or spoken)' },
-    question: { label: 'Question', hint: 'Ask the agent something about this.', placeholder: 'What’s your question about this? (typed or spoken)' },
+    comment: { label: t('Comment'), hint: t('A general note about this passage.'), placeholder: t('Your note on this passage (typed or spoken)') },
+    rephrase: { label: t('Rephrase'), hint: t('Propose specific replacement wording.'), placeholder: t('How should this be reworded? (typed or spoken)') },
+    expand: { label: t('Expand'), hint: t('Add more detail / content here.'), placeholder: t('What should be added or expanded on? (typed or spoken)') },
+    delete: { label: t('Delete'), hint: t('Remove this passage.'), placeholder: t('Why should this be removed? (optional, typed or spoken)') },
+    question: { label: t('Question'), hint: t('Ask the agent something about this.'), placeholder: t('What’s your question about this? (typed or spoken)') },
   },
 };
 // MD_TYPES already carries `question`; the web set has to add the universal one.
@@ -125,12 +127,7 @@ export const placeholderFor = (id) => (TYPES.find((t) => t.id === id) || {}).pla
 // ---------- pure helpers over the comment list ----------
 export const isOpenC = (c) => c.status !== 'resolved' && c.status !== 'rejected';
 
-// Newest activity on a comment: created, updated (reply / status / edit), or its newest reply.
-export const lastTouch = (c) => {
-  let t = (c.updatedAt && c.updatedAt > (c.createdAt || '')) ? c.updatedAt : (c.createdAt || '');
-  for (const r of (Array.isArray(c.thread) ? c.thread : [])) if (r.createdAt && r.createdAt > t) t = r.createdAt;
-  return t;
-};
+// lastTouch (newest activity on a comment) is shared with the sort rules in lib/sort.mjs.
 
 // "Today" = added or touched on the reviewer's local calendar day (timestamps are UTC ISO strings).
 export const isTodayC = (c) => { const d = new Date(lastTouch(c) || 0); const n = new Date(); return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate(); };
@@ -147,12 +144,55 @@ export function pageComments() {
   return S.comments.filter((c) => normalizePath(c.page) === S.page);
 }
 
+// The List's chips and search box, applied to any list of comments. The pins
+// use the same rule, so what you hide in the List is hidden on the page too.
 export function filtered(list) {
-  if (S.filter === 'open') return list.filter(isOpenC);
-  if (S.filter === 'resolved') return list.filter((c) => c.status === 'resolved');
-  if (S.filter === 'today') return list.filter(isTodayC);
-  return list;
+  let out = list;
+  if (S.filter === 'open') out = out.filter(isOpenC);
+  else if (S.filter === 'resolved') out = out.filter((c) => c.status === 'resolved');
+  else if (S.filter === 'today') out = out.filter(isTodayC);
+  else if (S.filter === 'round') out = out.filter((c) => (c.round || 1) === S.round);
+  if (S.query) out = out.filter((c) => matchesQuery(c, S.query));
+  return out;
 }
+
+// The sort the reviewer picked, remembered for this tab. A key that no longer
+// exists falls back to the default rather than breaking the List.
+function initialSort() {
+  try {
+    const s = JSON.parse(SS.get('kbf-sort') || 'null');
+    if (s && isSortKey(s.key)) return { key: s.key, dir: s.dir === 'asc' ? 'asc' : 'desc' };
+  } catch (e) {}
+  return { ...SORT_DEFAULT };
+}
+export { defaultDir };
+
+// A share-link commenter's own comments: a random token made once per browser
+// is sent with every request; the server keeps only its hash and lets that
+// browser edit or delete its own comments while they are still open. The host
+// (full / admin) does not need it, so it is only made for the comment role.
+function authorToken() {
+  if (ROLE !== 'comment') return '';
+  let tok = LS.get('kbf-author') || '';
+  if (!/^[A-Za-z0-9_-]{32,64}$/.test(tok)) {
+    const bytes = new Uint8Array(24);
+    try { crypto.getRandomValues(bytes); } catch (e) { for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256); }
+    tok = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    LS.set('kbf-author', tok);
+  }
+  return tok;
+}
+export const AUTHOR_TOKEN = authorToken();
+// The ids this browser created, so its cards show Edit / Delete. The server
+// checks the token on every such request; this list only decides what to show.
+function loadMine() { try { return new Set(JSON.parse(LS.get('kbf-mine') || '[]')); } catch (e) { return new Set(); } }
+const MINE = loadMine();
+export function markMine(id) {
+  if (ROLE !== 'comment' || !id) return;
+  MINE.add(id);
+  LS.set('kbf-mine', JSON.stringify([...MINE].slice(-500)));
+}
+export const isMineC = (c) => ROLE === 'comment' && MINE.has(c.id);
 
 export function editsSummary(c) {
   const ed = Array.isArray(c.edits) ? c.edits : [];
@@ -211,6 +251,13 @@ export const S = {
   panelOpen: SS.get('kbf-panel') === '1',
   panelRelease: null,                          // releases the panel's focus trap (phone layout) on close
   filter: SS.get('kbf-filter') || 'all',
+  sort: initialSort(),                         // { key, dir } — see lib/sort.mjs
+  query: SS.get('kbf-query') || '',            // the List's search box
+  round: 1,                                    // the current review round, from the server
+  roundStartedAt: '',
+  view: 'list',                                // 'list' | 'history' (Markdown mode: the document's versions)
+  cursorId: null,                              // the pin the keyboard (j / k) is on
+  lang: 'en',
   theme: LS.get('kbf-theme') === 'dark' ? 'dark' : 'light', // light (default) | dark; legacy 'auto'/unset -> light
   activeComposer: null,                        // { kind:'new'|'edit', anchor, rect, comment? }
   placed: [],                                  // [{ comment, el, pinEl }]
@@ -281,11 +328,7 @@ export const S = {
   tabDone: false,
   favOrig: null,
 
-  // deletes, live stream, reload
-  // Ids deleted locally whose server DELETE is still deferred (the Undo window).
-  // An SSE broadcast in that window still contains them server-side — filtering
-  // them out of applyComments stops the deleted card flickering back for 5s.
-  pendingDeletes: new Set(),
+  // live stream, reload
   es: null,
   sseBackoff: 1000,
   reloadPending: false,

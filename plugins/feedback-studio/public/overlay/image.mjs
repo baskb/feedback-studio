@@ -9,6 +9,7 @@
 import { addTeardown, removeTeardown, hasTeardown } from '/__feedback/overlay/state.mjs';
 import { I, root, toastError } from '/__feedback/overlay/ui.mjs';
 import { schedulePos } from '/__feedback/overlay/pins.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
 
 const IMG_MAX_DIM = 2048;             // longest side after downscale
 const IMG_MAX_SRC_PIXELS = 40_000_000; // reject decompression bombs (~40 MP)
@@ -127,20 +128,20 @@ export function setupImageReplace(box, opts, hooks) {
   const wrap = document.createElement('div');
   wrap.className = 'kbf-imgrep';
   wrap.innerHTML = `
-    <div class="kbf-imgrep-head">${I.image}<span>Replace image</span><span class="kbf-imgrep-kind">${tgt.kind === 'background' ? 'background' : ''}</span></div>
+    <div class="kbf-imgrep-head">${I.image}<span>${t('Replace image')}</span><span class="kbf-imgrep-kind">${tgt.kind === 'background' ? t('background') : ''}</span></div>
     <input type="file" class="kbf-imgrep-file" accept="image/png,image/jpeg,image/webp" hidden>
-    <button type="button" class="kbf-imgrep-choose" data-ir="choose">Choose image…</button>
+    <button type="button" class="kbf-imgrep-choose" data-ir="choose">${t('Choose image…')}</button>
     <div class="kbf-imgrep-body" hidden>
-      <div class="kbf-imgrep-info"><img class="kbf-imgrep-thumb" alt=""><span class="kbf-imgrep-meta"></span><button type="button" class="kbf-imgrep-redo" data-ir="choose" title="Choose a different file">↺</button></div>
-      <div class="kbf-imgrep-row"><span class="kbf-imgrep-label">Fit</span>
+      <div class="kbf-imgrep-info"><img class="kbf-imgrep-thumb" alt=""><span class="kbf-imgrep-meta"></span><button type="button" class="kbf-imgrep-redo" data-ir="choose" title="${t('Choose a different file')}">↺</button></div>
+      <div class="kbf-imgrep-row"><span class="kbf-imgrep-label">${t('Fit')}</span>
         <span class="kbf-imgrep-seg" data-ir-seg="fit">
-          <button type="button" data-fit="cover">Cover</button><button type="button" data-fit="contain">Contain</button><button type="button" data-fit="fill">Fill</button>
+          <button type="button" data-fit="cover">${t('Cover')}</button><button type="button" data-fit="contain">${t('Contain')}</button><button type="button" data-fit="fill">${t('Fill')}</button>
         </span></div>
-      <div class="kbf-imgrep-row"><span class="kbf-imgrep-label">Align</span>
-        <span class="kbf-imgrep-grid">${IMG_ALIGN.flat().map((p) => `<button type="button" class="kbf-imgrep-cell" data-pos="${p}" aria-label="align ${p}"></button>`).join('')}</span></div>
-      <div class="kbf-imgrep-row"><span class="kbf-imgrep-label">Size</span>
-        <span class="kbf-imgrep-size"><input type="number" class="kbf-imgrep-w" min="1" max="20000" aria-label="width px"><span>×</span><input type="number" class="kbf-imgrep-h" min="1" max="20000" aria-label="height px"><span class="kbf-imgrep-unit">px</span></span></div>
-      <div class="kbf-imgrep-foot"><button type="button" class="kbf-imgrep-crop" data-ir="crop">Crop…</button><button type="button" class="kbf-imgrep-reset" data-ir="reset">Reset</button></div>
+      <div class="kbf-imgrep-row"><span class="kbf-imgrep-label">${t('Align')}</span>
+        <span class="kbf-imgrep-grid">${IMG_ALIGN.flat().map((p) => `<button type="button" class="kbf-imgrep-cell" data-pos="${p}" aria-label="${t('align {pos}', { pos: p })}"></button>`).join('')}</span></div>
+      <div class="kbf-imgrep-row"><span class="kbf-imgrep-label">${t('Size')}</span>
+        <span class="kbf-imgrep-size"><input type="number" class="kbf-imgrep-w" min="1" max="20000" aria-label="${t('width px')}"><span>×</span><input type="number" class="kbf-imgrep-h" min="1" max="20000" aria-label="${t('height px')}"><span class="kbf-imgrep-unit">px</span></span></div>
+      <div class="kbf-imgrep-foot"><button type="button" class="kbf-imgrep-crop" data-ir="crop">${t('Crop…')}</button><button type="button" class="kbf-imgrep-reset" data-ir="reset">${t('Reset')}</button></div>
     </div>`;
   const ta = box.querySelector('.kbf-textarea');
   ta.parentElement.insertBefore(wrap, ta);
@@ -187,7 +188,7 @@ export function setupImageReplace(box, opts, hooks) {
 
   async function ingest(file, cropRect) {
     if (!file) return;
-    if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) { toastError('Choose a PNG, JPEG or WebP image'); return; }
+    if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) { toastError(t('Choose a PNG, JPEG or WebP image')); return; }
     try {
       processed = await processImage(file, cropRect);
       chosenFile = file;
@@ -204,7 +205,7 @@ export function setupImageReplace(box, opts, hooks) {
       wrap.classList.add('is-active');
       markDirty();
       applyPreview();
-    } catch (e) { toastError('Image failed — ' + e.message); }
+    } catch (e) { toastError(t('Image failed — {error}', { error: e.message })); }
   }
 
   wrap.addEventListener('click', (e) => {
@@ -241,7 +242,7 @@ function openCropModal(file, processed, onApply) {
   modal.innerHTML = `
     <div class="kbf-crop-panel">
       <div class="kbf-crop-stage"><img class="kbf-crop-img" alt=""><div class="kbf-crop-box"><span class="kbf-crop-handle" data-h="se"></span></div></div>
-      <div class="kbf-crop-bar"><span class="kbf-crop-hint">Drag to move · corner to resize</span><button type="button" class="kbf-btn kbf-btn--ghost" data-crop="cancel">Cancel</button><button type="button" class="kbf-btn kbf-btn--primary" data-crop="apply">Crop</button></div>
+      <div class="kbf-crop-bar"><span class="kbf-crop-hint">${t('Drag to move · corner to resize')}</span><button type="button" class="kbf-btn kbf-btn--ghost" data-crop="cancel">${t('Cancel')}</button><button type="button" class="kbf-btn kbf-btn--primary" data-crop="apply">${t('Crop')}</button></div>
     </div>`;
   root.appendChild(modal);
   const imgEl = modal.querySelector('.kbf-crop-img');

@@ -1,9 +1,11 @@
 // Feedback Studio — live updates: the server-sent event stream, and the
 // agent-requested page reload.
 
-import { S, API, ROOT, normalizePath, scopeComments } from '/__feedback/overlay/state.mjs';
+import { S, API, ROOT, MODE, SOURCE, SS, normalizePath, scopeComments } from '/__feedback/overlay/state.mjs';
 import { $, root, toast, toastError } from '/__feedback/overlay/ui.mjs';
-import { refresh } from '/__feedback/overlay/panel.mjs';
+import { refresh, renderPanel } from '/__feedback/overlay/panel.mjs';
+import { t } from '/__feedback/overlay/i18n.mjs';
+import { emit } from '/__feedback/overlay/events.mjs';
 import { applyAgentStatus, pushActivity, renderActivity, renderAgentChip } from '/__feedback/overlay/presence.mjs';
 
 function animateResolve(id) {
@@ -12,9 +14,6 @@ function animateResolve(id) {
 }
 
 export function applyComments(next) {
-  // Skip comments the user just deleted locally (server DELETE still deferred
-  // for Undo) — a broadcast mid-window must not resurrect the card.
-  if (S.pendingDeletes.size) next = next.filter((c) => !S.pendingDeletes.has(c.id));
   next = scopeComments(next);
   const prev = new Map(S.comments.map((c) => [c.id, c.status]));
   S.comments = next;
@@ -44,15 +43,47 @@ function requestReload() {
   S.reloadPending = true;
   if (reloadIsUnsafe()) {
     // don't interrupt: offer it, and also auto-apply once the work is dismissed
-    toast('Page updated by your agent', { actionLabel: 'Reload now', duration: 8000, onAction: doReload });
+    toast(t('Page updated by your agent'), { actionLabel: t('Reload now'), duration: 8000, onAction: doReload });
     const iv = setInterval(() => { if (!reloadIsUnsafe()) { clearInterval(iv); doReload(); } }, 1000);
     // Give up after a minute (the toast still stands), but let the NEXT reload
     // request from the agent start over instead of being ignored for good.
     setTimeout(() => { clearInterval(iv); S.reloadPending = false; }, 60000);
     return;
   }
-  toast('Applying your agent’s edits — reloading…', { duration: 1200 });
+  toast(t('Applying your agent’s edits — reloading…'), { duration: 1200 });
   setTimeout(doReload, 700);
+}
+export { requestReload };
+
+// The round counter changed (someone started a new round): remember it and
+// redraw so the "This round" chip and the round tags on cards follow.
+export function applyRound(d) {
+  if (!d || !Number.isFinite(Number(d.round))) return;
+  const was = S.round;
+  S.round = Number(d.round);
+  S.roundStartedAt = d.startedAt || '';
+  if (S.panelOpen) renderPanel();
+  if (was !== S.round && was) emit('round:changed', S.round);
+}
+
+// Markdown mode: the reviewed .md changed on disk (the agent edited it, or an
+// older version was put back). Say so, offer the diff, and reload the page
+// when that is safe so the text on screen is the current text. The note
+// survives the reload (sessionStorage) so the offer is still there after it.
+function onSourceChanged(d) {
+  if (MODE !== 'md' || !d || d.file !== SOURCE) return;
+  const note = { n: d.version, a: d.added || 0, r: d.removed || 0 };
+  SS.set('kbf-source-changed', JSON.stringify(note));
+  emit('source:changed', note);
+  requestReload();
+}
+// After a load: if the last reload was caused by a change on disk, offer the diff.
+export function offerSourceChange() {
+  let note = null;
+  try { note = JSON.parse(SS.get('kbf-source-changed') || 'null'); } catch (e) {}
+  if (!note) return;
+  SS.remove('kbf-source-changed');
+  emit('source:changed', note);
 }
 
 export function subscribeLive() {
@@ -77,11 +108,13 @@ export function subscribeLive() {
     try { const d = JSON.parse(e.data); if (d && d.entry) pushActivity(d.entry); } catch (err) {}
   });
   es.addEventListener('reload', () => requestReload());
+  es.addEventListener('round', (e) => { try { applyRound(JSON.parse(e.data)); } catch (err) {} });
+  es.addEventListener('source', (e) => { try { onSourceChanged(JSON.parse(e.data)); } catch (err) {} });
   es.addEventListener('store-error', (e) => {
     // Server-sent application error (its own event name, so it never collides
     // with EventSource's built-in connection 'error') — e.g. the comments file
     // became unreadable. Surface it rather than letting the panel go stale.
-    try { if (e && e.data && JSON.parse(e.data).error === 'ECORRUPT') toastError('Comments file unreadable — check .feedback/comments.json'); } catch (err) {}
+    try { if (e && e.data && JSON.parse(e.data).error === 'ECORRUPT') toastError(t('Comments file unreadable — check .feedback/comments.json')); } catch (err) {}
   });
   es.onopen = () => { S.sseBackoff = 1000; resync(); };
   es.onerror = () => {
@@ -110,5 +143,6 @@ async function resync() {
     const res = await fetch(API + '/comments');
     const data = await res.json();
     if (data && Array.isArray(data.comments)) applyComments(data.comments);
+    if (data && data.round) applyRound({ round: data.round, startedAt: data.roundStartedAt });
   } catch (e) {}
 }

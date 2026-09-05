@@ -10,7 +10,7 @@ import {
 import { on } from '/__feedback/overlay/events.mjs';
 import { routeChange } from '/__feedback/lib/nav.mjs';
 import {
-  $, root, host, panel, modeBtn, mountUI, toast, toastError,
+  $, root, host, panel, modeBtn, helpEl, mountUI, toast, toastError,
 } from '/__feedback/overlay/ui.mjs';
 import { makePool, resolveWithConfidence, textRel, buildElementAnchor } from '/__feedback/overlay/dom.mjs';
 import { api } from '/__feedback/overlay/api.mjs';
@@ -24,6 +24,11 @@ import { initPresence } from '/__feedback/overlay/presence.mjs';
 import { subscribeLive } from '/__feedback/overlay/live.mjs';
 import { initTheme } from '/__feedback/overlay/theme.mjs';
 import { initFab } from '/__feedback/overlay/fab.mjs';
+import { initKeys, toggleHelp } from '/__feedback/overlay/keys.mjs';
+import { initHistory, openHistory, historyChanged } from '/__feedback/overlay/history.mjs';
+import { applyRound, offerSourceChange } from '/__feedback/overlay/live.mjs';
+import { captureShot } from '/__feedback/overlay/shots.mjs';
+import { t, tn, getLang, setLang } from '/__feedback/overlay/i18n.mjs';
 
 // ---------- the few upward calls, wired once ----------
 // A lower-layer module emits; the module that owns the behaviour handles it.
@@ -36,6 +41,14 @@ function wireEvents() {
   on('reposition', positionTarget);
   on('reposition', repositionAim);
   on('reposition', repositionVariantBar);
+  // Markdown mode: the document changed on disk — offer the diff (and the
+  // history pane refreshes itself when it is open).
+  on('source:changed', (note) => {
+    historyChanged(note);
+    toast(t('The document changed on disk (v{n}: +{a} −{r})', { n: note.n, a: note.a, r: note.r }),
+      { actionLabel: t('Show what changed'), duration: 8000, onAction: () => openHistory({ from: note.n > 1 ? note.n - 1 : note.n, to: note.n }) });
+  });
+  on('round:changed', (n) => toast(t('Round {n} started', { n }), { duration: 2500 }));
 }
 
 // ---------- console hooks (the anchor-rot harness uses these) ----------
@@ -90,10 +103,42 @@ function wireFilters() {
     stampBtn.addEventListener('click', async () => {
       try {
         const r = await api('/md-export', { method: 'POST' });
-        toast(`Stamped ${r.stamped} marker${r.stamped === 1 ? '' : 's'} into ${r.files} file${r.files === 1 ? '' : 's'}`
-          + (r.notFound ? ` (${r.notFound} skipped — no unique matching line/file; re-pin those)` : ''));
-      } catch (e) { toastError('Stamp failed — ' + e.message); }
+        toast(tn('Stamped {n} marker into {files}', 'Stamped {n} markers into {files}', r.stamped, { files: tn('{n} file', '{n} files', r.files) })
+          + (r.notFound ? t(' ({n} skipped — no unique matching line/file; re-pin those)', { n: r.notFound }) : ''));
+      } catch (e) { toastError(t('Stamp failed — {error}', { error: e.message })); }
     });
+  }
+  // Review rounds: the host can start a new one; every comment made from then
+  // on carries the new number, and the "This round" chip narrows to it.
+  const roundBtn = $('kbf-round-new');
+  if (roundBtn) {
+    roundBtn.addEventListener('click', async () => {
+      try { applyRound(await api('/round', { method: 'POST' })); }
+      catch (e) { toastError(t('Could not start a new round — {error}', { error: e.message })); }
+    });
+  }
+  // EN / NL: remembered per browser; the page reloads so every label redraws.
+  const langBtn = $('kbf-lang-toggle');
+  if (langBtn) {
+    langBtn.addEventListener('click', () => {
+      const next = getLang() === 'nl' ? 'en' : 'nl';
+      setLang(next);
+      toast(next === 'nl' ? t('Language set to Dutch') : t('Language set to English'), { duration: 1200 });
+      setTimeout(() => { try { location.reload(); } catch (e) {} }, 400);
+    });
+  }
+}
+
+// Before / after: a comment resolved in the last day that has a pin-time
+// screenshot but no "after" picture yet gets one now, from the page as it is
+// after the agent's edits and reload. captureShot refuses an element it
+// cannot find with confidence, so a moved or removed element gets no pair.
+function captureAfterShots() {
+  const dayAgo = Date.now() - 24 * 3600 * 1000;
+  for (const c of pageComments()) {
+    if (c.status !== 'resolved' || !c.shot || c.shotAfter) continue;
+    if (!(c.updatedAt && Date.parse(c.updatedAt) > dayAgo)) continue;
+    setTimeout(() => captureShot(c.id, { anchor: c.anchor, after: true }), 800);
   }
 }
 
@@ -143,6 +188,7 @@ function wireKeys() {
     const typing = e.target && /^(input|textarea|select)$/i.test(e.target.nodeName) || (e.target && e.target.isContentEditable);
     const inComposer = e.composedPath && e.composedPath().includes(host);
     if (e.key === 'Escape') {
+      if (helpEl && !helpEl.hidden) { toggleHelp(false); return; } // the shortcut sheet is topmost
       if (S.walkState) { closeWalkthrough(); return; } // Stop the walkthrough tour
       if (S.narrating) { stopNarrate(); return; } // Stop narration → draft tray
       if (S.draftTray) { closeDraftTray(); return; }
@@ -171,11 +217,12 @@ async function load() {
   try {
     const data = await api('/comments');
     S.comments = scopeComments(data.comments || []);
+    if (data.round) applyRound({ round: data.round, startedAt: data.roundStartedAt });
   } catch (e) {
     S.comments = [];
     // A server-side error (e.g. a corrupt comments.json) must not look like
     // "no comments yet" — say so. A plain network failure stays quiet.
-    if (!e.network) toastError('Could not load comments — ' + e.message);
+    if (!e.network) toastError(t('Could not load comments — {error}', { error: e.message }));
   }
   setMode(S.mode);
   refresh();
@@ -187,6 +234,8 @@ async function load() {
   }
   subscribeLive();
   startDomObserver();
+  captureAfterShots();
+  offerSourceChange();
 }
 
 export function boot() {
@@ -204,5 +253,7 @@ export function boot() {
   wireFilters();
   wireRouting();
   wireKeys();
+  initKeys();
+  initHistory();
   load();
 }

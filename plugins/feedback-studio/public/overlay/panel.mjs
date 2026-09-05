@@ -2,13 +2,13 @@
 // its conversation thread, and the actions on it.
 
 import {
-  S, PAGE, MODE, API, ROLE, CAN_COMMENT, CAN_MANAGE, SS, LS,
+  S, MODE, API, ROLE, CAN_COMMENT, CAN_MANAGE, SS, LS,
   normalizePath, isOpenC, lastTouch, filtered, agentRepliedAfter,
   agentName, fmtDur, activityText, walkComments,
 } from '/__feedback/overlay/state.mjs';
 import {
   I, root, host, panel, listEl, subEl, countEl, readyEl,
-  escapeHtml, timeAgo, autoGrow, panelIsFullScreen, revealEl, flashEl, flashCard, toast, toastError, $,
+  escapeHtml, timeAgo, autoGrow, panelIsFullScreen, revealEl, flashEl, flashCard, toast, toastError, $, trapFocus,
 } from '/__feedback/overlay/ui.mjs';
 import { norm, resolveAnchor, buildElementAnchor } from '/__feedback/overlay/dom.mjs';
 import { api } from '/__feedback/overlay/api.mjs';
@@ -19,6 +19,7 @@ import { openComposer } from '/__feedback/overlay/composer.mjs';
 import { TWEAK_STYLE_ID } from '/__feedback/overlay/tweaks.mjs';
 
 export function setPanel(open) {
+  const was = S.panelOpen;
   S.panelOpen = open;
   SS.set('kbf-panel', open ? '1' : '0');
   panel.classList.toggle('is-open', open);
@@ -26,6 +27,20 @@ export function setPanel(open) {
   if (tb) { tb.setAttribute('aria-expanded', open ? 'true' : 'false'); tb.classList.toggle('is-active', open); } // stay expanded while the panel is open
   if (open) renderPanel();
   applyPanelShift(open, false);
+  // Keyboard focus: on a phone the panel covers the page, so Tab stays inside
+  // it while it is open; on a desktop it sits beside the page and only takes
+  // focus (the region itself, no ring) so a screen reader announces it. On
+  // close, focus goes back to the button that opened it.
+  if (open && !was) {
+    if (S.panelRelease) S.panelRelease();
+    S.panelRelease = panelIsFullScreen() ? trapFocus(panel) : null;
+    try { panel.focus({ preventScroll: true }); } catch (e) {}
+  } else if (!open && was) {
+    const cur = root.activeElement;
+    const inside = cur && panel.contains(cur);
+    if (S.panelRelease) { S.panelRelease(); S.panelRelease = null; }
+    else if (inside && tb) { try { tb.focus({ preventScroll: true }); } catch (e) {} }
+  }
 }
 
 // --md only: the doc shell re-centres the article beside the open panel
@@ -87,7 +102,7 @@ export function renderPanel() {
   }
   // Current page first; other pages by their newest activity (each group's
   // first card is its newest, because `view` is already sorted).
-  const keys = [...groups.keys()].sort((a, b) => (a === PAGE ? -1 : b === PAGE ? 1
+  const keys = [...groups.keys()].sort((a, b) => (a === S.page ? -1 : b === S.page ? 1
     : lastTouch(groups.get(b)[0]).localeCompare(lastTouch(groups.get(a)[0]))));
 
   // index map per page for pin numbers (based on full page list, not filtered)
@@ -100,7 +115,7 @@ export function renderPanel() {
 
   let html = '';
   for (const key of keys) {
-    const here = key === PAGE;
+    const here = key === S.page;
     html += `<div class="kbf-group-label">${escapeHtml(key)}${here ? '<span class="kbf-here">this page</span>' : ''}</div>`;
     for (const c of groups.get(key)) {
       const num = (pageIndex.get(key).indexOf(c.id)) + 1;
@@ -220,7 +235,7 @@ function toggleExpand(c) {
   S.expandedId = S.expandedId === c.id ? null : c.id;
   S.focusReplyNext = !!S.expandedId;
   renderPanel();
-  if (S.expandedId && normalizePath(c.page) === PAGE) {
+  if (S.expandedId && normalizePath(c.page) === S.page) {
     // Say so when there is nothing to scroll to, instead of silently staying
     // put: a resolved "delete" comment's text is gone by design.
     if (!focusComment(c.id, false)) toast(c.status === 'resolved' || c.status === 'rejected'
@@ -244,7 +259,7 @@ function safeNavUrl(url, fallback) {
 }
 function goToComment(c) {
   const key = normalizePath(c.page);
-  if (key === PAGE) {
+  if (key === S.page) {
     if (panelIsFullScreen()) setPanel(false);
     const found = focusComment(c.id, false);
     if (!found) toast("Couldn't locate this element on the page — it may need a re-pin.");
@@ -277,7 +292,7 @@ export function focusComment(id, openPanel) {
 export function focusOrOpen(id) {
   if (focusComment(id, true)) return;
   const c = S.comments.find((x) => x.id === id);
-  if (c && c.url && normalizePath(c.page) !== PAGE) location.href = c.url;
+  if (c && c.url && normalizePath(c.page) !== S.page) location.href = c.url;
 }
 
 function editFromCard(c) {

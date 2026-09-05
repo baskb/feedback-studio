@@ -13,6 +13,8 @@
 
 import { WEB_TYPES, MD_TYPES, UNIVERSAL_TYPES } from '/__feedback/lib/schema.mjs';
 import { norm } from '/__feedback/lib/anchor.mjs';
+import { normalizePath } from '/__feedback/lib/nav.mjs';
+export { normalizePath };
 
 // ---------- role / config ----------
 // Share role (injected by the server under --share): 'full' when absent.
@@ -41,14 +43,8 @@ function mkStore(get) {
 export const SS = mkStore(() => window.sessionStorage);
 export const LS = mkStore(() => window.localStorage);
 
-export function normalizePath(p) {
-  // '/x' and '/x/' serve the same content here — collapse to one key so pins
-  // made on one form still render when the page is visited via the other.
-  p = p.replace(/index\.html$/, '');
-  if (p.length > 1) p = p.replace(/\/+$/, '');
-  return p || '/';
-}
-export const PAGE = normalizePath(location.pathname);
+// The page key lives on S.page (below) and is updated live when a single-page
+// app changes the path without a load; see lib/nav.mjs and boot.mjs.
 
 export const MODE = (typeof window !== 'undefined' && window.__kbfMode) || 'web';
 // The .md file this page renders (comment.sourceFile), '' in web mode.
@@ -148,7 +144,7 @@ export const agentRepliedAfter = (c) => (Array.isArray(c.thread) ? c.thread : []
   && !/\bqueued\b/i.test(String(r.text || '')) && !(Array.isArray(r.variants) && r.variants.length));
 
 export function pageComments() {
-  return S.comments.filter((c) => normalizePath(c.page) === PAGE);
+  return S.comments.filter((c) => normalizePath(c.page) === S.page);
 }
 
 export function filtered(list) {
@@ -166,7 +162,7 @@ export function editsSummary(c) {
 // The comments a walkthrough can narrate: only this page's (the tour resolves
 // anchors against the live DOM) and only ones the agent has replied to.
 export function walkComments() {
-  return S.comments.filter((c) => normalizePath(c.page) === PAGE
+  return S.comments.filter((c) => normalizePath(c.page) === S.page
     && Array.isArray(c.thread) && c.thread.some((r) => r.author === 'agent' && norm(r.text)));
 }
 export function lastAgentReply(c) {
@@ -191,7 +187,7 @@ export function pinLabel(id) {
   if (!c) return '';
   const key = normalizePath(c.page);
   const n = S.comments.filter((x) => normalizePath(x.page) === key).findIndex((x) => x.id === id) + 1;
-  return '#' + n + (key === PAGE ? '' : ' on ' + key);
+  return '#' + n + (key === S.page ? '' : ' on ' + key);
 }
 
 export function activityText(e) {
@@ -210,8 +206,10 @@ function initialLang() {
 
 export const S = {
   comments: [],
+  page: normalizePath(location.pathname),      // the page key; moves with the URL in a single-page app
   mode: SS.get('kbf-mode') === '1',           // Point mode on/off
   panelOpen: SS.get('kbf-panel') === '1',
+  panelRelease: null,                          // releases the panel's focus trap (phone layout) on close
   filter: SS.get('kbf-filter') || 'all',
   theme: LS.get('kbf-theme') === 'dark' ? 'dark' : 'light', // light (default) | dark; legacy 'auto'/unset -> light
   activeComposer: null,                        // { kind:'new'|'edit', anchor, rect, comment? }

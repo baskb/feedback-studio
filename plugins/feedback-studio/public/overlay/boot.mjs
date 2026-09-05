@@ -5,9 +5,10 @@
 // test hooks, attach each module's listeners, then load the comments.
 
 import {
-  S, SS, ROLE, MODE, CAN_COMMENT, SR, scopeComments, pageComments, runTeardown,
+  S, SS, ROLE, MODE, CAN_COMMENT, SR, scopeComments, pageComments, runTeardown, normalizePath,
 } from '/__feedback/overlay/state.mjs';
 import { on } from '/__feedback/overlay/events.mjs';
+import { routeChange } from '/__feedback/lib/nav.mjs';
 import {
   $, root, host, panel, modeBtn, mountUI, toast, toastError,
 } from '/__feedback/overlay/ui.mjs';
@@ -96,6 +97,47 @@ function wireFilters() {
   }
 }
 
+// ---------- single-page apps: follow the URL without a page load ----------
+// A site with client-side routing calls history.pushState and swaps its content.
+// Wrap pushState/replaceState once (guarded, so a second overlay instance or a
+// hot reload never double-wraps) to raise 'kbf:navigate' after the original
+// call, and listen to the browser's own back/forward and hash events. On a real
+// change of page key: forget the old page's pin resolutions, close a thread or
+// a new-comment composer that belonged to it, and redraw. The DOM observer
+// then re-resolves the pins once the app has swapped its content.
+function wireRouting() {
+  if (!window.__kbfHistoryWrapped) {
+    window.__kbfHistoryWrapped = true;
+    for (const k of ['pushState', 'replaceState']) {
+      const orig = history[k];
+      if (typeof orig !== 'function') continue;
+      history[k] = function () {
+        const r = orig.apply(this, arguments);
+        try { window.dispatchEvent(new Event('kbf:navigate')); } catch (e) {}
+        return r;
+      };
+    }
+  }
+  const onNav = () => {
+    const open = S.expandedId ? S.comments.find((c) => c.id === S.expandedId) : null;
+    const r = routeChange(S.page, location.pathname, {
+      expandedPage: open ? normalizePath(open.page) : '',
+      composerKind: S.activeComposer ? S.activeComposer.kind : '',
+    });
+    if (!r.changed) return;
+    S.page = r.page;
+    S.pinConf.clear();
+    if (r.dropExpanded) S.expandedId = null;
+    if (r.closeComposer) closeComposer();
+    clearPick();
+    refresh();
+    if (S.panelOpen) applyPanelShift(true, true);
+  };
+  window.addEventListener('kbf:navigate', onNav);
+  window.addEventListener('popstate', onNav);
+  window.addEventListener('hashchange', onNav);
+}
+
 function wireKeys() {
   document.addEventListener('keydown', (e) => {
     const typing = e.target && /^(input|textarea|select)$/i.test(e.target.nodeName) || (e.target && e.target.isContentEditable);
@@ -160,6 +202,7 @@ export function boot() {
   initTheme();
   initFab();
   wireFilters();
+  wireRouting();
   wireKeys();
   load();
 }

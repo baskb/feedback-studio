@@ -13,7 +13,7 @@
 //     aloud (native SpeechSynthesis — zero-dep).
 
 import {
-  S, MODE, PAGE, ROOT, ROLE, LS, CAN_COMMENT, SR, LANGS,
+  S, MODE, ROOT, ROLE, LS, CAN_COMMENT, SR, LANGS,
   langName, langShort, walkComments, lastAgentReply,
 } from '/__feedback/overlay/state.mjs';
 import {
@@ -214,7 +214,7 @@ async function saveNarrationComment(d) {
   if (!text) return null;
   const data = await api('/comments', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ page: PAGE, pageTitle: document.title, url: location.href, anchor: d.anchor || {}, text, type: d.type, via: 'narration', authorName: ROLE === 'comment' ? (LS.get('kbf-name') || '') : '' }),
+    body: JSON.stringify({ page: S.page, pageTitle: document.title, url: location.href, anchor: d.anchor || {}, text, type: d.type, via: 'narration', authorName: ROLE === 'comment' ? (LS.get('kbf-name') || '') : '' }),
   });
   S.comments.push(data.comment);
   if (d.anchor) captureShot(data.comment.id, { anchor: d.anchor });

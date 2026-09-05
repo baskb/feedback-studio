@@ -2,12 +2,12 @@
 // saved comment, and everything that has to be undone when it closes.
 
 import {
-  S, MODE, ROLE, PAGE, SOURCE, LS, LANGS, SR, TYPES, TYPE_IDS,
+  S, MODE, ROLE, SOURCE, LS, LANGS, SR, TYPES, TYPE_IDS,
   langName, langShort, placeholderFor, drainTeardown,
 } from '/__feedback/overlay/state.mjs';
 import {
   I, composerSlot, targetsLayer, picker,
-  escapeHtml, hideHighlight, toast, toastError, autoGrow,
+  escapeHtml, hideHighlight, toast, toastError, autoGrow, trapFocus,
 } from '/__feedback/overlay/ui.mjs';
 import { norm, resolveAnchor } from '/__feedback/overlay/dom.mjs';
 import { api } from '/__feedback/overlay/api.mjs';
@@ -25,6 +25,7 @@ export function closeComposer() {
   // Every live on-page preview registered an undo: the variant swap, the
   // retyped text, the replacement image, an open crop modal.
   drainTeardown();
+  if (S.activeComposer && S.activeComposer.releaseFocus) S.activeComposer.releaseFocus();
   S.activeComposer = null;
   composerSlot.innerHTML = '';
   S.pickChain = [];
@@ -168,6 +169,8 @@ export function openComposer(opts) {
     </div>`;
   composerSlot.appendChild(box);
   showTarget();
+  // Tab stays inside the dialog; focus returns to where it was on close.
+  opts.releaseFocus = trapFocus(box);
 
   // Desktop: drag the composer by its header to move it off the content it comments on.
   // Touch keeps the auto-position (small screen + on-screen keyboard leave nowhere useful).
@@ -314,7 +317,7 @@ async function doSave(opts, text) {
       if (nameEl) LS.set('kbf-name', authorName);
       const data = await api('/comments', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ page: PAGE, pageTitle: document.title, url: location.href, anchor: opts.anchor, text, type: S.ctype, edits, textEdit, imageReplace, authorName, sourceFile: SOURCE }),
+        body: JSON.stringify({ page: S.page, pageTitle: document.title, url: location.href, anchor: opts.anchor, text, type: S.ctype, edits, textEdit, imageReplace, authorName, sourceFile: SOURCE }),
       });
       S.comments.push(data.comment);
       toast(edits.length || textEdit || imageReplace ? 'Saved — the page reverts; your agent applies it to source' : 'Comment saved');

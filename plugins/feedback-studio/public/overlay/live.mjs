@@ -1,7 +1,7 @@
 // Feedback Studio — live updates: the server-sent event stream, and the
 // agent-requested page reload.
 
-import { S, API, ROOT, PAGE, normalizePath, scopeComments } from '/__feedback/overlay/state.mjs';
+import { S, API, ROOT, normalizePath, scopeComments } from '/__feedback/overlay/state.mjs';
 import { $, root, toast, toastError } from '/__feedback/overlay/ui.mjs';
 import { refresh } from '/__feedback/overlay/panel.mjs';
 import { applyAgentStatus, pushActivity, renderActivity, renderAgentChip } from '/__feedback/overlay/presence.mjs';
@@ -19,7 +19,7 @@ export function applyComments(next) {
   const prev = new Map(S.comments.map((c) => [c.id, c.status]));
   S.comments = next;
   refresh();
-  next.filter((c) => normalizePath(c.page) === PAGE && c.status === 'resolved' && prev.get(c.id) && prev.get(c.id) !== 'resolved')
+  next.filter((c) => normalizePath(c.page) === S.page && c.status === 'resolved' && prev.get(c.id) && prev.get(c.id) !== 'resolved')
     .forEach((c) => animateResolve(c.id));
 }
 

@@ -9,7 +9,7 @@ import {
 } from '/__feedback/overlay/state.mjs';
 import {
   I, root, host, panel, listEl, subEl, countEl, readyEl,
-  escapeHtml, timeAgo, autoGrow, panelIsFullScreen, revealEl, flashEl, flashCard, toast, toastError, $, trapFocus,
+  escapeHtml, timeAgo, autoGrow, panelIsFullScreen, revealEl, flashEl, flashCard, toast, toastError, $, trapFocus, keepOverlayOnTop,
 } from '/__feedback/overlay/ui.mjs';
 import { norm, resolveAnchor, buildElementAnchor } from '/__feedback/overlay/dom.mjs';
 import { api } from '/__feedback/overlay/api.mjs';
@@ -248,7 +248,7 @@ function cardHtml(c, key, here, num) {
   // awaiting action warn: a resolved comment's element USUALLY changed —
   // that's the fix having landed, not a bad pin.
   const pc = here && (st === 'open' || st === 'approved') ? S.pinConf.get(c.id) : undefined;
-  const pinState = pc === 'lost' ? 'lost' : (pc === 'medium' || pc === 'low') ? 'shaky' : null;
+  const pinState = pc === 'lost' ? 'lost' : pc === 'hidden' ? 'hidden' : (pc === 'medium' || pc === 'low') ? 'shaky' : null;
   // The agent replied after the comment and the pinned text no longer
   // matches, but the element is still found by position: almost always
   // an applied change that was never resolved. A LOST pin is never
@@ -277,7 +277,7 @@ function cardHtml(c, key, here, num) {
         <span class="kbf-author ${isAgent ? 'is-agent' : ''}">${escapeHtml(who)}</span>
         ${st === 'approved' || st === 'rejected' ? `<span class="kbf-status kbf-status-${st}">${st}</span>` : ''}
         ${(c.round || 1) !== S.round && S.round > 1 ? `<span class="kbf-round-tag" title="${t('Round {n}', { n: c.round || 1 })}">r${c.round || 1}</span>` : ''}
-        ${changedAfterReply ? `<span class="kbf-pinstate is-changed" title="${escapeHtml(t('The pinned text changed after the agent replied. If the change is what you asked for, resolve the comment (✓) and the pin turns green; otherwise re-pin it.'))}">${t('changed after reply')}</span>` : pinState ? `<span class="kbf-pinstate is-${pinState}" title="${escapeHtml(pinState === 'lost' ? t('The pinned element could not be found on this page.') : t('The pinned element was only found with weak confidence — the agent will refuse to edit it.'))}">${pinState === 'lost' ? t('pin lost') : t('pin unsure')}</span>` : ''}
+        ${changedAfterReply ? `<span class="kbf-pinstate is-changed" title="${escapeHtml(t('The pinned text changed after the agent replied. If the change is what you asked for, resolve the comment (✓) and the pin turns green; otherwise re-pin it.'))}">${t('changed after reply')}</span>` : pinState ? `<span class="kbf-pinstate is-${pinState}" title="${escapeHtml(pinState === 'lost' ? t('The pinned element could not be found on this page.') : pinState === 'hidden' ? t('The pinned element sits in a popup, menu or dialog ({layer}) that is not open right now. Open it and the pin comes back.', { layer: c.anchor.layer }) : t('The pinned element was only found with weak confidence — the agent will refuse to edit it.'))}">${pinState === 'lost' ? t('pin lost') : pinState === 'hidden' ? t('in a closed popup') : t('pin unsure')}</span>` : ''}
         <span class="kbf-card-anchor" title="${escapeHtml(anchorTxt)}">${escapeHtml(anchorTxt)}</span>
       </div>
       ${working ? `<div class="kbf-card-work"><span class="kbf-agent-dot"></span><span>${escapeHtml(t('{name} is on this', { name: agentName() }))} · <span class="kbf-elapsed" data-since="${Number(S.agent.since) || Date.now()}">${fmtDur(Date.now() - (Number(S.agent.since) || Date.now()))}</span>${S.agent.note ? ' · ' + escapeHtml(S.agent.note) : (lastAct ? ' · ' + escapeHtml(activityText(lastAct)) : '')}</span></div>` : ''}
@@ -314,7 +314,7 @@ function cardHtml(c, key, here, num) {
           ${st !== 'rejected' ? `<button class="kbf-chip-btn kbf-rejectb" data-act="reject">${I.reject} ${t('Reject')}</button>` : ''}
         </div>` : ''}
       ` : (thread.length ? `<button class="kbf-thread-toggle" data-act="thread">${I.comment}<span>${tn('{n} reply', '{n} replies', thread.length)}</span></button>` : '')}
-      ${pinState && CAN_MANAGE ? `<button type="button" class="kbf-chip-btn kbf-repin" data-act="repin">${I.jump}<span>${t('Re-pin on the page')}</span></button>` : ''}
+      ${pinState && pinState !== 'hidden' && CAN_MANAGE ? `<button type="button" class="kbf-chip-btn kbf-repin" data-act="repin">${I.jump}<span>${t('Re-pin on the page')}</span></button>` : ''}
       <div class="kbf-card-foot">
         <span class="kbf-time" title="${escapeHtml(c.createdAt || '')}">${timeAgo(c.createdAt)}</span>
         <button class="kbf-mini" data-act="jump" title="${t('Go to element')}">${I.jump}</button>
@@ -629,11 +629,20 @@ export function startDomObserver() {
       && [...m.addedNodes, ...m.removedNodes].every((n) => n && n.id === TWEAK_STYLE_ID));
   const obs = new MutationObserver((muts) => {
     if (!muts.some((m) => !host.contains(m.target) && !isTweakNoise(m))) return; // all ours
-    if (!host.isConnected) (document.body || document.documentElement).appendChild(host);
-    clearTimeout(S.moTimer);
-    S.moTimer = setTimeout(() => { renderPins(); if (S.panelOpen) renderPanel(); }, 200);
+    if (!host.isConnected) keepOverlayOnTop();
+    scheduleRerender();
   });
-  try { obs.observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
+  // Besides nodes coming and going: the attributes a page flips to show or
+  // hide a popup, drawer or menu in place, so a pin inside one appears and
+  // disappears with it (and its card can say "in a closed popup").
+  try { obs.observe(document.documentElement, { childList: true, subtree: true, attributeFilter: ['open', 'hidden', 'aria-expanded', 'aria-hidden'] }); } catch (e) {}
+}
+
+// One debounced re-resolve of the pins (and the List when open), for anything
+// that changed what is on the page.
+export function scheduleRerender(delay = 200) {
+  clearTimeout(S.moTimer);
+  S.moTimer = setTimeout(() => { renderPins(); if (S.panelOpen) renderPanel(); }, delay);
 }
 
 export function initPanel() {

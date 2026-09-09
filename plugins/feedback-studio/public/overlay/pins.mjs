@@ -3,7 +3,7 @@
 
 import { S, pageComments, filtered, agentRepliedAfter, editsSummary } from '/__feedback/overlay/state.mjs';
 import { I, pinsLayer } from '/__feedback/overlay/ui.mjs';
-import { makePool, resolveWithConfidence, norm } from '/__feedback/overlay/dom.mjs';
+import { makePool, resolveWithConfidence, norm, layerClosed } from '/__feedback/overlay/dom.mjs';
 import { emit } from '/__feedback/overlay/events.mjs';
 import { t } from '/__feedback/overlay/i18n.mjs';
 import { makePinDraggable } from '/__feedback/overlay/drag.mjs';
@@ -16,7 +16,11 @@ export function renderPins() {
   S.pinConf.clear();
   list.forEach((c, idx) => {
     const { el, confidence } = resolveWithConfidence(c.anchor, pool);
-    S.pinConf.set(c.id, el ? confidence : 'lost');
+    // An element inside a popup that is shut right now — not in the DOM, or
+    // there but without a box — is not a lost pin: it comes back with the
+    // popup (the List says so, and the attention sort leaves it alone).
+    const shut = layerClosed(c.anchor) && (!el || !el.getClientRects().length);
+    S.pinConf.set(c.id, shut ? 'hidden' : el ? confidence : 'lost');
     if (!el) return;
     // The List filter (All / Open / Resolved) applies to the pins as well, so
     // "Open" clears a page full of green resolved pins. Numbering comes from

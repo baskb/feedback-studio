@@ -71,7 +71,7 @@ export function toggleHelp(force) {
 
 export function initKeys() {
   helpEl.addEventListener('click', (e) => { if (e.target === helpEl) toggleHelp(false); });
-  document.addEventListener('keydown', (e) => {
+  const onKey = (e) => {
     const target = e.composedPath ? e.composedPath()[0] : e.target;
     const typing = target && (/^(input|textarea|select)$/i.test(target.nodeName) || target.isContentEditable);
     // Ctrl+Z / Cmd+Z: undo — even from inside our own List, but never while a
@@ -110,7 +110,11 @@ export function initKeys() {
       case '?': e.preventDefault(); toggleHelp(); break;
       default: break;
     }
-  });
+  };
+  // Keys pressed inside our UI stop at the host (ui.mjs shields them from the
+  // page), so listen on the shadow root for those and on document for the page's.
+  root.addEventListener('keydown', onKey);
+  document.addEventListener('keydown', onKey);
   const help = $('kbf-help-btn');
   if (help) help.addEventListener('click', () => toggleHelp());
 }

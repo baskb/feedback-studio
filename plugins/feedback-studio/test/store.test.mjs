@@ -52,10 +52,18 @@ test('makeComment has a stable, complete schema and unique ids', () => {
 });
 
 test('sanitizeAnchor whitelists keys and caps lengths', () => {
-  const a = sanitizeAnchor({ selector: 'a', evil: 'x', snippet: 'y'.repeat(2000) });
+  const a = sanitizeAnchor({ selector: 'a', evil: 'x', snippet: 'y'.repeat(2000), layer: 'dialog#mnav' });
   assert.equal(a.evil, undefined);
   assert.equal(a.type, 'element');
   assert.ok(a.snippet.length <= 500);
+  assert.equal(a.layer, 'dialog#mnav', 'the popup the element sits in is kept');
+});
+
+test('exportMarkdown prints the popup an element sits in as an inside: line', async () => {
+  const dir = freshDir();
+  await exportMarkdown(dir, [makeComment({ text: 'bigger', anchor: { selector: 'dialog#mnav > p', snippet: 'Menu', layer: 'dialog#mnav' } })]);
+  const md = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf8');
+  assert.match(md, /- inside: `dialog#mnav` \(a popup, dialog or menu/);
 });
 
 test('readComments: missing file is empty, corrupt file throws (never silently empty)', async () => {

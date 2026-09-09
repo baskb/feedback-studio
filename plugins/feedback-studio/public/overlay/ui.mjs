@@ -8,6 +8,7 @@
 
 import { S, LABEL, CAN_MANAGE } from '/__feedback/overlay/state.mjs';
 import { t, getLang } from '/__feedback/overlay/i18n.mjs';
+import { emit } from '/__feedback/overlay/events.mjs';
 import { SORT_KEYS } from '/__feedback/lib/sort.mjs';
 
 // The wording of each sort key in the List's menu (lib/sort.mjs owns the keys).
@@ -86,12 +87,118 @@ export let helpEl;
 
 export const $ = (id) => root.getElementById(id);
 
+// ---------- staying reachable while the page shows a popup ----------
+// A page's own popups can sit above the overlay: a modal <dialog> or a
+// [popover] goes into the browser's top layer, which is above any z-index, and
+// a modal dialog also makes everything outside it inert (not clickable, not
+// focusable, skipped by hit-testing). The Point button was then under the
+// dialog's backdrop, so a click on it hit the backdrop instead and closed the
+// very menu the reviewer wanted to comment on.
+//
+// Two things fix that. The host is a (manual) popover, which puts it in the
+// top layer, and keepOverlayOnTop() re-enters the top layer each time the
+// page opens a popover or goes fullscreen, so the overlay is above whatever
+// came last. And while a modal dialog is open the host lives INSIDE that
+// dialog: only the dialog's own subtree escapes the inertness. Being in the
+// top layer keeps the host's coordinates those of the viewport even then, so
+// pins, panel and composer land where they always do, whatever the dialog's
+// transform or overflow. The host moves back to body when the dialog closes.
+// Browsers without the popover API still get the move; they keep the plain
+// z-index behaviour for the rest.
+const HAS_POPOVER = typeof HTMLElement !== 'undefined' && 'popover' in HTMLElement.prototype;
+let raisePending = false;
+
+function liftToTopLayer() {
+  if (HAS_POPOVER) {
+    host.popover = 'manual'; // manual: no light dismiss, no Escape, no backdrop
+    // undo the browser's popover styling (border, padding, canvas background, fit-content size)
+    host.style.cssText += 'background:transparent;color:inherit;width:auto;height:auto;max-width:none;max-height:none;overflow:visible;';
+  }
+  keepOverlayOnTop();
+  // A dialog opening or closing, a popover opening, fullscreen: find our place again.
+  document.addEventListener('toggle', (e) => {
+    const el = e.target;
+    if (el === host || !(el instanceof Element)) return;
+    if (el.matches('dialog') || (e.newState === 'open' && el.matches('[popover]'))) keepOverlayOnTop();
+  }, true);
+  document.addEventListener('close', (e) => { if (e.target instanceof Element && e.target.matches('dialog')) keepOverlayOnTop(); }, true);
+  document.addEventListener('fullscreenchange', () => keepOverlayOnTop());
+  // Browsers without toggle events for <dialog>: watch its open attribute.
+  if (typeof MutationObserver !== 'undefined') {
+    const mo = new MutationObserver((muts) => {
+      if (muts.some((m) => m.target instanceof Element && m.target.matches('dialog'))) keepOverlayOnTop();
+    });
+    try { mo.observe(document.documentElement, { attributes: true, attributeFilter: ['open'], subtree: true }); } catch (e) {}
+  }
+}
+
+// Where the host belongs right now: inside the topmost open modal dialog, else body.
+function hostHome() {
+  let modal = null;
+  try { const all = document.querySelectorAll('dialog:modal'); modal = all[all.length - 1] || null; } catch (e) {}
+  return modal || document.body || document.documentElement;
+}
+
+// Put the host where it belongs (re-attached if the page removed it, inside
+// an open modal dialog, else in body) and re-enter the top layer so the
+// overlay is above whatever the page opened last. It all happens within one
+// task, so nothing is painted in between; focus inside our UI (a half-typed
+// comment) is put back where it was.
+export function keepOverlayOnTop() {
+  if (raisePending) return;
+  raisePending = true;
+  queueMicrotask(() => {
+    raisePending = false;
+    const active = root.activeElement;
+    const sel = active && 'selectionStart' in active ? [active.selectionStart, active.selectionEnd] : null;
+    const home = hostHome();
+    if (host.parentNode !== home) home.appendChild(host); // a move also drops the popover state
+    if (HAS_POPOVER) {
+      try { if (host.matches(':popover-open')) host.hidePopover(); } catch (e) {}
+      try { host.showPopover(); } catch (e) {}
+    }
+    if (active && active.isConnected && root.activeElement !== active) {
+      try { active.focus({ preventScroll: true }); if (sel) active.setSelectionRange(sel[0], sel[1]); } catch (e) {}
+    }
+    emit('layer'); // a popup opened or closed: the pins inside it need a fresh look
+  });
+}
+
+// ---------- keeping our clicks and keys out of the page's way ----------
+// Sites close a menu on any click, pointer press or key that reaches
+// `document` from outside the menu, and the host (what a page sees as the
+// target of anything done inside a shadow root) is always "outside". So a
+// click on the Point button closed the menu, and a letter typed in the
+// composer could fire a page shortcut. Stop those events at the host, after our
+// own shadow-tree listeners have seen them. Our page-level listeners all use
+// the capture phase, which runs before this, so nothing of ours is lost; the
+// key handlers that must also see keys pressed inside our UI listen on `root`.
+const SHIELDED = [
+  'pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick', 'auxclick', 'contextmenu',
+  'touchstart', 'touchend', 'touchcancel', 'keydown', 'keyup', 'keypress',
+  'focusin', 'focusout', 'input', 'change', 'paste', 'copy', 'cut',
+];
+function shieldHostEvents() {
+  for (const type of SHIELDED) host.addEventListener(type, (e) => e.stopPropagation(), { passive: true });
+  // A mouse press on one of our buttons must not take focus away from the
+  // page: a menu that closes when focus leaves it would close on the Point
+  // button. Text fields keep taking focus, and touch is left alone (some
+  // phones would then drop the tap).
+  root.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'mouse' || !(e.target instanceof Element)) return;
+    if (e.target.closest('input, textarea, select, [contenteditable]')) return;
+    if (e.target.closest('button, a, [role="button"], summary')) e.preventDefault();
+  });
+}
+
 export function mountUI() {
   host = document.createElement('div');
   host.id = 'kbf-host';
   host.style.cssText = 'position:fixed;inset:0;z-index:2147483000;pointer-events:none;margin:0;padding:0;border:0;';
   (document.body || document.documentElement).appendChild(host);
   root = host.attachShadow({ mode: 'open' });
+  liftToTopLayer();
+  shieldHostEvents();
   const link = document.createElement('link');
   link.rel = 'stylesheet';
   link.href = '/__feedback/overlay.css';

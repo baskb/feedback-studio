@@ -59,6 +59,9 @@ question.
      for wording changes; a screenshot judged against the ask for visual changes
      (scroll the element into view first). `window.__kbfSelfTest()` is a useful secondary
      signal for elements whose anchors should have survived (a styling-only `improve`).
+     A comment whose `anchor.layer` is set lives in a popup, dialog or menu: open that
+     container first (for a native dialog, `document.querySelector(layer).showModal()`
+     in `javascript_tool`; otherwise click what opens it), or verify from the source.
    - **Without browser tools:** fetch the served HTML (`curl`) and check the new
      wording is present and the old is gone. Purely visual asks ("make this stand
      out more") can't be machine-verified this way — mark them *needs human eyes*,

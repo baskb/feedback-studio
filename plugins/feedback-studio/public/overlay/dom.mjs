@@ -40,14 +40,57 @@ export function browserDom() {
 
 const A = createAnchoring(browserDom());
 
-export const { makePool, textRel, resolveWithConfidence, resolveAnchor, buildElementAnchor } = A;
+export const { makePool, textRel, resolveWithConfidence, resolveAnchor } = A;
+
+// ---------- the popup an element sits in ----------
+// A comment made inside a dialog, drawer, menu or popover records that
+// container on the anchor as a short selector (`dialog.mnav`, `div#cart`),
+// picked from the same semantics a page uses to build such a thing. The agent
+// then knows to look for the element inside it, and the List can say "in a
+// closed popup" instead of "pin lost" while it is shut. Ordinary page content
+// gets no `layer` at all.
+const LAYERS = 'dialog, [popover], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"], [aria-modal="true"]';
+const cssEsc = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^\w-]/g, '\\$&'));
+
+export function layerOf(el) {
+  const l = el instanceof Element ? el.closest(LAYERS) : null;
+  if (!l || l === document.body || l === document.documentElement) return '';
+  const tag = l.nodeName.toLowerCase();
+  if (l.id) return tag + '#' + cssEsc(l.id);
+  const cls = typeof l.className === 'string' ? l.className.trim().split(/\s+/)[0] : '';
+  if (cls) return tag + '.' + cssEsc(cls);
+  if (l.hasAttribute('popover')) return tag + '[popover]';
+  const role = l.getAttribute('role');
+  return role ? `${tag}[role="${role}"]` : tag;
+}
+
+// Is the anchor's container shut right now? True when it cannot be found, is a
+// closed <dialog> or popover, or has no box on the page. False for an anchor
+// without a layer.
+export function layerClosed(anchor) {
+  if (!anchor || !anchor.layer) return false;
+  let l = null;
+  try { l = document.querySelector(anchor.layer); } catch (e) { return false; }
+  if (!l) return true;
+  if (typeof HTMLDialogElement !== 'undefined' && l instanceof HTMLDialogElement) return !l.open;
+  if (l.hasAttribute('popover')) { try { return !l.matches(':popover-open'); } catch (e) {} }
+  return !l.getClientRects().length;
+}
+
+function withLayer(anchor, el) {
+  const layer = layerOf(el);
+  if (layer) anchor.layer = layer;
+  return anchor;
+}
+
+export function buildElementAnchor(el) { return withLayer(A.buildElementAnchor(el), el); }
 
 // A text selection: the container is the element the selection sits in.
 export function buildRangeAnchor(sel) { return buildRangeAnchorFromRange(sel.getRangeAt(0)); }
 export function buildRangeAnchorFromRange(range) {
   let container = range.commonAncestorContainer;
   if (container.nodeType !== 1) container = container.parentElement;
-  return A.buildRangeAnchor(container, range.toString());
+  return withLayer(A.buildRangeAnchor(container, range.toString()), container);
 }
 
 export { norm };

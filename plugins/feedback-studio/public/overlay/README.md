@@ -20,7 +20,7 @@ A module never imports one listed below it. The few calls that do run upward go 
 | `events.mjs` | 21 | `on` / `emit`. Synchronous, in registration order. |
 | `api.mjs` | 17 | `api()` — fetch plus the error contract. |
 | `dom.mjs` | 53 | The browser adapter for `lib/anchor.mjs`, plus the two Range wrappers. All anchoring logic lives in `lib/`. |
-| `ui.mjs` | 307 | Icons, the shadow host and its markup, the element references, toasts, the hover highlight, `escapeHtml`. |
+| `ui.mjs` | 400 | Icons, the shadow host and its markup, the element references, toasts, the hover highlight, `escapeHtml`. Also where the host stays reachable when the page shows a popup: it is a manual popover (top layer), moves inside an open modal dialog and back (`keepOverlayOnTop`), and stops its own clicks, taps and keys at the host so the page never sees them as "outside". |
 | `pins.mjs` | 107 | The pins over the page, and `schedulePos` — one rAF-batched re-measure for everything that floats. |
 | `mode.mjs` | 313 | Point mode: hover aiming, sentence aiming in `--md`, the pointer handlers, the touch picker, and `pickElement`. |
 | `tweaks.mjs` | 421 | Tweak Mode: live style knobs, and `makeTrustedGetEl` (the confidence gate every on-page action shares). |

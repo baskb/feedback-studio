@@ -178,6 +178,16 @@ reverse.
   repo by the agent.
 - **Several sites, one repo** — `--label` + `--data-dir` isolate each site's
   comments/images so your agent never mixes them up.
+- **Popups, drawers and menus too** — open the site's mobile menu, cookie
+  dialog or cart drawer and comment inside it. The overlay sits above the
+  page's own dialogs, its buttons never count as a "click outside" that closes
+  a menu, and Esc closes the composer without closing the site's dialog. The
+  comment records which popup it was made in (`anchor.layer`), so the agent
+  looks there and the List says "in a closed popup" rather than "pin lost"
+  while it is shut. Press `P` to switch Point mode on from the keyboard when a
+  menu closes as soon as the mouse leaves it, or when it is a native `popover`
+  (the browser itself closes those on any click outside, buttons of ours
+  included).
 - **Smart knobs** — only relevant controls appear (no text size on an image;
   `gap` only on flex/grid), and giving a box a background reveals the corner
   radius knob. The details are the product.

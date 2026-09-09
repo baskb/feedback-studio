@@ -97,6 +97,8 @@ const NL_CORE = {
   'The pinned element was only found with weak confidence — the agent will refuse to edit it.': 'Het vastgepinde element is maar met weinig zekerheid gevonden — de agent weigert het te bewerken.',
   'pin lost': 'pin kwijt',
   'pin unsure': 'pin onzeker',
+  'in a closed popup': 'in een gesloten popup',
+  'The pinned element sits in a popup, menu or dialog ({layer}) that is not open right now. Open it and the pin comes back.': 'Het aangewezen element zit in een popup, menu of dialoog ({layer}) die nu niet open is. Open die en de pin komt terug.',
   '{name} is on this': '{name} is hiermee bezig',
   'next up for {name}': 'hierna voor {name}',
   'Replacement image — open full size': 'Vervangende afbeelding — open op volledige grootte',

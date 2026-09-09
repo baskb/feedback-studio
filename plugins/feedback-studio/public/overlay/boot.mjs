@@ -17,7 +17,7 @@ import { api } from '/__feedback/overlay/api.mjs';
 import { initPins } from '/__feedback/overlay/pins.mjs';
 import { initMode, setMode, clearPick, repositionAim } from '/__feedback/overlay/mode.mjs';
 import { initComposer, closeComposer, positionTarget } from '/__feedback/overlay/composer.mjs';
-import { initPanel, setPanel, setFilter, renderPanel, applyPanelShift, refresh, focusComment, startDomObserver } from '/__feedback/overlay/panel.mjs';
+import { initPanel, setPanel, setFilter, renderPanel, applyPanelShift, refresh, focusComment, startDomObserver, scheduleRerender } from '/__feedback/overlay/panel.mjs';
 import { openVariantPreview, closeVariantPreview, repositionVariantBar } from '/__feedback/overlay/variants.mjs';
 import { startNarrate, stopNarrate, closeDraftTray, startWalkthrough, closeWalkthrough } from '/__feedback/overlay/narrate.mjs';
 import { initPresence } from '/__feedback/overlay/presence.mjs';
@@ -41,6 +41,7 @@ function wireEvents() {
   on('reposition', positionTarget);
   on('reposition', repositionAim);
   on('reposition', repositionVariantBar);
+  on('layer', () => scheduleRerender(60));                 // a popup, dialog or menu opened or closed
   // Markdown mode: the document changed on disk — offer the diff (and the
   // history pane refreshes itself when it is open).
   on('source:changed', (note) => {
@@ -183,20 +184,30 @@ function wireRouting() {
   window.addEventListener('hashchange', onNav);
 }
 
+// Escape closes the topmost thing of ours. True when something was closed.
+function consumeEscape() {
+  if (helpEl && !helpEl.hidden) { toggleHelp(false); return true; } // the shortcut sheet is topmost
+  if (S.walkState) { closeWalkthrough(); return true; } // Stop the walkthrough tour
+  if (S.narrating) { stopNarrate(); return true; } // Stop narration → draft tray
+  if (S.draftTray) { closeDraftTray(); return true; }
+  if (runTeardown('crop')) return true; // crop modal is topmost — close it first, keep the composer
+  if (S.variantPreview) { closeVariantPreview(); return true; }
+  if (S.pickChain.length) { clearPick(); return true; }
+  if (S.activeComposer) { closeComposer(); return true; }
+  if (S.panelOpen) { setPanel(false); return true; }
+  return false;
+}
+
 function wireKeys() {
-  document.addEventListener('keydown', (e) => {
+  const onKey = (e) => {
     const typing = e.target && /^(input|textarea|select)$/i.test(e.target.nodeName) || (e.target && e.target.isContentEditable);
     const inComposer = e.composedPath && e.composedPath().includes(host);
     if (e.key === 'Escape') {
-      if (helpEl && !helpEl.hidden) { toggleHelp(false); return; } // the shortcut sheet is topmost
-      if (S.walkState) { closeWalkthrough(); return; } // Stop the walkthrough tour
-      if (S.narrating) { stopNarrate(); return; } // Stop narration → draft tray
-      if (S.draftTray) { closeDraftTray(); return; }
-      if (runTeardown('crop')) return; // crop modal is topmost — close it first, keep the composer
-      if (S.variantPreview) { closeVariantPreview(); return; }
-      if (S.pickChain.length) { clearPick(); return; }
-      if (S.activeComposer) { closeComposer(); return; }
-      if (S.panelOpen) { setPanel(false); return; }
+      // An Escape that closed something of ours goes no further: the page's
+      // own dialog or menu (a native <dialog> closes on Escape by itself, and
+      // many menus listen on document) stays open for the next comment.
+      if (consumeEscape()) { e.preventDefault(); e.stopPropagation(); }
+      return;
     }
     // Bare P: Point — toggle click-to-comment (P matches "Point", like T matches
     // "Talk"). Bare only, so Ctrl/Cmd+P (print) and Alt+P are left alone.
@@ -209,7 +220,11 @@ function wireKeys() {
       if (S.narrating && !inRealText) { e.preventDefault(); stopNarrate(); }
       else if (!S.narrating && !typing && !inComposer && SR && CAN_COMMENT) startNarrate();
     }
-  });
+  };
+  // Keys pressed inside our UI stop at the host (see shieldHostEvents in
+  // ui.mjs), so listen on the shadow root for those and on document for the page's.
+  root.addEventListener('keydown', onKey);
+  document.addEventListener('keydown', onKey);
 }
 
 // ---------- boot ----------

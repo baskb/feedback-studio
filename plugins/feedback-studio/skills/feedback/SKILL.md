@@ -95,7 +95,8 @@ belongs to the site whose `.feedback/` it lives in, and its image paths resolve 
 
 1. Read `.feedback/comments.json` (the SOLE source of truth; `FEEDBACK.md` is a generated,
    possibly-stale mirror, never act off it). Each comment has `page`, `type`, `anchor`
-   (selector / attr / xpath / quoted `snippet` / `tag`), `text`, `autonomy`, `status`.
+   (selector / attr / xpath / quoted `snippet` / `tag`, plus `layer` when the element sits in
+   a popup, dialog or menu), `text`, `autonomy`, `status`.
 2. **Markdown mode: mark the batch boundary.** If the server is running and the comments carry a
    `sourceFile`, take a snapshot of each file before you edit it:
    `POST $S/history/snapshot` with `{"file":"<sourceFile>","reason":"batch"}` (nothing is written
@@ -112,6 +113,11 @@ belongs to the site whose `.feedback/` it lives in, and its image paths resolve 
      selector. **If you cannot identify the exact element (or, in Markdown, the exact source
      line), do NOT edit a guess.** Leave it open and say it needs a re-pin. A confident wrong
      edit is the worst outcome; silence beats it.
+   - **A comment with `anchor.layer`** (a short selector such as `dialog.mnav` or
+     `div#cart-drawer`) was made inside a popup, dialog, drawer or menu. The element lives in
+     that container: find the container in the source first, then the element in it. The
+     served page may only show it once the popup is opened, and the reviewer sees its pin
+     only while the popup is open; that is expected, not a lost pin.
    - **Use the screenshot when unsure.** A comment with a `shot` field has a pin-time element
      screenshot at `.feedback/<shot path>` — Read (view) the image; it is exactly what the
      reviewer saw. Compare it against the element you located before editing; a mismatch

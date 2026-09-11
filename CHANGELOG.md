@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-11
+
 ### Added
 - **A per-user session registry, for desktop integrations.** Every server now also writes `~/.feedback-studio/sessions/<pid>.json` (mode 0600, removed on exit, dead entries swept on the next start) with the same fields as `.feedback/session.json` plus `label`, `mode`, `served`, `url`, `phoneUrl` (the tunnel URL, or the LAN URL when started on a non-loopback host), `tunnel`, and `share`. A desktop widget can list every running review on the machine without knowing any project path. First consumer: the [Omarchy bar plugin](https://github.com/baskb/omarchy-feedback-studio).
 - **`X-Feedback-Agent: 0` opts a client out of agent presence.** A non-browser client polling the API (curl, a widget) used to count as the agent's heartbeat and lit the page's "agent online" chip. Sending the header with `0` says "not the agent".
@@ -685,7 +687,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.3.0
 [1.2.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.2.0
 [1.0.0]: https://github.com/baskb/feedback-studio/compare/v0.9.9...v1.0.0
 [0.9.9]: https://github.com/baskb/feedback-studio/compare/v0.9.8...v0.9.9

@@ -2,7 +2,7 @@
 name: demo
 description: Instant Feedback Studio playground — serves a bundled sample landing page (a throwaway temp-dir copy) for you to comment on, with a few flaws to find. Starts empty by default (you add the comments); pass --seeded for three worked examples, one per type (fix / change / improve). The fastest way to experience the click-comment-process loop without needing a site of your own.
 when_to_use: Use when the user wants to try, demo, learn, or show off Feedback Studio without pointing it at a real project — "try the demo", "show me how this works", "feedback studio demo", "I don't have a site to test on". Also the right starting point when recording a demo video or GIF.
-argument-hint: [--seeded | --tunnel | --https | --port <n>]
+argument-hint: [--seeded | --tunnel | --tailscale | --https | --port <n>]
 user-invocable: true
 allowed-tools: Bash Read Edit Glob Grep
 ---
@@ -34,7 +34,7 @@ examples", or "seed it") drop `--no-seed`:
 node "${CLAUDE_PLUGIN_ROOT}/bin/feedback-studio.mjs" --demo --no-open
 ```
 
-Pass through any extra flags the user asked for (`--tunnel` for phone voice, `--port`).
+Pass through any extra flags the user asked for (`--tunnel` for phone voice, `--tailscale` for the same over their own Tailscale tailnet, `--port`).
 **Capture two paths from the server output** — you need them for processing:
 
 - `Source -> demo site (throwaway copy: <DEMO_DIR>)`
@@ -67,5 +67,6 @@ lorem-ipsum with real copy, offer options).
 ## After the loop
 
 Point the user at the real thing: `/feedback-studio:feedback start` on their own site or
-Markdown file. If they enjoyed the phone flow, mention `--tunnel`. The demo dir lives in
+Markdown file. If they enjoyed the phone flow, mention `--tunnel` (or `--tailscale` if they
+run Tailscale: private, real cert, nothing leaves their tailnet). The demo dir lives in
 the system temp folder — safe to delete, nothing in the project to undo.

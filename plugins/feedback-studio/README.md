@@ -5,8 +5,8 @@ skills — `/feedback-studio:feedback` (start a session / process comments / wat
 live), `:demo` (instant playground), `:verify` (prove processed comments
 landed), and `:report` (shareable round digest) — plus the self-contained Node
 server they drive (static / proxy / Markdown / demo modes, live style knobs and
-edit-text-in-place, pin-time screenshots, share-role links, optional HTTPS or
-tunnel).
+edit-text-in-place, pin-time screenshots, share-role links, optional HTTPS,
+Tailscale or tunnel).
 
 ```
 plugins/feedback-studio/

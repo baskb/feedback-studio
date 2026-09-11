@@ -15,7 +15,7 @@ Run the server in the background and tell the user the URL it prints:
 - Dev server (live reload): `node <FBS>/bin/feedback-studio.mjs --proxy http://localhost:5173`
 - Markdown file/folder: `node <FBS>/bin/feedback-studio.mjs --md report.md`
 
-For phone + voice over the LAN add `--https --host 0.0.0.0`; or use `--tunnel`, which needs no extra flag. (`<FBS>` = the feedback-studio plugin path.) `--help` lists every flag.
+For phone + voice over the LAN add `--https --host 0.0.0.0`; or use `--tunnel`, which needs no extra flag; or, on a Tailscale tailnet, `--tailscale` (private, real certificate, nothing leaves the tailnet). (`<FBS>` = the feedback-studio plugin path.) `--help` lists every flag.
 
 ## If asked to PROCESS comments
 

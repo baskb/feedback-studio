@@ -2,7 +2,7 @@
 name: feedback
 description: Visual feedback overlay for a local website or Markdown file. The user clicks or selects anything and leaves a typed or spoken comment (even from their phone); you later process those comments, and you can also pin your OWN review comments to elements for the user to approve. Use to review a site or `.md`, start it phone/mobile-ready, process the feedback, or leave AI review comments on a page.
 when_to_use: Use when the user wants to visually review or comment on a local website or a Markdown file (optionally from their phone, by voice); OR to process the comments they collected and apply them; OR to stay live during the review (watch mode - answer question pins in seconds, apply auto comments as they arrive); OR when you (or another skill, e.g. a design/copy/accessibility reviewer) should leave review comments pinned to specific elements for the user to approve. Trigger phrases include "review/open my site", "give feedback on this .md", "start it mobile-ready", "process the feedback", "watch the feedback / go live", and "leave review comments on this page".
-argument-hint: [start | process | watch | --dir <path> | --proxy <url> | --md <file> | --https | --tunnel | --label <name> | --data-dir <path>]
+argument-hint: [start | process | watch | --dir <path> | --proxy <url> | --md <file> | --https | --tunnel | --tailscale | --label <name> | --data-dir <path>]
 user-invocable: true
 allowed-tools: Bash Read Edit Write Glob Grep TaskCreate TodoWrite
 ---
@@ -26,7 +26,7 @@ prints.
 - **Dev server already running** (live reload): `node "$FBS" --proxy http://localhost:<devport> --no-open`
 - **Static build** (auto-detects `dist/ build/ out/ _site/ public/ .output/public/`): `node "$FBS" --no-open` (or `--dir <folder> --no-open`). Build first if needed (check `package.json`).
 - **Markdown** (a `.md` file, or a folder of them): `node "$FBS" --md <file|dir> --no-open`.
-- **Phone with voice:** add `--tunnel` (real-cert public URL, easiest) or `--https --host 0.0.0.0` (self-signed, same Wi-Fi; without `--host` the phone can't reach it). Plain http is fine for laptop, or for typing on a phone.
+- **Phone with voice:** add `--tunnel` (real-cert public URL, easiest) or `--https --host 0.0.0.0` (self-signed, same Wi-Fi; without `--host` the phone can't reach it). If the user runs Tailscale, `--tailscale` is the private alternative: real cert, reachable only from their own tailnet, nothing leaves it. Plain http is fine for laptop, or for typing on a phone.
 
 Open it: `start <url>` (Windows) / `open <url>` (macOS) / `xdg-open <url>` (Linux). Tell the
 user (buttons are bottom-right): **Point** (shortcut **P**) to click an element and comment

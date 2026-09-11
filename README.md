@@ -226,8 +226,9 @@ reverse.
   the List remembers your choice.
 - **Share with roles** — `--share` mints view / comment / admin capability
   links; your own machine stays frictionless.
-- **Private by default** — binds to `127.0.0.1`; `--tunnel` (real-cert HTTPS)
-  or `--https --host 0.0.0.0` only when *you* ask.
+- **Private by default** — binds to `127.0.0.1`; `--tailscale` (your own
+  tailnet, real cert), `--tunnel` (public, real cert) or `--https --host 0.0.0.0`
+  only when *you* ask.
 - **Zero dependencies** — plain Node 18+; optional helpers (`marked`,
   `selfsigned`, `cloudflared`, `html-to-image`) install once, lazily, only for
   the features that need them.
@@ -269,6 +270,7 @@ Or `npm i -g feedback-studio`, or run `node plugins/feedback-studio/bin/feedback
 | `--port <n>` | Listen port (default `4444`). |
 | `--host <addr>` | Bind address (default `127.0.0.1`; use `0.0.0.0` for your phone or LAN). |
 | `--tunnel` | Public HTTPS address through a Cloudflare quick tunnel (real certificate). |
+| `--tailscale` | Reach this session from your phone over your Tailscale tailnet, with a real certificate. |
 | `--https` | Serve over TLS with a self-signed certificate (voice on phones). |
 | `--no-open` | Don't open the browser automatically. |
 | `--seed-agents` | Append the processing workflow to `./CLAUDE.md` and `./AGENTS.md`, then exit. |
@@ -393,6 +395,14 @@ and after each batch.
   machine (through Cloudflare's servers, nothing stored). Anyone with the bare
   link can view the *page*; add `--share` so the *feedback layer* needs a
   role key. Prefer LAN or local mode for sensitive content.
+- **Nicest phone path, if you run [Tailscale](https://tailscale.com): `--tailscale`.**
+  The server listens on `127.0.0.1` and on this machine's Tailscale address
+  only (never the LAN), so the page is reachable from your phone on the same
+  tailnet and from nowhere else, and nothing leaves the tailnet. With HTTPS
+  enabled on the tailnet (admin console → DNS → HTTPS Certificates) it serves a
+  real certificate from `tailscale cert` for the machine's MagicDNS name, so
+  there is no warning and voice works; without it you get the self-signed cert
+  and a one-time warning. Needs the Tailscale app signed in on both devices.
 - **Share links are capabilities.** A link is its role while the server runs;
   keys rotate every start; stopping the server revokes everything. They gate
   the feedback layer only — the site pages themselves are served to anyone

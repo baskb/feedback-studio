@@ -17,7 +17,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { exec, execSync, spawn } from 'node:child_process';
+import { exec, execSync, execFileSync, spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, stat, readdir, chmod, unlink, rename, utimes, mkdtemp, cp } from 'node:fs/promises';
 import { existsSync, readFileSync, statSync, watch, createReadStream, createWriteStream, unlinkSync, readdirSync, chmodSync } from 'node:fs';
 import path from 'node:path';
@@ -32,6 +32,7 @@ import { exportMarkers as stampMarkers } from '../lib/markers.mjs';
 import {
   listVersions, readVersion as readHistoryVersion, diffVersions, recordSnapshot, latestVersion,
 } from '../lib/history.mjs';
+import { parseTailscaleStatus, certNeedsRefresh } from '../lib/tailscale.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -55,6 +56,7 @@ const FLAGS = [
   { name: '--port', arg: '<n>', help: 'Listen port (default 4444).' },
   { name: '--host', arg: '<addr>', help: 'Bind address (default 127.0.0.1; use 0.0.0.0 for your phone or LAN).' },
   { name: '--tunnel', arg: '', help: 'Public HTTPS address through a Cloudflare quick tunnel (real certificate).' },
+  { name: '--tailscale', arg: '', help: 'Reach this session from your phone over your Tailscale tailnet, with a real certificate.' },
   { name: '--https', arg: '', help: 'Serve over TLS with a self-signed certificate (voice on phones).' },
   { name: '--no-open', arg: '', help: "Don't open the browser automatically." },
   { name: '--seed-agents', arg: '', help: 'Append the processing workflow to ./CLAUDE.md and ./AGENTS.md, then exit.' },
@@ -122,7 +124,17 @@ const EXPOSE_LAN = HOST === '0.0.0.0' || HOST === '::' || (args.host && HOST !==
 // --tunnel routes the phone through a real-cert public URL (cloudflared), so we
 // serve plain http locally and let the tunnel terminate TLS — no self-signed cert.
 const TUNNEL = !!args.tunnel;
-const USE_HTTPS = (!!args.https || process.env.HTTPS === '1') && !TUNNEL;
+// --tailscale serves HTTPS on 127.0.0.1 AND on this machine's Tailscale IPv4
+// (never the LAN), with a real certificate from `tailscale cert` when the
+// tailnet has HTTPS enabled. A tunnel is public and a tailnet is private, so
+// asking for both is contradictory: the tunnel wins, since that is the one
+// with a URL that works from anywhere.
+if (args.tailscale && TUNNEL) console.error('\n  --tunnel and --tailscale together: the tunnel wins (public URL); --tailscale is ignored.');
+const TAILSCALE = !!args.tailscale && !TUNNEL;
+// `let`: when Tailscale turns out not to be running, --tailscale degrades to a
+// plain local server (like a failed --tunnel), so HTTPS is dropped again unless
+// --https asked for it in its own right.
+let USE_HTTPS = (!!args.https || process.env.HTTPS === '1' || TAILSCALE) && !TUNNEL;
 
 let PROXY_URL = null;
 if (args.proxy) {
@@ -363,16 +375,21 @@ async function serveVendorHti(res, url) {
   res.end(readFileSync(file));
 }
 
-async function getTlsOptions(ips) {
+// Self-signed certificate for localhost + the given IPs (and any extra DNS
+// names, e.g. the MagicDNS name when --tailscale has no real cert to offer).
+async function getTlsOptions(ips, dnsNames = []) {
   const keyFile = path.join(CERT_DIR, 'key.pem');
   const certFile = path.join(CERT_DIR, 'cert.pem');
   const metaFile = path.join(CERT_DIR, 'ips.json');
-  const wanted = JSON.stringify([...ips].sort());
+  const wanted = JSON.stringify([...ips, ...dnsNames].sort());
   if (existsSync(keyFile) && existsSync(certFile) && existsSync(metaFile)) {
     try { if (readFileSync(metaFile, 'utf-8') === wanted) return { key: readFileSync(keyFile), cert: readFileSync(certFile) }; } catch (e) {}
   }
   const selfsigned = await ensureSelfsigned();
-  const altNames = [{ type: 2, value: 'localhost' }, { type: 7, ip: '127.0.0.1' }, ...ips.map((ip) => ({ type: 7, ip }))];
+  const altNames = [
+    { type: 2, value: 'localhost' }, ...dnsNames.map((value) => ({ type: 2, value })),
+    { type: 7, ip: '127.0.0.1' }, ...ips.map((ip) => ({ type: 7, ip })),
+  ];
   const pems = await selfsigned.generate([{ name: 'commonName', value: 'localhost' }], {
     days: 825, keySize: 2048, algorithm: 'sha256', extensions: [{ name: 'subjectAltName', altNames }],
   });
@@ -1734,6 +1751,63 @@ function startTunnel(cfPath, port) {
   });
 }
 
+// ---------- tailnet (--tailscale) ----------
+// The private counterpart of --tunnel: the phone reaches this computer over
+// the user's own Tailscale network, so nothing leaves the tailnet and nobody
+// outside it can even connect. `tailscale cert` gives a real (Let's Encrypt)
+// certificate for the machine's MagicDNS name once HTTPS is enabled on the
+// tailnet, so the phone sees no warning and the mic works.
+let TAILNET = null; // { name, ip, realCert } once --tailscale is confirmed working
+const tailnetUrl = () => (TAILNET ? `https://${TAILNET.name}:${PORT}` : null);
+
+// Ask the local daemon who we are on the tailnet. Throws a one-paragraph,
+// actionable message when Tailscale is missing, stopped, or logged out.
+function detectTailscale() {
+  let out;
+  try {
+    out = execFileSync('tailscale', ['status', '--json'], { timeout: 3000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    if (e && e.code === 'ENOENT') {
+      throw new Error('the `tailscale` command is not installed. Install Tailscale on this computer (https://tailscale.com/download) and on your phone, sign in on both with `tailscale up` / the app, then re-run with --tailscale.');
+    }
+    const why = e && e.killed ? 'it did not answer within 3 s' : String((e && e.stderr) || (e && e.message) || 'unknown error').trim().split(/\r?\n/)[0];
+    throw new Error(`\`tailscale status\` failed (${why}). The Tailscale daemon is probably not running: start it (on Linux \`sudo systemctl start tailscaled\`, elsewhere open the Tailscale app), sign in with \`tailscale up\`, then re-run with --tailscale.`);
+  }
+  let status;
+  try { status = JSON.parse(out); } catch (e) { throw new Error('`tailscale status --json` printed something that is not JSON; is the Tailscale CLI up to date?'); }
+  const ts = parseTailscaleStatus(status);
+  if (!ts.running) {
+    throw new Error(`Tailscale is installed but not connected (state: ${ts.state || 'unknown'}). Run \`tailscale up\` and sign in, then re-run with --tailscale.`);
+  }
+  if (!ts.name || !ts.ip) {
+    throw new Error('Tailscale is running but reported no MagicDNS name or IPv4 for this machine. Check `tailscale status`, then re-run with --tailscale.');
+  }
+  return ts;
+}
+
+// The real certificate for the MagicDNS name, cached under CERT_DIR/tailscale/
+// and reused while it has more than 30 days left (`tailscale cert` renews
+// through Let's Encrypt; the daemon caches on its side too, so a refresh is
+// cheap). Throws when the tailnet cannot issue one.
+async function getTailscaleTlsOptions(name) {
+  const dir = path.join(CERT_DIR, 'tailscale');
+  const certFile = path.join(dir, name + '.crt');
+  const keyFile = path.join(dir, name + '.key');
+  if (existsSync(certFile) && existsSync(keyFile)) {
+    try {
+      const x = new crypto.X509Certificate(readFileSync(certFile));
+      if (x.checkHost(name) && !certNeedsRefresh(x.validTo)) return { key: readFileSync(keyFile), cert: readFileSync(certFile) };
+    } catch (e) { /* unreadable or foreign: fetch a fresh pair */ }
+  }
+  console.log(`  Getting the certificate for ${name} from Tailscale (cached afterwards)...`);
+  await mkdir(dir, { recursive: true });
+  execFileSync('tailscale', ['cert', '--cert-file', certFile, '--key-file', keyFile, name],
+    { timeout: 120000, stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8' });
+  const x = new crypto.X509Certificate(readFileSync(certFile));
+  if (!x.checkHost(name)) throw new Error('the certificate Tailscale wrote is not for ' + name);
+  return { key: readFileSync(keyFile), cert: readFileSync(certFile) };
+}
+
 // ---------- markdown review mode ----------
 let _marked = null;
 async function ensureMarked() {
@@ -2243,6 +2317,13 @@ function sweepSessionRegistry() {
     if (!pidAlive(pid)) { try { unlinkSync(f); } catch (e) {} }
   }
 }
+// The address this computer opens. With a real Tailscale certificate the
+// MagicDNS name is used here as well: that cert is for the MagicDNS name only,
+// so https://localhost would show a name-mismatch warning, while the MagicDNS
+// name resolves on this machine through Tailscale and passes without one.
+function localUrl(scheme) {
+  return TAILNET && TAILNET.realCert ? tailnetUrl() + '/' : `${scheme}://localhost:${PORT}/`;
+}
 async function writeSessionFile(scheme, publicUrl, ips) {
   const session = {
     pid: process.pid,
@@ -2262,11 +2343,13 @@ async function writeSessionFile(scheme, publicUrl, ips) {
     label: LABEL || undefined,
     mode: DEMO ? 'demo' : (PROXY ? 'proxy' : (MD_MODE ? 'md' : 'static')),
     served: DEMO ? undefined : (PROXY || (MD_MODE ? String(args.md) : (STATIC_DIR ? path.relative(CWD, STATIC_DIR).split(path.sep).join('/') : '')) || undefined),
-    url: `${scheme}://localhost:${PORT}/`,
+    url: localUrl(scheme),
     // Where a phone can reach this session, if anywhere: the tunnel, else the
-    // LAN address when the server was started on a non-loopback host.
-    phoneUrl: publicUrl ? publicUrl + '/' : (EXPOSE_LAN && ips && ips.length ? `${scheme}://${ips[0]}:${PORT}/` : undefined),
+    // tailnet name, else the LAN address when the server was started on a
+    // non-loopback host.
+    phoneUrl: publicUrl ? publicUrl + '/' : TAILNET ? tailnetUrl() + '/' : (EXPOSE_LAN && ips && ips.length ? `${scheme}://${ips[0]}:${PORT}/` : undefined),
     tunnel: !!publicUrl,
+    tailscale: !!TAILNET,
     share: SHARE ? (SHARE_STRICT ? 'strict' : 'on') : undefined,
   }).catch(() => {});
   // The registry may carry the admin key; keep it to this user.
@@ -2282,20 +2365,24 @@ function banner(scheme, ips, publicUrl) {
     : MD_MODE ? `reviewing markdown: ${path.relative(CWD, MD_SINGLE || MD_ROOT) || '.'}`
     : PROXY ? `proxying ${PROXY}`
     : `serving ${path.relative(CWD, STATIC_DIR) || '.'}/`;
-  const shareBase = publicUrl || (EXPOSE_LAN && ips.length ? `${scheme}://${ips[0]}:${PORT}` : `${scheme}://localhost:${PORT}`);
-  const tag = publicUrl ? '  (secure tunnel — voice works anywhere)' : USE_HTTPS ? '  (HTTPS — voice works on phones)' : '';
+  const shareBase = publicUrl || tailnetUrl() || (EXPOSE_LAN && ips.length ? `${scheme}://${ips[0]}:${PORT}` : `${scheme}://localhost:${PORT}`);
+  const tag = publicUrl ? '  (secure tunnel — voice works anywhere)' : TAILNET ? '  (your tailnet — voice works on your phone)' : USE_HTTPS ? '  (HTTPS — voice works on phones)' : '';
   console.log(`\n  Feedback Studio${LABEL ? ` — ${LABEL}` : ''}${tag}`);
   console.log(`  ------------------------------------------`);
   if (LABEL) console.log(`  Site             ->  ${LABEL}`);
   console.log(`  Source           ->  ${src}`);
-  console.log(`  On this computer ->  ${scheme}://localhost:${PORT}/`);
+  console.log(`  On this computer ->  ${localUrl(scheme)}`);
   if (publicUrl) {
     console.log(`  On your phone    ->  ${publicUrl}/   (any network — real cert, no warning)`);
+  } else if (TAILNET) {
+    console.log(`  On your phone    ->  ${tailnetUrl()}/   (your tailnet — ${TAILNET.realCert ? 'real cert, no warning' : 'self-signed, one-time warning'})`);
+    if (!TAILNET.realCert) console.log(`                       https://${TAILNET.ip}:${PORT}/`);
+    if (EXPOSE_LAN) ips.forEach((ip) => console.log(`                       ${scheme}://${ip}:${PORT}/   (same Wi-Fi)`));
   } else if (EXPOSE_LAN && ips.length) {
     console.log(`  On your phone    ->  ${scheme}://${ips[0]}:${PORT}/   (same Wi-Fi)`);
     ips.slice(1).forEach((ip) => console.log(`                       ${scheme}://${ip}:${PORT}/`));
   } else if (ips.length) {
-    console.log(`  Phone/LAN        ->  off by default. Re-run with --tunnel (recommended) or --host 0.0.0.0.`);
+    console.log(`  Phone/LAN        ->  off by default. Re-run with --tailscale (private), --tunnel, or --host 0.0.0.0.`);
   }
   console.log(`  Comments         ->  ${DEMO ? DATA_FILE : ((path.relative(CWD, DATA_DIR).split(path.sep).join('/') || '.feedback') + '/comments.json')}  (+ FEEDBACK.md, HOW-TO-PROCESS.md)`);
   if (!DEMO) {
@@ -2326,6 +2413,13 @@ function banner(scheme, ips, publicUrl) {
       console.log(`\n  The tunnel URL is public while the server runs — anyone with the link can`);
       console.log(`  view and comment (add --share for per-role links). Ctrl+C closes it.`);
     }
+  } else if (TAILNET && !TAILNET.realCert) {
+    console.log(`\n  Phone: the browser will warn once that the certificate isn't trusted (self-signed).`);
+    console.log(`  Tap Advanced -> Proceed, then the mic / voice-to-text works. For a real cert with`);
+    console.log(`  no warning, enable HTTPS in the Tailscale admin console (DNS -> HTTPS Certificates)`);
+    console.log(`  and re-run.`);
+  } else if (TAILNET) {
+    console.log(`\n  Only devices signed in to your tailnet can reach this address; nothing leaves it.`);
   } else if (USE_HTTPS) {
     console.log(`\n  Phone: the browser will warn the certificate isn't trusted (self-signed).`);
     console.log(`  Tap Advanced -> Proceed, then the mic / voice-to-text works.`);
@@ -2431,19 +2525,46 @@ async function main() {
 
   const ips = lanIPs();
   populateAllowedHosts(ips);
-  let server;
-  if (USE_HTTPS) server = https.createServer(await getTlsOptions(ips), handler);
-  else server = http.createServer(handler);
-
-  if (PROXY) server.on('upgrade', proxyUpgrade);
-
-  // Listen errors are fatal; connection-level errors are not.
-  server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') console.error(`\n  Port ${PORT} is already in use. Stop the other server or pass --port <n>.\n`);
-    else console.error(err);
-    process.exit(1);
-  });
-  server.on('clientError', (err, socket) => { try { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch (e) {} });
+  // --tailscale: find out who we are on the tailnet before the server exists —
+  // the certificate, and whether we serve TLS at all, depend on the answer.
+  let tlsOptions = null;
+  if (TAILSCALE) {
+    try {
+      const ts = detectTailscale();
+      TAILNET = { name: ts.name, ip: ts.ip, realCert: false };
+      ALLOWED_HOSTS.add(ts.name);
+      ALLOWED_HOSTS.add(ts.ip);
+      if (ts.certOk) {
+        try { tlsOptions = await getTailscaleTlsOptions(ts.name); TAILNET.realCert = true; }
+        catch (e) { console.error(`\n  Tailscale certificate failed: ${String(e.stderr || e.message).trim().split(/\r?\n/)[0]}\n  Using a self-signed certificate instead.\n`); }
+      } else {
+        console.log('\n  HTTPS certificates are not enabled on your tailnet; using a self-signed certificate.');
+      }
+    } catch (e) {
+      console.error('\n  Tailscale unavailable: ' + e.message);
+      console.error('  Serving locally instead (this computer only).\n');
+      if (!args.https && process.env.HTTPS !== '1') USE_HTTPS = false;
+    }
+  }
+  if (USE_HTTPS && !tlsOptions) {
+    tlsOptions = await getTlsOptions(TAILNET ? [...ips, TAILNET.ip] : ips, TAILNET ? [TAILNET.name] : []);
+  }
+  const makeServer = () => {
+    const s = USE_HTTPS ? https.createServer(tlsOptions, handler) : http.createServer(handler);
+    if (PROXY) s.on('upgrade', proxyUpgrade);
+    // Listen errors are fatal; connection-level errors are not.
+    s.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') console.error(`\n  Port ${PORT} is already in use. Stop the other server or pass --port <n>.\n`);
+      else console.error(err);
+      process.exit(1);
+    });
+    s.on('clientError', (err, socket) => { try { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch (e) {} });
+    return s;
+  };
+  const server = makeServer();
+  // --tailscale adds a second listener on the Tailscale IPv4 alone — never
+  // 0.0.0.0, so the LAN stays closed. Not needed when --host already covers it.
+  const tsServer = TAILNET && HOST !== '0.0.0.0' && HOST !== '::' && HOST !== TAILNET.ip ? makeServer() : null;
 
   let shuttingDown = false;
   const shutdown = () => {
@@ -2452,6 +2573,7 @@ async function main() {
     if (tunnelProc) { try { tunnelProc.kill(); } catch (e) {} }
     removeSessionFile();
     for (const res of sseClients) { try { res.end(); } catch (e) {} }
+    if (tsServer) { try { tsServer.close(); } catch (e) {} }
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref(); // don't hang on a stuck socket
   };
@@ -2461,6 +2583,7 @@ async function main() {
 
   const scheme = USE_HTTPS ? 'https' : 'http';
   server.listen(PORT, HOST, async () => {
+    if (tsServer) await new Promise((resolve) => tsServer.listen(PORT, TAILNET.ip, resolve));
     watchComments();
     let publicUrl = null;
     if (TUNNEL) {
@@ -2471,19 +2594,22 @@ async function main() {
         try { ALLOWED_HOSTS.add(new URL(publicUrl).hostname.toLowerCase()); } catch (e) {}
       } catch (e) {
         console.error('\n  Tunnel failed: ' + e.message);
-        console.error('  Serving locally instead. For phone voice without a tunnel: --https --host 0.0.0.0\n');
+        console.error('  Serving locally instead. For phone voice without a tunnel: --tailscale (private) or --https --host 0.0.0.0\n');
       }
     }
     banner(scheme, ips, publicUrl);
     // Self-identify this data dir (multi-site: one repo, a session + data dir per
     // site) — written now so `url` reflects the real tunnel URL, `served` the
     // resolved static dir (correct even when --dir was autodetected).
-    await writeSiteMeta(publicUrl ? publicUrl + '/' : `${scheme}://localhost:${PORT}/`);
+    await writeSiteMeta(publicUrl ? publicUrl + '/' : localUrl(scheme));
     await writeSessionFile(scheme, publicUrl, ips);
     warnIfFeedbackCommittable();
     warnIfDataFarFromSource();
     // Under strict share even localhost needs a key — open our own tab as admin.
-    const openUrl = `${scheme}://localhost:${PORT}/` + (SHARE_STRICT ? `?key=${SHARE_KEYS.admin}` : '');
+    // The same when this computer opens the tailnet name: that connection
+    // arrives on the Tailscale address, not loopback, so it isn't "local direct".
+    const needsKey = SHARE && (SHARE_STRICT || (TAILNET && TAILNET.realCert));
+    const openUrl = localUrl(scheme) + (needsKey ? `?key=${SHARE_KEYS.admin}` : '');
     if (!args['no-open']) openBrowser(openUrl);
   });
 }

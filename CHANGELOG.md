@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`--tailscale`: the phone over your own Tailscale tailnet, with a real certificate.** The server keeps listening on `127.0.0.1` and adds a second listener on this machine's Tailscale IPv4 only, so nothing is opened to the LAN and nothing leaves the tailnet. When HTTPS is enabled on the tailnet (admin console → DNS → HTTPS Certificates) it serves a real certificate from `tailscale cert` for the machine's MagicDNS name (cached under `.feedback/.cert/tailscale/`, refreshed when fewer than 30 days remain), so the phone sees no warning and voice works; otherwise it falls back to the self-signed certificate with the Tailscale address added, and says so. The banner prints `https://<machine>.<tailnet>.ts.net:<port>/` as the phone address, and the session registry carries it as `phoneUrl` with a new `tailscale: true` field. When Tailscale is not installed or not running, the server says how to fix that and serves locally, like a failed `--tunnel`. Given together with `--tunnel`, the tunnel wins.
+
 ## [1.3.0] - 2026-09-11
 
 ### Added

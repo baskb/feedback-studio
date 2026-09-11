@@ -2,7 +2,8 @@ name: Release
 
 # Push a version tag (v1.2.3) and this publishes to npm and cuts the GitHub Release,
 # so the two channels are always in sync. The easy path is `npm run release:patch`,
-# which bumps every manifest, tags, and pushes for you.
+# which bumps every manifest, tags, and pushes for you. A release is only done when
+# this run is green: the last publish step checks that npm serves the new version.
 
 on:
   push:
@@ -10,6 +11,7 @@ on:
 
 permissions:
   contents: write # create the GitHub Release
+  id-token: write # npm trusted publishing (OIDC), which has no token that can expire
 
 jobs:
   release:
@@ -20,6 +22,11 @@ jobs:
         with:
           node-version: 20
           registry-url: 'https://registry.npmjs.org'
+
+      # npm trusted publishing (the OIDC exchange in `npm publish`) needs npm 11.5.1
+      # or newer; the npm that ships with Node 20 is 10.x.
+      - name: npm that can do trusted publishing
+        run: npm install -g npm@^11 --no-audit --no-fund && npm --version
 
       # All three version files must agree with the tag, not just package.json:
       # a stale plugin.json ships a plugin that reports the wrong version, and a
@@ -60,10 +67,33 @@ jobs:
       - name: MCP smoke test
         run: node plugins/feedback-studio/test/mcp-smoke.mjs
 
+      # Two credentials can carry this step. Preferred: a trusted publisher on
+      # npmjs.com (package Settings → Publishing access → GitHub Actions: owner
+      # baskb, repo feedback-studio, workflow release.yml) — npm then trades the
+      # job's OIDC token for a short-lived publish token, nothing to rotate.
+      # Fallback: NPM_TOKEN, a granular token that npm caps at 90 days. When it
+      # has expired, npm answers the PUT with a bare 404 ("not in this registry"),
+      # which is what stranded v1.2.0 on 2026-09-09: tag and GitHub Release
+      # existed, npm still served 1.0.0. Hence the message and the check below.
       - name: Publish to npm
-        run: npm publish
+        run: |
+          if npm publish; then exit 0; fi
+          echo "::error::npm refused the publish. A 404 on the PUT means the credential is bad: NPM_TOKEN has expired (granular tokens live at most 90 days) or no trusted publisher is configured for this workflow. Either set one up on npmjs.com (package Settings → Publishing access) or make a new token (Granular, Read and write, package feedback-studio, bypass 2FA) and run: gh secret set NPM_TOKEN. Then re-run this job; it publishes from the tag as it is."
+          exit 1
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # A release is not done until the registry actually serves the version.
+      - name: Registry serves the new version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          for i in 1 2 3 4 5 6; do
+            got="$(npm view "feedback-studio@$TAG" version 2>/dev/null || true)"
+            if [ "$got" = "$TAG" ]; then echo "npm serves feedback-studio@$got"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::npm publish returned 0, but the registry does not serve feedback-studio@$TAG a minute later."
+          exit 1
 
       - name: Create GitHub Release
         run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes

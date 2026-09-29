@@ -25,7 +25,7 @@ export function renderPins() {
     // The List filter (All / Open / Resolved) applies to the pins as well, so
     // "Open" clears a page full of green resolved pins. Numbering comes from
     // idx over the unfiltered page list, so the visible pins keep their numbers.
-    if (!filtered([c]).length) return;
+    if (!filtered([c], { forPins: true }).length) return;
     // Same rule as the List cards: only comments still awaiting action warn.
     // A resolved comment's text USUALLY changed — that is the fix having
     // landed — so its pin stays green, never amber.
@@ -50,7 +50,7 @@ export function renderPins() {
       + (c.id === S.cursorId ? ' is-cursor' : '');
     pin.innerHTML = c.author === 'agent' ? I.bot : String(idx + 1);
     const gist = c.text || (c.textEdit && c.textEdit.after ? '“' + c.textEdit.after + '”' : editsSummary(c));
-    pin.title = (changedAfterReply ? t('[text changed after the agent replied — resolve it in the List if the change is what you asked for] ') : shaky ? t('[pin may be off — re-pin from the List] ') : '') + (c.author === 'agent' ? t('[agent] ') : '') + gist;
+    pin.title = (changedAfterReply ? t('[text changed after the agent replied — resolve it in the List if the change is what you asked for] ') : shaky ? t('[check that this pin still points at the right spot] ') : '') + (c.author === 'agent' ? t('[agent] ') : '') + gist;
     pin.setAttribute('role', 'button');
     pin.tabIndex = 0;
     // Hidden until positionPins() gives it real coordinates — a fixed-position

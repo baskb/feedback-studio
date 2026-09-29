@@ -5,7 +5,7 @@
 import {
   S, MODE, API, ROLE, CAN_COMMENT, CAN_MANAGE, SS, LS,
   normalizePath, isOpenC, lastTouch, filtered, agentRepliedAfter, isMineC, defaultDir,
-  agentName, fmtDur, activityText, walkComments,
+  agentName, fmtDur, activityText, walkComments, pinFilterOn, pinLabel,
 } from '/__feedback/overlay/state.mjs';
 import {
   I, root, host, panel, listEl, subEl, countEl, readyEl,
@@ -110,10 +110,29 @@ export function applyPanelShift(open, instant) {
 
 // ---------- filter, sort, search ----------
 export function setFilter(f) {
+  if (f === 'pin' && S.filter === 'pin') f = S.filterBefore || 'all'; // the pin chip toggles back
+  if (f === 'pin' && !S.pinId) return;
+  // 'pin' is never kept over a reload; every other filter is, and is where
+  // the pin chip goes back to.
+  if (f !== 'pin') { S.filterBefore = f; SS.set('kbf-filter', f); }
   S.filter = f;
-  SS.set('kbf-filter', f);
   renderPanel();
   renderPins();
+}
+
+// A pin on the page was clicked: the List shows that one comment, opened with
+// its whole thread, and a selected "Pin n" chip next to the other filters says
+// so. Any other filter, or the chip itself, brings the whole List back; the
+// chip stays until the page reloads, so the reviewer can switch back to it.
+// The pins on the page keep the previous filter, so the next one is a click away.
+export function showPin(id) {
+  if (!S.comments.some((c) => c.id === id)) { focusComment(id, true); return; }
+  S.pinId = id;
+  S.filter = 'pin';
+  S.expandedId = id;
+  renderPanel();
+  renderPins();
+  focusComment(id, true);
 }
 
 // Picking another key starts in that key's natural direction (newest first,
@@ -153,6 +172,15 @@ export function shownComments() {
 }
 
 function syncControls() {
+  // The comment the pin filter showed is gone (deleted, or cleared elsewhere):
+  // back to the filter from before, rather than an empty List.
+  if (S.filter === 'pin' && !pinFilterOn()) S.filter = S.filterBefore || 'all';
+  if (S.pinId && !S.comments.some((c) => c.id === S.pinId)) S.pinId = null;
+  const pinChip = $('kbf-filter-pin');
+  if (pinChip) {
+    pinChip.hidden = !S.pinId;
+    if (S.pinId) pinChip.textContent = t('Pin {n}', { n: pinLabel(S.pinId).replace(/^#/, '').split(' ')[0] });
+  }
   root.querySelectorAll('.kbf-filter').forEach((b) => {
     const on = b.dataset.filter === S.filter;
     b.classList.toggle('is-active', on);
@@ -188,7 +216,8 @@ function renderBulk(view) {
   const bar = $('kbf-bulk');
   if (!bar) return;
   const narrowed = !!S.query || S.filter !== 'all';
-  bar.hidden = !(narrowed && view.length);
+  // One pin shown: bulk actions over "all shown" would only confuse.
+  bar.hidden = !(narrowed && view.length) || pinFilterOn();
   const n = $('kbf-bulk-count');
   if (n) n.textContent = t('{n} shown', { n: view.length });
 }
@@ -315,7 +344,7 @@ function cardHtml(c, key, here, num) {
         <span class="kbf-author ${isAgent ? 'is-agent' : ''}">${escapeHtml(who)}</span>
         ${st === 'approved' || st === 'rejected' ? `<span class="kbf-status kbf-status-${st}">${st}</span>` : ''}
         ${(c.round || 1) !== S.round && S.round > 1 ? `<span class="kbf-round-tag" title="${t('Round {n}', { n: c.round || 1 })}">r${c.round || 1}</span>` : ''}
-        ${changedAfterReply ? `<span class="kbf-pinstate is-changed" title="${escapeHtml(t('The pinned text changed after the agent replied. If the change is what you asked for, resolve the comment (✓) and the pin turns green; otherwise re-pin it.'))}">${t('changed after reply')}</span>` : pinState ? `<span class="kbf-pinstate is-${pinState}" title="${escapeHtml(pinState === 'lost' ? t('The pinned element could not be found on this page.') : pinState === 'hidden' ? t('The pinned element sits in a popup, menu or dialog ({layer}) that is not open right now. Open it and the pin comes back.', { layer: c.anchor.layer }) : t('The pinned element was only found with weak confidence — the agent will refuse to edit it.'))}">${pinState === 'lost' ? t('pin lost') : pinState === 'hidden' ? t('in a closed popup') : t('pin unsure')}</span>` : ''}
+        ${changedAfterReply ? `<span class="kbf-pinstate is-changed" title="${escapeHtml(t('The pinned text changed after the agent replied. If the change is what you asked for, resolve the comment (✓) and the pin turns green; otherwise re-pin it.'))}">${t('changed after reply')}</span>` : pinState ? `<span class="kbf-pinstate is-${pinState}" title="${escapeHtml(pinState === 'lost' ? t('The pinned element could not be found on this page.') : pinState === 'hidden' ? t('The pinned element sits in a popup, menu or dialog ({layer}) that is not open right now. Open it and the pin comes back.', { layer: c.anchor.layer }) : t('This pin could not be double-checked against what was there when it was placed. If the page has changed since, check that it still points at the right spot, and if not, pin it again from the List.'))}">${pinState === 'lost' ? t('pin lost') : pinState === 'hidden' ? t('in a closed popup') : t('check the spot')}</span>` : ''}
         <span class="kbf-card-anchor" title="${escapeHtml(anchorTxt)}">${escapeHtml(anchorTxt)}</span>
       </div>
       ${working ? `<div class="kbf-card-work"><span class="kbf-agent-dot"></span><span>${escapeHtml(t('{name} is on this', { name: agentName() }))} · <span class="kbf-elapsed" data-since="${Number(S.agent.since) || Date.now()}">${fmtDur(Date.now() - (Number(S.agent.since) || Date.now()))}</span>${S.agent.note ? ' · ' + escapeHtml(S.agent.note) : (lastAct ? ' · ' + escapeHtml(activityText(lastAct)) : '')}</span></div>` : ''}

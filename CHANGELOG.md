@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **A click on a pin shows that comment alone.** Clicking a pin on the page opened the List with every comment in it, so the one you clicked was a card among many. It now opens the List on that comment only, expanded with its whole thread (replies, photos, the reply box), under a new "Pin n" filter chip that sits selected next to All, Open, Resolved and Today. Any other filter brings the whole List back, and so does clicking the chip again (back to the filter that was on before). The chip stays until the page reloads, so you can switch back to it, and it is never remembered over a reload. The pins on the page keep the previous filter meanwhile, so the next pin is one click away; the bulk bar stays hidden for a single comment. A comment that is deleted while it is shown this way drops the List back to the filter from before.
+
+### Fixed
+- **The agent's activity lines are in the reviewer's language.** The server writes them in English ("replied: …", "resolved", "done", "round 2 started", "took 3m"), and the Dutch overlay showed them that way. The overlay now translates these fixed wordings; an agent's own note is still shown as written.
+- **A pin on a photo no longer shows "pin unsure" the moment it is placed.** A photo has no text, so the anchor had nothing to check the pin against later, and every pin on a photo, or on a layer lying over one (a dark gradient over a hero, a frame around a card photo), was rated "low" and labelled unsure, even with the position still exact. A pin on an element without text now also records the photo it points at: the element itself when it is an `<img>`, the first photo inside it, or the one photo in the same block (up to two levels up; a block with several photos records none, because which one lies under the layer would be a guess). On the anchor these are two new fields, `photoAlt` and `photoSrc`, kept by the store and shown in `FEEDBACK.md` as a `photo:` line and in the MCP summary. When the pin is found again, the same photo next to it counts as independent proof, like matching text: its file, or else its alt text, must match AND occur on only one photo of the page, so a lazy-loading placeholder or a generic alt shared by many photos can never lift a shifted pin to "high" on the wrong one. A replaced photo drops the pin below high as before, which after an agent reply reads "changed after reply".
+
+### Changed
+- **The unsure label says what is known, and no longer looks like an alarm.** It read "pin unsure" with the tooltip "the agent will refuse to edit it", a promise about an agent the overlay cannot make (an agent that reads the comments itself never sees this label). It now reads "check the spot", and the tooltip says the pin could not be double-checked against what was there when it was placed, and what to do: check it still points at the right spot, and pin it again from the List if not. The pin title says the same in short. The label is grey and in plain case, and the pin keeps its own colour with a grey dashed ring, instead of amber: amber stays reserved for an agent at work, so the two no longer look alike.
+
 ## [1.5.0] - 2026-09-29
 
 ### Added

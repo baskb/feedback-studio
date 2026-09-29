@@ -214,7 +214,9 @@ reverse.
   attention first (lost pins, proposals to approve, unanswered questions), status,
   type or most discussed, in either direction; the pins follow the filter and the
   search. With a filter or search on, one bar resolves, deletes or copies (as
-  Markdown) everything shown.
+  Markdown) everything shown. Clicking a pin on the page shows that comment alone,
+  opened with its whole thread, under a selected "Pin n" filter; any other filter
+  brings the whole List back.
 - **Keyboard** — `j` / `k` walk the pins, `Enter` opens, `r` replies, `x` resolves,
   `/` searches, `l` shows the List, `Ctrl+Z` undoes, `?` lists them all.
 - **Undo** — a status change, a retyped comment, a moved pin, a delete, a bulk

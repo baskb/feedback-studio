@@ -158,6 +158,90 @@ test('anchor: placeholder snippet: high with a stable attribute, low with positi
   assert.equal(A.resolveWithConfidence(positional).confidence, 'low', 'nothing but the position, which rots');
 });
 
+// A page like a portfolio: a hero whose photo lies under a dark gradient layer
+// (a sibling <div>), and project cards with one photo each.
+function photoPage(cards = [['/_astro/limmen.A1.webp', 'Woonkamer in Limmen'], ['/_astro/gouda.B2.webp', 'Kantoor in Gouda']]) {
+  return makePage(h('body', {}, [
+    h('section', { class: 'hero' }, [
+      h('img', { src: '/_astro/hero.C3.avif', alt: 'Wand van donkere houten lamellen' }),
+      h('div', { class: 'scrim' }, []),
+    ]),
+    h('section', { class: 'cards' }, cards.map(([src, alt]) =>
+      h('article', {}, [h('a', { href: '#' }, [h('div', { class: 'frame' }, [h('img', { src, alt })])])]))),
+  ]));
+}
+const imgWithAlt = (page, alt) => page.find((e) => e.tag === 'img' && e.attrs.alt === alt);
+
+test('anchor: a pin on a photo, or on the layer over it, remembers the photo and resolves high', () => {
+  const page = photoPage();
+  const A = createAnchoring(page.dom);
+  const onImg = A.buildElementAnchor(imgWithAlt(page, 'Kantoor in Gouda'));
+  assert.ok(isPlaceholderSnippet(onImg.snippet));
+  assert.equal(onImg.attrSelector, '');
+  assert.equal(onImg.photoSrc, '/_astro/gouda.B2.webp');
+  assert.equal(onImg.photoAlt, 'Kantoor in Gouda');
+  assert.equal(A.resolveWithConfidence(onImg).confidence, 'high', 'a fresh pin on a photo is not "unsure"');
+  // The reviewer taps the hero, and the element under the finger is the gradient layer.
+  const scrim = page.find((e) => e.attrs.class === 'scrim');
+  const onLayer = A.buildElementAnchor(scrim);
+  assert.equal(onLayer.photoAlt, 'Wand van donkere houten lamellen', 'the photo next to the layer');
+  const r = A.resolveWithConfidence(onLayer);
+  assert.equal(r.el, scrim);
+  assert.equal(r.confidence, 'high');
+  // A wrapper around the photo counts too.
+  const frame = A.buildElementAnchor(page.find((e) => e.attrs.class === 'frame'));
+  assert.equal(frame.photoSrc, '/_astro/limmen.A1.webp');
+  assert.equal(A.resolveWithConfidence(frame).confidence, 'high');
+});
+
+test('anchor: a photo pin drops below high when the photo is replaced, or the position shifts to another photo', () => {
+  const page = photoPage();
+  const A = createAnchoring(page.dom);
+  const pin = A.buildElementAnchor(imgWithAlt(page, 'Kantoor in Gouda'));
+  // The requested change landed: another file and another alt at the same spot.
+  const swapped = photoPage([['/_astro/limmen.A1.webp', 'Woonkamer in Limmen'], ['/_astro/gouda.NEW.webp', 'Lamellenwand in Gouda']]);
+  assert.equal(createAnchoring(swapped.dom).resolveWithConfidence(pin).confidence, 'low');
+  // A new card in front shifts every position by one: the path now points at Limmen.
+  const shifted = photoPage([['/_astro/tribes.D4.webp', 'Kantoor Tribes'], ['/_astro/limmen.A1.webp', 'Woonkamer in Limmen'], ['/_astro/gouda.B2.webp', 'Kantoor in Gouda']]);
+  const r = createAnchoring(shifted.dom).resolveWithConfidence(pin);
+  if (r.confidence === 'high') assert.equal(r.el.attrs.alt, 'Kantoor in Gouda', 'high only on the right photo');
+  else assert.equal(r.confidence, 'low');
+});
+
+test('anchor: a photo that is not unique on the page proves nothing (lazy placeholder, generic alt)', () => {
+  // Lazy loading: every photo carries the same placeholder file and the same alt.
+  const lazy = photoPage([['/blank.gif', 'Projectfoto'], ['/blank.gif', 'Projectfoto']]);
+  const A = createAnchoring(lazy.dom);
+  const second = lazy.findAll((e) => e.tag === 'img')[2];
+  const pin = A.buildElementAnchor(second);
+  assert.equal(pin.photoSrc, '/blank.gif');
+  assert.equal(A.resolveWithConfidence(pin).confidence, 'low', 'the same file on two photos cannot vouch for either');
+  // Same file, different alt: the file is shared, so the alt must decide, and it is unique here.
+  const mixed = photoPage([['/blank.gif', 'Keuken'], ['/blank.gif', 'Badkamer']]);
+  const B = createAnchoring(mixed.dom);
+  assert.equal(B.resolveWithConfidence(B.buildElementAnchor(imgWithAlt(mixed, 'Badkamer'))).confidence, 'low',
+    'a matching but shared file ends the check: no fallback to the alt');
+});
+
+test('anchor: a layer beside several photos records no photo (which one lies under it is a guess)', () => {
+  const page = makePage(h('body', {}, [h('div', { class: 'gallery' }, [
+    h('img', { src: '/a.webp', alt: 'A' }), h('img', { src: '/b.webp', alt: 'B' }), h('div', { class: 'veil' }, []),
+  ])]));
+  const A = createAnchoring(page.dom);
+  const pin = A.buildElementAnchor(page.find((e) => e.attrs.class === 'veil'));
+  assert.equal(pin.photoAlt, undefined);
+  assert.equal(pin.photoSrc, undefined);
+  assert.equal(A.resolveWithConfidence(pin).confidence, 'low');
+});
+
+test('anchor: an element with text records no photo', () => {
+  const page = makePage(h('body', {}, [h('figure', {}, [h('img', { src: '/a.webp', alt: 'A' }), h('figcaption', {}, ['Caption'])])]));
+  const A = createAnchoring(page.dom);
+  const pin = A.buildElementAnchor(page.find((e) => e.tag === 'figure'));
+  assert.equal(pin.snippet, 'Caption');
+  assert.equal(pin.photoAlt, undefined);
+});
+
 test('anchor: a unique id with no text is high (the id is trusted on its own)', () => {
   const page = makePage(h('body', {}, [h('div', { id: 'app' }, []), h('div', {}, [])]));
   const A = createAnchoring(page.dom);

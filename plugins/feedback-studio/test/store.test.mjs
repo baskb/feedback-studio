@@ -58,6 +58,10 @@ test('sanitizeAnchor whitelists keys and caps lengths', () => {
   assert.equal(a.type, 'element');
   assert.ok(a.snippet.length <= 500);
   assert.equal(a.layer, 'dialog#mnav', 'the popup the element sits in is kept');
+  const p = sanitizeAnchor({ snippet: '<img>', photoAlt: 'Keuken', photoSrc: '/_astro/k.webp', photoExtra: 'x' });
+  assert.equal(p.photoAlt, 'Keuken', 'the photo a pin without text points at is kept');
+  assert.equal(p.photoSrc, '/_astro/k.webp');
+  assert.equal(p.photoExtra, undefined);
 });
 
 test('exportMarkdown prints the popup an element sits in as an inside: line', async () => {

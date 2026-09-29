@@ -87,7 +87,8 @@ function summarize(c) {
     // .feedback/). get_comment shows which message each one belongs to.
     photos: photoFiles(c),
 
-    anchor: { snippet: c.anchor && (c.anchor.snippet || c.anchor.rangeText), selector: c.anchor && c.anchor.selector },
+    anchor: { snippet: c.anchor && (c.anchor.snippet || c.anchor.rangeText), selector: c.anchor && c.anchor.selector,
+      photoAlt: (c.anchor && c.anchor.photoAlt) || undefined }, // a pin without text: the photo it was placed on or over
     replies: Array.isArray(c.thread) ? c.thread.length : 0,
   };
 }

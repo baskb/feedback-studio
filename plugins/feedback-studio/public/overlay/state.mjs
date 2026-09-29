@@ -146,12 +146,18 @@ export function pageComments() {
 
 // The List's chips and search box, applied to any list of comments. The pins
 // use the same rule, so what you hide in the List is hidden on the page too.
-export function filtered(list) {
+// The "pin" filter: a click on a pin shows only that comment in the List
+// (S.pinId). It narrows the List, never the page: the pins keep the filter that
+// was on before (S.filterBefore), so the reviewer can click the next one.
+export const pinFilterOn = () => S.filter === 'pin' && !!S.pinId && S.comments.some((c) => c.id === S.pinId);
+export function filtered(list, { forPins = false } = {}) {
+  if (!forPins && pinFilterOn()) return list.filter((c) => c.id === S.pinId);
+  const f = S.filter === 'pin' ? S.filterBefore : S.filter;
   let out = list;
-  if (S.filter === 'open') out = out.filter(isOpenC);
-  else if (S.filter === 'resolved') out = out.filter((c) => c.status === 'resolved');
-  else if (S.filter === 'today') out = out.filter(isTodayC);
-  else if (S.filter === 'round') out = out.filter((c) => (c.round || 1) === S.round);
+  if (f === 'open') out = out.filter(isOpenC);
+  else if (f === 'resolved') out = out.filter((c) => c.status === 'resolved');
+  else if (f === 'today') out = out.filter(isTodayC);
+  else if (f === 'round') out = out.filter((c) => (c.round || 1) === S.round);
   if (S.query) out = out.filter((c) => matchesQuery(c, S.query));
   return out;
 }
@@ -232,10 +238,33 @@ export function pinLabel(id) {
 
 export function activityText(e) {
   if (!e) return '';
-  if (e.kind === 'edit') return 'edited ' + (e.file || e.text || 'a file');
-  if (e.kind === 'done') return (e.text || 'done') + (e.took ? ' · took ' + fmtDur(e.took) : '');
-  if (e.kind === 'idle') return e.text || 'paused';
-  return e.text || e.kind;
+  if (e.kind === 'edit') return t('edited {file}', { file: e.file || e.text || t('a file') });
+  if (e.kind === 'done' || e.kind === 'reply') {
+    return serverLine(e.text || 'done') + (e.took ? ' · ' + t('took {dur}', { dur: fmtDur(e.took) }) : '');
+  }
+  if (e.kind === 'idle') return serverLine(e.text || 'paused');
+  return serverLine(e.text || e.kind);
+}
+
+// The server writes its activity lines in English. Its fixed wordings are
+// translated here; anything else (an agent's own note) is shown as written.
+function serverLine(s) {
+  let m;
+  if ((m = /^replied: ([\s\S]*)$/.exec(s))) return t('replied: {text}', { text: m[1] });
+  if ((m = /^round (\d+) started$/.exec(s))) return t('round {n} started', { n: m[1] });
+  switch (s) {
+    case 'done': return t('done');
+    case 'paused': return t('paused');
+    case 'turn ended': return t('turn ended');
+    case 'proposed variants': return t('proposed variants');
+    case 'started on this comment': return t('started on this comment');
+    case 'agent left the session': return t('left the session');
+    case 'resolved': return t('resolved');
+    case 'rejected': return t('rejected');
+    case 'approved': return t('approved');
+    case 'open': return t('reopened');
+    default: return s;
+  }
 }
 
 // ---------- the shared mutable state ----------
@@ -250,7 +279,9 @@ export const S = {
   mode: SS.get('kbf-mode') === '1',           // Point mode on/off
   panelOpen: SS.get('kbf-panel') === '1',
   panelRelease: null,                          // releases the panel's focus trap (phone layout) on close
-  filter: SS.get('kbf-filter') || 'all',
+  filter: SS.get('kbf-filter') || 'all',       // never 'pin' after a reload: that one is not kept
+  pinId: null,                                 // the comment the 'pin' filter shows
+  filterBefore: SS.get('kbf-filter') || 'all', // the filter to return to, and the one the pins keep meanwhile
   sort: initialSort(),                         // { key, dir } — see lib/sort.mjs
   query: SS.get('kbf-query') || '',            // the List's search box
   round: 1,                                    // the current review round, from the server

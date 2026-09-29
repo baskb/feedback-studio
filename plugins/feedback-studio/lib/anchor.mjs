@@ -12,7 +12,8 @@
 // snippet. On resolve every strategy runs and votes. The CSS path and the XPath
 // are two encodings of the SAME position, so they rot together after an edit
 // and count as one "structural" family. Only a genuinely independent family
-// agreeing (a stable attribute, or the text) earns "high" confidence. "low" and
+// agreeing (a stable attribute, the text, or for an element without text the
+// photo it was placed on: photoSrc / photoAlt) earns "high" confidence. "low" and
 // "none" mean: do not edit, ask for a re-pin.
 
 // The adapter every function reads the page through. All methods are synchronous.
@@ -190,15 +191,58 @@ export function createAnchoring(dom) {
       else if (tr !== 'none') confidence = 'medium';
       else confidence = 'low';
     } else {
-      // No real text to corroborate. Trust only a uniquely-resolving stable attribute.
-      confidence = set.has('attr') ? 'high' : 'low';
+      // No real text to corroborate. Trust a uniquely-resolving stable attribute,
+      // or the photo the pin was placed on (see samePhoto); else the position only.
+      confidence = set.has('attr') || samePhoto(best, a) ? 'high' : 'low';
     }
     return { el: best, confidence, ambiguous: textAmbiguous };
+  }
+
+  // ---------- photos ----------
+  // A photo has no text, so the text family cannot vouch for a pin on one, and
+  // the position alone rots after edits. What a reviewer points at is usually a
+  // photo, or a layer lying over one (a dark gradient, a caption plate) that
+  // sits next to it in the same block. `nearestPhoto` finds that photo: the
+  // element itself when it is an <img>; else the first <img> inside it; else the
+  // one <img> of the nearest ancestor, up to PHOTO_UP levels, that holds exactly
+  // one. An ancestor with several photos stops the search: which one lies under
+  // the layer is then a guess.
+  const PHOTO_UP = 2;
+  const srcPath = (el) => String(dom.attr(el, 'src') || '').split(/[?#]/)[0];
+  function nearestPhoto(el) {
+    if (!dom.isElement(el)) return null;
+    if (dom.tag(el) === 'img') return el;
+    const imgs = dom.byTag('img');
+    const inside = (scope) => imgs.filter((i) => dom.contains(scope, i));
+    const own = inside(el);
+    if (own.length) return own[0];
+    let scope = dom.parent(el);
+    for (let up = 1; scope && up <= PHOTO_UP; up++, scope = dom.parent(scope)) {
+      if (scope === dom.body || scope === dom.root) break;
+      const found = inside(scope);
+      if (found.length === 1) return found[0];
+      if (found.length > 1) break;
+    }
+    return null;
+  }
+  // The photo recorded on the anchor is still the one next to `el`. Its file
+  // (or, failing that, its alt text) must match AND occur on only one photo of
+  // the page: a lazy-loading placeholder or a generic alt shared by many photos
+  // proves nothing, and must never lift a shifted pin to "high" on the wrong one.
+  function samePhoto(el, a) {
+    if (!a.photoSrc && !a.photoAlt) return false;
+    const p = nearestPhoto(el);
+    if (!p) return false;
+    const imgs = dom.byTag('img');
+    if (a.photoSrc && srcPath(p) === a.photoSrc) return imgs.filter((i) => srcPath(i) === a.photoSrc).length === 1;
+    const alt = norm(dom.attr(p, 'alt') || '');
+    if (a.photoAlt && alt === a.photoAlt) return imgs.filter((i) => norm(dom.attr(i, 'alt') || '') === alt).length === 1;
+    return false;
   }
   function resolveAnchor(a, pool) { return resolveWithConfidence(a, pool).el; }
 
   function buildElementAnchor(el) {
-    return {
+    const a = {
       type: 'element',
       selector: cssPath(el),
       attrSelector: stableAttrSelector(el),
@@ -209,6 +253,17 @@ export function createAnchoring(dom) {
       // across text-transform and hidden descendants.
       snippet: norm(dom.text(el)).slice(0, 140) || ('<' + dom.tag(el) + '>'),
     };
+    // No text to check the pin against later: remember the photo it points at.
+    if (isPlaceholderSnippet(a.snippet)) {
+      const p = nearestPhoto(el);
+      if (p) {
+        const alt = norm(dom.attr(p, 'alt') || '').slice(0, 300);
+        const src = srcPath(p).slice(0, 500);
+        if (alt) a.photoAlt = alt;
+        if (src) a.photoSrc = src;
+      }
+    }
+    return a;
   }
   // A selected sentence: `container` is the element holding the selection,
   // `text` the selected text itself.

@@ -261,6 +261,7 @@ export function mountUI() {
           <button class="kbf-filter" data-filter="resolved" aria-pressed="false">${t('Resolved')}</button>
           <button class="kbf-filter" data-filter="today" aria-pressed="false" title="${t('Comments added or changed today')}">${t('Today')}</button>
           <button class="kbf-filter" data-filter="round" aria-pressed="false" title="${t('Comments from the current review round')}" id="kbf-filter-round" hidden>${t('This round')}</button>
+          <button class="kbf-filter" data-filter="pin" aria-pressed="false" title="${t('Only the pin you clicked. Pick another filter, or click this one again, to see all comments.')}" id="kbf-filter-pin" hidden></button>
         </div>
         <div class="kbf-tools">
           <label class="kbf-search">

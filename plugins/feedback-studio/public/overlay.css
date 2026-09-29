@@ -454,10 +454,11 @@ button {
 .kbf-pin.is-resolved { background: var(--kbf-green); }
 .kbf-pin.is-rejected { background: var(--kbf-muted); }
 .kbf-pin.is-active { transform: scale(1.18); opacity: 1; box-shadow: var(--kbf-shadow-md), 0 0 0 3px var(--kbf-clay-tint); }
-/* A pin whose anchor only re-resolved with weak confidence. The agent will
-   refuse to edit that element, so the risk is made visible here first: amber +
-   a dashed ring, with the List card offering the re-pin. */
-.kbf-pin.is-shaky { background: var(--kbf-amber); outline: 2px dashed var(--kbf-amber); outline-offset: 2px; opacity: 0.85; }
+/* A pin that could not be double-checked against what was there when it was
+   placed (no matching text or photo). It keeps its own colour and gets a quiet
+   dashed ring: "look at this", not an error. Amber stays reserved for the agent
+   at work, so the two never look alike. The List card says what to check. */
+.kbf-pin.is-shaky { outline: 2px dashed var(--kbf-muted, #6b6a63); outline-offset: 2px; }
 
 /* ---------- composer popover ---------- */
 
@@ -2026,7 +2027,7 @@ button {
 /* Anchor-health tag on a card: the pin re-resolved weakly (unsure) or not at
    all (lost). Same shape as the status tags; amber/red-ish to read as warning. */
 .kbf-pinstate { flex: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 6px; border-radius: 4px; }
-.kbf-pinstate.is-shaky { color: var(--kbf-amber); background: rgba(201, 138, 43, 0.14); }
+.kbf-pinstate.is-shaky { color: var(--kbf-muted, #6b6a63); background: rgba(107, 106, 99, 0.12); text-transform: none; letter-spacing: 0; }
 .kbf-pinstate.is-lost { color: #b3452e; background: rgba(179, 69, 46, 0.12); }
 .kbf-pinstate.is-changed { color: var(--kbf-muted, #6b6a63); background: rgba(107, 106, 99, 0.12); text-transform: none; letter-spacing: 0; }
 .kbf-pinstate.is-hidden { color: var(--kbf-muted, #6b6a63); background: rgba(107, 106, 99, 0.12); text-transform: none; letter-spacing: 0; }

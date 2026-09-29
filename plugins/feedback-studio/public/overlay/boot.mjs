@@ -17,7 +17,7 @@ import { api } from '/__feedback/overlay/api.mjs';
 import { initPins } from '/__feedback/overlay/pins.mjs';
 import { initMode, setMode, clearPick, repositionAim } from '/__feedback/overlay/mode.mjs';
 import { initComposer, closeComposer, positionTarget } from '/__feedback/overlay/composer.mjs';
-import { initPanel, setPanel, setFilter, renderPanel, applyPanelShift, refresh, focusComment, startDomObserver, scheduleRerender } from '/__feedback/overlay/panel.mjs';
+import { initPanel, setPanel, setFilter, renderPanel, applyPanelShift, refresh, focusComment, showPin, startDomObserver, scheduleRerender } from '/__feedback/overlay/panel.mjs';
 import { openVariantPreview, closeVariantPreview, repositionVariantBar } from '/__feedback/overlay/variants.mjs';
 import { startNarrate, stopNarrate, closeDraftTray, startWalkthrough, closeWalkthrough } from '/__feedback/overlay/narrate.mjs';
 import { initPresence } from '/__feedback/overlay/presence.mjs';
@@ -35,7 +35,7 @@ import { t, tn, getLang, setLang } from '/__feedback/overlay/i18n.mjs';
 // A lower-layer module emits; the module that owns the behaviour handles it.
 function wireEvents() {
   on('refresh', refresh);                                  // composer saved something
-  on('comment:focus', (id) => focusComment(id, true));     // a pin was clicked
+  on('comment:focus', (id) => showPin(id));                // a pin was clicked: the List shows only that one
   on('variants:open', ({ comment, reply }) => openVariantPreview(comment, reply));
   // One scheduled re-measure, in the order the old schedulePos ran them
   // (the pins themselves are done before this fires).

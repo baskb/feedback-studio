@@ -178,4 +178,21 @@ export const NL_EXTRA = {
   'Next photo': 'Volgende foto',
   'Tap again to delete': 'Tik nogmaals om te verwijderen',
   'The photo could not be deleted: {error}': 'De foto kon niet worden verwijderd: {error}',
+
+  // The activity lines the server writes in English (state.mjs, serverLine).
+  'edited {file}': '{file} bewerkt',
+  'a file': 'een bestand',
+  'took {dur}': 'duurde {dur}',
+  'replied: {text}': 'antwoordde: {text}',
+  'round {n} started': 'ronde {n} begonnen',
+  'done': 'klaar',
+  'paused': 'gepauzeerd',
+  'turn ended': 'beurt afgelopen',
+  'proposed variants': 'stelde varianten voor',
+  'started on this comment': 'begon aan deze opmerking',
+  'left the session': 'is weg',
+  'resolved': 'afgehandeld',
+  'rejected': 'afgewezen',
+  'approved': 'goedgekeurd',
+  'reopened': 'weer geopend',
 };

@@ -30,7 +30,7 @@ import {
 } from './schema.mjs';
 
 // `layer`: the popup, dialog or menu the element sits in (a short selector), when it does.
-const ANCHOR_KEYS = ['type', 'selector', 'attrSelector', 'xpath', 'tag', 'id', 'snippet', 'rangeText', 'layer'];
+const ANCHOR_KEYS = ['type', 'selector', 'attrSelector', 'xpath', 'tag', 'id', 'snippet', 'rangeText', 'layer', 'photoAlt', 'photoSrc'];
 const TEXT_MAX = 10000;
 
 const EDITS_MAX = 16;
@@ -533,6 +533,10 @@ function renderPages(comments, d, heading) {
       if (c.anchor?.selector) md += `  - css: ${code(c.anchor.selector)}\n`;
       if (c.anchor?.attrSelector) md += `  - attr: ${code(c.anchor.attrSelector)}\n`;
       if (c.anchor?.xpath) md += `  - xpath: ${code(c.anchor.xpath)}\n`;
+      if (c.anchor?.photoAlt || c.anchor?.photoSrc) {
+        const alt = c.anchor.photoAlt ? `"${collapse(c.anchor.photoAlt).slice(0, 200).replace(/"/g, '”')}" ` : '';
+        md += `  - photo: ${alt}${c.anchor.photoSrc ? code(c.anchor.photoSrc) : ''} (the photo the pin was placed on, or over)\n`;
+      }
       if (c.anchor?.layer) md += `  - inside: ${code(c.anchor.layer)} (a popup, dialog or menu; the element is in it, and it may need opening first)\n`;
       for (const e of (Array.isArray(c.edits) ? c.edits : [])) {
         md += `  - tweak: ${code(e.prop)} ${code(e.from || '?')} → ${code(e.to)}\n`;
@@ -635,7 +639,8 @@ configured: \`list_comments\` to read them all, \`get_comment\` for one. Otherwi
 file directly.
 
 Each comment has: \`page\`, \`type\`, \`anchor\` (a quoted \`snippet\` plus css \`selector\` /
-\`attr\` / \`xpath\`), \`text\`, a reply \`thread\`, \`autonomy\`, and \`status\`. In Markdown mode it
+\`attr\` / \`xpath\`; a pin on something without text also names the photo it was placed on or
+over, \`photoAlt\` / \`photoSrc\`), \`text\`, a reply \`thread\`, \`autonomy\`, and \`status\`. In Markdown mode it
 also carries a \`sourceFile\`.
 
 Comments also carry a \`round\` number. When several rounds exist, process the current (highest)

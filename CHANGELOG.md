@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-29
+
 ### Added
 - **Photos on a comment or a reply, several at once, from a phone too.** The comment box has a "Add photos" row and every reply box a photo button (`accept="image/*"`, so a phone offers the camera and the photo library). Each photo is shrunk in the browser (longest side 2560 px, JPEG; a PNG stays PNG unless it is too heavy), which also drops the camera's location data, and is uploaded on its own the moment it is picked, so on a phone the sending happens while the person is still typing. A tray of thumbnails shows each photo being prepared, ready, or failed (with a plain reason, e.g. a HEIC file the browser cannot read), and a photo can be taken out before saving. Saving sends only the ids: `POST /__feedback/api/uploads` (the image itself as the body) parks a photo in `.feedback/uploads/`, and the comment or reply that is saved claims it, under the comments lock, into `.feedback/attachments/<comment id>/`. What is never claimed is removed after a day. The server writes the `attachments` list (`id`, `file`, `name`, `mime`, `w`, `h`, `bytes`, `addedAt`) on the comment or on that reply; a list sent by a client is ignored, and an upload can be claimed once. Up to 20 photos per message, 4 MB each after shrinking, JPEG/PNG/WebP only, checked at both ends of the file like the replacement image. Saved photos show as thumbnails on the card and under their reply, and open in a viewer with previous/next, arrow keys and swipe; the host side can delete a photo there (tap twice). Deleting a comment moves its photo folder into the trash, and undo brings it back, checked against what is on disk. `FEEDBACK.md` lists a `photos:` line per comment and reply, `HOW-TO-PROCESS.md`, the agents snippet and the skill tell an agent what they are for (look at them; put one in the site only where the comment asks), and the MCP `list_comments` summary carries a `photos` list.
 
@@ -698,7 +700,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.5.0
 [1.4.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.4.0
 [1.3.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.3.0
 [1.2.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.2.0

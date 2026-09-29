@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-29
+
 ### Added
 - **A click on a pin shows that comment alone.** Clicking a pin on the page opened the List with every comment in it, so the one you clicked was a card among many. It now opens the List on that comment only, expanded with its whole thread (replies, photos, the reply box), under a new "Pin n" filter chip that sits selected next to All, Open, Resolved and Today. Any other filter brings the whole List back, and so does clicking the chip again (back to the filter that was on before). The chip stays until the page reloads, so you can switch back to it, and it is never remembered over a reload. The pins on the page keep the previous filter meanwhile, so the next pin is one click away; the bulk bar stays hidden for a single comment. A comment that is deleted while it is shown this way drops the List back to the filter from before.
 
@@ -710,7 +712,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.6.0
 [1.5.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.5.0
 [1.4.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.4.0
 [1.3.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.3.0

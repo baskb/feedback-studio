@@ -2104,6 +2104,23 @@ async function serveMd(req, res, url) {
     return sendHtml(res, await renderMdIndex());
   }
   let rel = pathname.replace(/^\/+/, '');
+  // A README's `![...](preview.png)` resolves relative to the page, so the
+  // browser asks this server for /preview.png. Serve pictures (and other media
+  // a .md can embed) that sit under the reviewed folder; without this every
+  // image in a reviewed document is a broken icon. Only media types — never a
+  // stray .html or .js from the folder (the page shares its origin with the
+  // comment API, the same reason --md-html is opt-in) — and nothing under a
+  // dot-directory, so .feedback/ and .git/ stay unreachable.
+  const ext = path.extname(rel).toLowerCase();
+  if (ext && ext !== '.md' && MD_MEDIA.has(ext)) {
+    const file = path.normalize(path.join(MD_ROOT, rel));
+    const hidden = path.relative(MD_ROOT, file).split(path.sep).some((seg) => seg.startsWith('.'));
+    if (!within(MD_ROOT, file) || hidden || !existsSync(file) || !statSync(file).isFile()) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('404 — not found');
+    }
+    return serveStatic(req, res, file);
+  }
   if (!/\.md$/i.test(rel)) rel += '.md';
   const file = path.normalize(path.join(MD_ROOT, rel));
   if (!within(MD_ROOT, file) || !existsSync(file)) {
@@ -2112,6 +2129,8 @@ async function serveMd(req, res, url) {
   }
   return sendHtml(res, await renderMd(file));
 }
+// What a Markdown file may embed and this server will hand out in --md mode.
+const MD_MEDIA = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', '.mp4', '.webm']);
 
 // Markdown marker stamping lives in lib/markers.mjs (unit-tested there:
 // refuse-to-guess on zero/ambiguous matches, skip resolved+rejected, idempotent).

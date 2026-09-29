@@ -102,15 +102,19 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       # A release is not done until the registry actually serves the version.
+      # npm says "may take a few minutes to become available" and means it: the
+      # 1.4.0 publish on 2026-09-12 became visible 75 seconds after the PUT, so a
+      # one-minute wait failed a release that had in fact gone through. Poll for
+      # up to five minutes, bypassing npm's local metadata cache.
       - name: Registry serves the new version
         run: |
           TAG="${RELEASE_TAG#v}"
-          for i in 1 2 3 4 5 6; do
-            got="$(npm view "feedback-studio@$TAG" version 2>/dev/null || true)"
+          for i in $(seq 1 30); do
+            got="$(npm view "feedback-studio@$TAG" version --prefer-online 2>/dev/null || true)"
             if [ "$got" = "$TAG" ]; then echo "npm serves feedback-studio@$got"; exit 0; fi
             sleep 10
           done
-          echo "::error::npm publish returned 0, but the registry does not serve feedback-studio@$TAG a minute later."
+          echo "::error::npm publish returned 0, but the registry does not serve feedback-studio@$TAG five minutes later."
           exit 1
 
       - name: Create GitHub Release

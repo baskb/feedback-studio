@@ -1016,7 +1016,16 @@ try {
   // overlay could not separate them and the bleed would be back.
   const mdCwd = path.join(root, 'mdcwd');
   mkdirSync(path.join(mdCwd, 'docs'), { recursive: true });
-  writeFileSync(path.join(mdCwd, 'docs', 'a.md'), '# Alpha\n\nFirst doc paragraph.\n\nSee [the site](https://example.com/x), [chapter](#alpha), [doc B](b.md).\n');
+  writeFileSync(path.join(mdCwd, 'docs', 'a.md'), '# Alpha\n\nFirst doc paragraph.\n\nSee [the site](https://example.com/x), [chapter](#alpha), [doc B](b.md).\n\n![a picture](pic.png)\n');
+  // Media a document embeds: a picture beside the file is handed out, but a
+  // picture under a dot-directory and a non-media file beside it are not (the
+  // page shares its origin with the comment API).
+  const onePx = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+  writeFileSync(path.join(mdCwd, 'docs', 'pic.png'), onePx);
+  mkdirSync(path.join(mdCwd, 'docs', '.private'), { recursive: true });
+  writeFileSync(path.join(mdCwd, 'docs', '.private', 'pic.png'), onePx);
+  writeFileSync(path.join(mdCwd, 'docs', 'helper.js'), 'alert(1)\n');
+  writeFileSync(path.join(mdCwd, 'outside.png'), onePx); // above the reviewed folder
   // b.md also carries two active-content payloads the renderer must neutralise:
   // an UNQUOTED javascript: href (the quoted checks never saw it), and an
   // <animate> that would point a link at that scheme after the sanitizer ran.
@@ -1049,6 +1058,21 @@ try {
     const pages = [...new Set(shared.comments.map((c) => c.page))];
     check('--md: two files share one data dir — page collides (/), sourceFile distinguishes',
       shared.comments.length === 2 && bySrc === 'docs/a.md,docs/b.md' && pages.length === 1 && pages[0] === '/');
+
+    // A README's `![...](pic.png)` makes the browser ask this server for
+    // /pic.png: media beside the reviewed file is served with its own type, so
+    // the picture shows instead of a broken-image icon. Nothing under a
+    // dot-directory, nothing but media, nothing outside the root. (Plain file
+    // fetches need no Markdown renderer, so this runs offline too.)
+    const pic = await fetch(MDA + '/pic.png');
+    const picBytes = Buffer.from(await pic.arrayBuffer());
+    check('--md: a picture beside the reviewed file is served with its image type',
+      pic.status === 200 && /^image\/png/.test(pic.headers.get('content-type') || '') && picBytes.equals(onePx));
+    const hiddenPic = await fetch(MDA + '/.private/pic.png');
+    const script = await fetch(MDA + '/helper.js');
+    const outside = await fetch(MDA + '/..%2Foutside.png');
+    check('--md: media under a dot-directory, a non-media file, and a path outside the root are all refused',
+      hiddenPic.status === 404 && script.status === 404 && outside.status === 404);
 
     // The other half of the contract: each served page carries its OWN sourceFile
     // as window.__kbfSource, so the overlay can scope to it. Rendering needs the

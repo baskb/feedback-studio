@@ -6,6 +6,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Pictures in a reviewed Markdown file now show.** A `![...](preview.png)` in a README made the browser ask the review server for `/preview.png`, which answered "no such markdown file", so every picture in a reviewed document was a broken-image icon. In `--md` mode the server now hands out media that sits under the reviewed folder (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.avif`, `.svg`, `.mp4`, `.webm`) with its own content type. Only those types, never a `.html` or `.js` from the folder (the page shares its origin with the comment API), nothing under a dot-directory (so `.feedback/` and `.git/` stay unreachable), and nothing outside the root.
+
 ## [1.4.0] - 2026-09-11
 
 ### Added

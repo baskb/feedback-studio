@@ -330,7 +330,7 @@ async function doSave(opts, text) {
     if (tray && tray.busy()) {
       opts.saving = true;
       if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = t('Sending photos…'); }
-      await tray.settled();
+      while (tray.busy()) await tray.settled(); // a photo picked while waiting joins the same wait
       if (S.activeComposer !== opts) return; // cancelled while waiting
     }
     const attachments = tray ? tray.ids() : [];

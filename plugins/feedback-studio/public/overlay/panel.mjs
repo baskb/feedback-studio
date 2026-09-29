@@ -539,7 +539,7 @@ async function sendReply(id) {
   try {
     if (tray && tray.busy()) {
       toast(t('Sending once the photos are ready…'));
-      await tray.settled();
+      while (tray.busy()) await tray.settled(); // a photo picked while waiting joins the same wait
     }
     const attachments = tray ? tray.ids() : [];
     if (!text && !attachments.length) { toastError(t('None of the photos could be sent.')); return; }

@@ -63,14 +63,27 @@ function drawScaled(img, sx, sy, sw, sh, tw, th) {
   octx.drawImage(cur, 0, 0, cw, ch, 0, 0, tw, th);
   return out;
 }
+// An encoding failure the caller can put into words: `code` is one of
+// 'decode' (the browser cannot read the file, e.g. HEIC outside Safari),
+// 'huge' (over ~40 megapixels), 'encode', 'size' (still over the hard cap).
+function imageError(code, message) { const e = new Error(message); e.code = code; return e; }
+
 // Decode → (crop) → downscale → re-encode. cropRect is in natural-source pixels.
-async function processImage(file, cropRect) {
+// The defaults are the replacement-image settings; photos added to a comment
+// pass their own (bigger, always JPEG for a photo, plus a small preview).
+//   lossy:  'auto' = WebP where the browser can make it, else JPEG; 'jpeg' = always JPEG
+//   thumb:  longest side of a preview data URL to return as well (0 = none)
+//   dataUrl: false skips the full-size data URL (an upload sends the blob itself)
+export async function encodeImage(file, {
+  cropRect = null, maxDim = IMG_MAX_DIM, budget = IMG_BYTE_BUDGET, hardCap = 3_000_000,
+  lossy = 'auto', thumb = 0, dataUrl: wantDataUrl = true,
+} = {}) {
   const url = URL.createObjectURL(file);
   try {
-    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('could not read that image')); i.src = url; });
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(imageError('decode', 'could not read that image')); i.src = url; });
     const natW = img.naturalWidth || img.width, natH = img.naturalHeight || img.height;
-    if (!natW || !natH) throw new Error('empty image');
-    if (natW * natH > IMG_MAX_SRC_PIXELS) throw new Error('image is too large to process (over ~40 megapixels)');
+    if (!natW || !natH) throw imageError('decode', 'empty image');
+    if (natW * natH > IMG_MAX_SRC_PIXELS) throw imageError('huge', 'image is too large to process (over ~40 megapixels)');
     let sx = 0, sy = 0, sw = natW, sh = natH;
     if (cropRect) {
       sx = Math.max(0, Math.min(cropRect.x, natW - 1));
@@ -80,27 +93,50 @@ async function processImage(file, cropRect) {
     }
     let tw = sw, th = sh;
     const longest = Math.max(sw, sh);
-    if (longest > IMG_MAX_DIM) { const k = IMG_MAX_DIM / longest; tw = Math.max(1, Math.round(sw * k)); th = Math.max(1, Math.round(sh * k)); }
-    const canvas = drawScaled(img, sx, sy, sw, sh, tw, th);
+    if (longest > maxDim) { const k = maxDim / longest; tw = Math.max(1, Math.round(sw * k)); th = Math.max(1, Math.round(sh * k)); }
+    let canvas = drawScaled(img, sx, sy, sw, sh, tw, th);
     const hasAlpha = file.type === 'image/png' || /\.png$/i.test(file.name || '');
-    let mime = hasAlpha ? 'image/png' : (webpSupported() ? 'image/webp' : 'image/jpeg');
+    const lossyMime = lossy === 'jpeg' ? 'image/jpeg' : (webpSupported() ? 'image/webp' : 'image/jpeg');
+    let mime = hasAlpha ? 'image/png' : lossyMime;
     let blob = await canvasToBlob(canvas, mime, 0.85);
     // Over budget: a detailed PNG at 2048px is routinely several MB. WebP keeps
     // the alpha channel, so an oversized PNG re-encodes to webp rather than
     // shipping a blob the server would reject; lossy formats step quality down.
-    if (blob && blob.size > IMG_BYTE_BUDGET && mime === 'image/png' && webpSupported()) {
+    // A photo (lossy 'jpeg') goes to JPEG instead: painted on white, because
+    // JPEG has no transparency and see-through parts would turn black.
+    if (blob && blob.size > budget && mime === 'image/png' && lossy === 'jpeg') {
+      mime = 'image/jpeg';
+      canvas = onWhite(canvas);
+      blob = await canvasToBlob(canvas, mime, 0.85);
+    } else if (blob && blob.size > budget && mime === 'image/png' && webpSupported()) {
       mime = 'image/webp';
       blob = await canvasToBlob(canvas, mime, 0.85);
     }
-    if (blob && blob.size > IMG_BYTE_BUDGET && mime !== 'image/png') blob = await canvasToBlob(canvas, mime, 0.72);
-    if (!blob) throw new Error('could not encode the image');
-    // Hard ceiling aligned with the server's media route (3 MB decoded): fail
-    // here with a clear message instead of a doomed upload.
-    if (blob.size > 3_000_000) throw new Error('still over 3 MB after downscaling — crop it or pick a smaller image');
-    const dataUrl = await blobToDataUrl(blob);
-    return { blob, dataUrl, mime, w: tw, h: th, natW, natH, cropRect: cropRect || null };
+    if (blob && blob.size > budget && mime !== 'image/png') blob = await canvasToBlob(canvas, mime, 0.72);
+    if (!blob) throw imageError('encode', 'could not encode the image');
+    // Hard ceiling aligned with the server route that receives it: fail here
+    // with a clear message instead of a doomed upload.
+    if (blob.size > hardCap) throw imageError('size', 'still over ' + Math.round(hardCap / 1e6) + ' MB after downscaling — crop it or pick a smaller image');
+    const out = { blob, mime, w: tw, h: th, natW, natH, cropRect: cropRect || null };
+    if (wantDataUrl) out.dataUrl = await blobToDataUrl(blob);
+    if (thumb > 0) {
+      const k = Math.min(1, thumb / Math.max(tw, th));
+      const small = drawScaled(canvas, 0, 0, tw, th, Math.max(1, Math.round(tw * k)), Math.max(1, Math.round(th * k)));
+      out.thumbUrl = small.toDataURL(hasAlpha && mime !== 'image/jpeg' ? 'image/png' : 'image/jpeg', 0.8);
+      small.width = small.height = 0;
+    }
+    // A phone keeps canvas memory until the element is gone; let it go now.
+    canvas.width = canvas.height = 0;
+    return out;
   } finally { URL.revokeObjectURL(url); }
 }
+function onWhite(src) {
+  const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(src, 0, 0);
+  return c;
+}
+// The replacement image: today's numbers, unchanged.
+function processImage(file, cropRect) { return encodeImage(file, { cropRect }); }
 
 const IMG_ALIGN = [ // 3×3 object-position grid
   ['0% 0%', '50% 0%', '100% 0%'],

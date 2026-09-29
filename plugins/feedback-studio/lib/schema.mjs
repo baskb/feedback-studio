@@ -48,3 +48,17 @@ export const TWEAKABLE_PROPS = [
   'font-size', 'font-weight', 'line-height', 'letter-spacing', 'text-align',
   'color', 'background-color', 'padding', 'margin', 'border-radius', 'opacity', 'gap',
 ];
+
+// ---------- photos a person adds to a comment or a reply ----------
+// Unlike `imageReplace` (one new picture for an image already on the page),
+// these are pictures the reviewer hands over: project photos, a snapshot of a
+// problem, a sketch. The browser shrinks each one, uploads it on its own, and the
+// comment or reply that is then saved claims the uploads by id. The server
+// writes the `attachments` list itself; a value sent by a client is ignored.
+//
+// On disk: <data dir>/attachments/<comment id>/<attachment id>.<ext>.
+export const ATTACH_MAX_PER_MESSAGE = 20;        // photos on one comment or one reply
+export const ATTACH_MAX_BYTES = 4_000_000;       // one photo, after the browser shrank it
+export const ATTACH_EXTS = ['jpg', 'png', 'webp'];
+export const ATTACH_ID_RE = /^a_[A-Za-z0-9-]{8,64}$/;
+export const ATTACH_MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };

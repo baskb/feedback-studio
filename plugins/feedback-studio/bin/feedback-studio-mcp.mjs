@@ -57,6 +57,14 @@ const SUPPORTED_PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
 const isOpen = (c) => c.status !== 'resolved' && c.status !== 'rejected';
 
+function photoFiles(c) {
+  const files = [];
+  const take = (list) => { for (const a of Array.isArray(list) ? list : []) if (a && a.file) files.push(a.file); };
+  take(c.attachments);
+  for (const r of Array.isArray(c.thread) ? c.thread : []) take(r.attachments);
+  return files.length ? files : undefined;
+}
+
 function summarize(c) {
   return {
     id: c.id,
@@ -75,6 +83,9 @@ function summarize(c) {
     shot: c.shot || undefined, // pin-time screenshot, relative to .feedback/ — view it when unsure
     imageReplace: c.imageReplace && c.imageReplace.media ? c.imageReplace : undefined, // staged replacement image + framing
     via: c.via || undefined, // 'narration' = auto-drafted from a spoken walkthrough (wording may be looser)
+    // Photos the reviewer added to the comment or to a reply (paths relative to
+    // .feedback/). get_comment shows which message each one belongs to.
+    photos: photoFiles(c),
 
     anchor: { snippet: c.anchor && (c.anchor.snippet || c.anchor.rangeText), selector: c.anchor && c.anchor.selector },
     replies: Array.isArray(c.thread) ? c.thread.length : 0,

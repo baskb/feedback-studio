@@ -16,6 +16,7 @@ import {
   readComments, writeComments, writeJson, mutate, exportMarkdown,
   exportProcessInstructions, seedAgentsFile, AGENTS_SNIPPET_MARKER, UNIVERSAL_TYPES,
   SCHEMA_VERSION, DEFAULT_ROUND, coerceRound, AUTHOR_HASH_RE,
+  sanitizeAttachment, sanitizeAttachmentName, ATTACH_ID_RE,
 } from '../lib/store.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -566,5 +567,56 @@ test('exportMarkdown: a comment with no round field lands in round 1', async () 
     const md = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf-8');
     assert.ok(md.includes('## Round 2') && md.includes('## Round 1'));
     assert.ok(md.indexOf('round two note') < md.indexOf('no round field'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---------- photos added to a comment or a reply ----------
+
+test('attachments: a device file name keeps its readable part and loses the rest', () => {
+  assert.equal(sanitizeAttachmentName('C:\\fakepath\\IMG_2231.JPG'), 'IMG_2231.JPG');
+  assert.equal(sanitizeAttachmentName('../../etc/passwd'), 'passwd');
+  assert.equal(sanitizeAttachmentName('a<b>"c`d.jpg'), 'abcd.jpg');
+  assert.equal(sanitizeAttachmentName('  two   spaces .jpg '), 'two spaces .jpg');
+  assert.equal(sanitizeAttachmentName('x'.repeat(300)).length, 120);
+  assert.equal(sanitizeAttachmentName(null), '');
+});
+
+test('attachments: a record must point into its own comment folder, or it is dropped', () => {
+  const cid = 'c_12345678-aaaa';
+  const good = sanitizeAttachment({ id: 'a_12345678-bbbb', file: `attachments/${cid}/a_12345678-bbbb.jpg`, name: 'x.jpg', w: 2560, h: 1920, bytes: 800000, addedAt: '2026-09-29T10:00:00.000Z', extra: 'dropped' }, cid);
+  assert.deepEqual(good, { id: 'a_12345678-bbbb', file: `attachments/${cid}/a_12345678-bbbb.jpg`, mime: 'image/jpeg', name: 'x.jpg', w: 2560, h: 1920, bytes: 800000, addedAt: '2026-09-29T10:00:00.000Z' });
+  assert.ok(ATTACH_ID_RE.test(good.id));
+  // another comment's folder, a path outside, a wrong extension, a bad id
+  assert.equal(sanitizeAttachment({ id: 'a_12345678-bbbb', file: 'attachments/c_otherother/a_12345678-bbbb.jpg' }, cid), null);
+  assert.equal(sanitizeAttachment({ id: 'a_12345678-bbbb', file: '../../secret.txt' }, cid), null);
+  assert.equal(sanitizeAttachment({ id: 'a_12345678-bbbb', file: `attachments/${cid}/a_12345678-bbbb.svg` }, cid), null);
+  assert.equal(sanitizeAttachment({ id: '../x', file: `attachments/${cid}/../x.jpg` }, cid), null);
+  assert.equal(sanitizeAttachment('a_12345678-bbbb', cid), null);
+  // numbers out of range are left out, a bad time becomes now
+  const odd = sanitizeAttachment({ id: 'a_12345678-bbbb', file: `attachments/${cid}/a_12345678-bbbb.png`, w: -1, h: 1.5, bytes: 9e9, addedAt: 'yesterday' }, cid);
+  assert.equal(odd.mime, 'image/png');
+  assert.equal(odd.w, undefined);
+  assert.equal(odd.h, undefined);
+  assert.equal(odd.bytes, undefined);
+  assert.ok(!Number.isNaN(Date.parse(odd.addedAt)));
+});
+
+test('attachments: never taken from client input on a new comment or reply', () => {
+  const rec = [{ id: 'a_12345678-bbbb', file: 'attachments/c_x/a_12345678-bbbb.jpg' }];
+  assert.equal(makeComment({ text: 'x', attachments: rec }).attachments, undefined);
+  assert.equal(makeReply({ text: 'x', attachments: rec }).attachments, undefined);
+});
+
+test('exportMarkdown: photos on a comment and on a reply get their own lines', async () => {
+  const dir = freshDir();
+  try {
+    const c = makeComment({ page: '/projecten', text: 'two new projects' });
+    c.attachments = [{ id: 'a_12345678-bbbb', file: `attachments/${c.id}/a_12345678-bbbb.jpg`, name: 'Tribes.jpg' }];
+    c.thread = [{ ...makeReply({ text: '' }), attachments: [{ id: 'a_12345678-cccc', file: `attachments/${c.id}/a_12345678-cccc.jpg` }] }];
+    await exportMarkdown(dir, [c]);
+    const md = readFileSync(path.join(dir, 'FEEDBACK.md'), 'utf-8');
+    assert.match(md, new RegExp('  - photos: `[^`]*attachments/' + c.id + '/a_12345678-bbbb\\.jpg` \\(Tribes\\.jpg\\)'));
+    assert.match(md, /↳ user: \(photos only\)\n    - photos: `[^`]*a_12345678-cccc\.jpg`\n/);
+    assert.match(md, /`photos` lines are pictures the reviewer added/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

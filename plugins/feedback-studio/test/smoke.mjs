@@ -563,6 +563,96 @@ try {
   check('PUT refuses an id that is not a comment id', putBadId.status === 400);
   await fetch(ORIGIN + '/__feedback/api/comments/' + undo.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
 
+  // Photos added to a comment or a reply. Each photo is uploaded on its own and
+  // waits in uploads/; saving the comment or reply claims it by id, which moves
+  // it into attachments/<comment id>/. The server writes the records: nothing a
+  // client puts in `attachments` other than a waiting upload's id is believed.
+  const FB = path.join(root, '.feedback');
+  const upPhoto = (buf, type, name) => fetch(ORIGIN + '/__feedback/api/uploads?name=' + encodeURIComponent(name || 'IMG_0001.jpg') + '&w=4&h=3', {
+    method: 'POST', headers: { 'Content-Type': type, Origin: ORIGIN }, body: buf,
+  });
+  // The server checks a JPEG's first and last bytes, which is all this is.
+  const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]), Buffer.from('JFIF\0'), Buffer.alloc(24), Buffer.from([0xff, 0xd9])]);
+  const up1 = await upPhoto(JPG, 'image/jpeg', 'C:\\fakepath\\Tribes <Zuidas>.jpg');
+  const u1 = (await up1.json()).upload;
+  const up2 = await upPhoto(Buffer.from(PNG_1PX, 'base64'), 'image/png', 'plan.png');
+  const u2 = (await up2.json()).upload;
+  check('a photo upload waits in uploads/ under a fresh id, with a clean name',
+    up1.status === 201 && /^a_/.test(u1.id) && u1.name === 'Tribes Zuidas.jpg' && u1.w === 4 && u1.h === 3 && u1.mime === 'image/jpeg'
+    && existsSync(path.join(FB, 'uploads', u1.id + '.jpg')) && up2.status === 201 && u2.mime === 'image/png');
+  const upSvg = await upPhoto(Buffer.from('<svg onload="x()"/>'), 'image/svg+xml');
+  const upFake = await upPhoto(Buffer.from('not a jpeg at all'), 'image/jpeg');
+  const upTail = await upPhoto(Buffer.concat([JPG, Buffer.from('<script>alert(1)</script>')]), 'image/jpeg');
+  const upCross = await fetch(ORIGIN + '/__feedback/api/uploads', { method: 'POST', headers: { 'Content-Type': 'image/jpeg', Origin: 'http://evil.example' }, body: JPG });
+  let upBig = 0;
+  try { upBig = (await upPhoto(Buffer.alloc(4_000_001, 0xff), 'image/jpeg')).status; } catch (e) { upBig = 'connection closed'; }
+  check('photo uploads refuse SVG, a fake or padded image, another site, and more than 4 MB',
+    upSvg.status === 415 && upFake.status === 400 && upTail.status === 400 && upCross.status === 403 && upBig === 413);
+
+  const forged = { id: 'a_00000000-0000-4000-8000-000000000000', file: '../../secret.txt', name: 'x' };
+  const photoC = (await (await postJ('comments', {
+    page: '/', text: 'two projects', anchor: { snippet: 'Hi' },
+    attachments: [u1.id, u1.id, forged, 'a_not-a-waiting-upload', '../uploads/' + u2.id],
+  })).json()).comment;
+  const p1 = photoC.attachments && photoC.attachments[0];
+  check('saving a comment claims its upload by id, once, and ignores everything else in the list',
+    Array.isArray(photoC.attachments) && photoC.attachments.length === 1 && p1.id === u1.id
+    && p1.file === 'attachments/' + photoC.id + '/' + u1.id + '.jpg' && p1.name === 'Tribes Zuidas.jpg' && p1.bytes === JPG.length
+    && !existsSync(path.join(FB, 'uploads', u1.id + '.jpg')) && !existsSync(path.join(FB, 'uploads', u1.id + '.json'))
+    && existsSync(path.join(FB, p1.file)) && existsSync(path.join(FB, 'uploads', u2.id + '.png')));
+  const pGet = await fetch(ORIGIN + '/__feedback/api/' + p1.file);
+  const pBytes = Buffer.from(await pGet.arrayBuffer());
+  const pEvil = await fetch(ORIGIN + '/__feedback/api/attachments/' + photoC.id + '/..%2F..%2Fcomments.json');
+  const pSvg = await fetch(ORIGIN + '/__feedback/api/attachments/' + photoC.id + '/' + u1.id + '.svg');
+  const pElsewhere = await fetch(ORIGIN + '/__feedback/api/attachments/c_0000000000/' + u1.id + '.jpg');
+  check('a claimed photo is served as an image with nosniff; odd paths are refused',
+    pGet.status === 200 && pGet.headers.get('content-type') === 'image/jpeg' && pGet.headers.get('x-content-type-options') === 'nosniff'
+    && pBytes.equals(JPG) && pEvil.status === 400 && pSvg.status === 400 && pElsewhere.status === 404);
+  const again = (await (await postJ('comments', { page: '/', text: 'mine now', anchor: { snippet: 'Hi' }, attachments: [u1.id] })).json()).comment;
+  check('an upload that was already claimed cannot be claimed again', again.attachments === undefined);
+  await fetch(ORIGIN + '/__feedback/api/comments/' + again.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
+
+  const photoReply = await postJ('comments/' + photoC.id + '/reply', { author: 'user', text: '', attachments: [u2.id] });
+  const pr = (await photoReply.json()).reply;
+  check('a reply of only photos carries them on the reply',
+    photoReply.status === 201 && pr.text === '' && pr.attachments && pr.attachments.length === 1
+    && pr.attachments[0].file === 'attachments/' + photoC.id + '/' + u2.id + '.png' && pr.attachments[0].mime === 'image/png');
+  const fbMd = readFileSync(path.join(FB, 'FEEDBACK.md'), 'utf8');
+  check('FEEDBACK.md lists the photos of the comment and of the reply',
+    fbMd.includes('photos: `.feedback/attachments/' + photoC.id + '/' + u1.id + '.jpg` (Tribes Zuidas.jpg)')
+    && fbMd.includes('↳ user: (photos only)') && fbMd.includes('`.feedback/attachments/' + photoC.id + '/' + u2.id + '.png` (plan.png)'));
+
+  const delP = await fetch(ORIGIN + '/__feedback/api/' + pr.attachments[0].file, { method: 'DELETE', headers: { Origin: ORIGIN } });
+  const afterDelP = (await delP.json()).comment;
+  const delPAgain = await fetch(ORIGIN + '/__feedback/api/' + pr.attachments[0].file, { method: 'DELETE', headers: { Origin: ORIGIN } });
+  check('deleting one photo takes it off its reply and removes the file',
+    delP.status === 200 && afterDelP.thread[0].attachments === undefined && !existsSync(path.join(FB, pr.attachments[0].file)) && delPAgain.status === 404);
+
+  // Undo a delete, photos included: the folder goes to trash/ and comes back,
+  // and a forged record (another comment's folder, a path outside) is dropped.
+  const u3 = (await (await upPhoto(JPG, 'image/jpeg', 'detail.jpg')).json()).upload;
+  await postJ('comments/' + photoC.id + '/reply', { author: 'user', text: 'one more', attachments: [u3.id] });
+  const photoSnap = (await (await fetch(ORIGIN + '/__feedback/api/comments')).json()).comments.find((c) => c.id === photoC.id);
+  const photoDir = path.join(FB, 'attachments', photoC.id);
+  await fetch(ORIGIN + '/__feedback/api/comments/' + photoC.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
+  check('deleting a comment moves its photo folder into trash/',
+    !existsSync(photoDir) && existsSync(path.join(FB, 'trash', 'attachments', photoC.id, u1.id + '.jpg'))
+    && existsSync(path.join(FB, 'trash', 'attachments', photoC.id, u3.id + '.jpg')));
+  const forgedSnap = {
+    ...photoSnap,
+    attachments: [...photoSnap.attachments,
+      { id: u3.id, file: 'attachments/c_otherotherother/' + u3.id + '.jpg' },
+      { id: 'a_0123456789ab', file: '../../secret.txt' }],
+  };
+  const photoPut = await fetch(ORIGIN + '/__feedback/api/comments/' + photoC.id, { method: 'PUT', headers: J, body: JSON.stringify(forgedSnap) });
+  const photoBack = (await photoPut.json()).comment;
+  const lastR = photoBack.thread[photoBack.thread.length - 1];
+  check('undo brings the photos back on the comment and on the reply, and nothing forged',
+    photoPut.status === 200 && photoBack.attachments.length === 1 && photoBack.attachments[0].id === u1.id
+    && lastR.text === 'one more' && lastR.attachments && lastR.attachments.length === 1 && lastR.attachments[0].id === u3.id
+    && existsSync(path.join(photoDir, u1.id + '.jpg')) && existsSync(path.join(photoDir, u3.id + '.jpg')));
+  await fetch(ORIGIN + '/__feedback/api/comments/' + photoC.id, { method: 'DELETE', headers: { Origin: ORIGIN } });
+
   // Review rounds. A round is the unit of "what I asked this time": new comments
   // carry it, open pages hear about a new one over the stream, and it survives in
   // meta.json beside the comments.
@@ -749,6 +839,18 @@ try {
       method: 'POST', headers: J, body: JSON.stringify({ author: 'user', text: 'try this', variants: [{ label: 'X', html: '<p>x</p>' }] }),
     });
     check('share: comment role cannot inject variants (host/agent privilege)', cVar.status === 403);
+    const pngBody = Buffer.from(PNG_1PX, 'base64');
+    const vUp = await fetch(SH + `/__feedback/api/uploads?key=${keys.view}`, { method: 'POST', headers: { 'Content-Type': 'image/png', Origin: SH }, body: pngBody });
+    const cUp = await fetch(SH + `/__feedback/api/uploads?key=${keys.comment}`, { method: 'POST', headers: { 'Content-Type': 'image/png', Origin: SH }, body: pngBody });
+    const cUpId = cUp.status === 201 ? (await cUp.json()).upload.id : '';
+    const cPhotoReply = await (await fetch(SH + `/__feedback/api/comments/${cc.id}/reply?key=${keys.comment}`, {
+      method: 'POST', headers: J, body: JSON.stringify({ author: 'user', text: 'the photo', attachments: [cUpId] }),
+    })).json();
+    const cFile = cPhotoReply.reply && cPhotoReply.reply.attachments ? cPhotoReply.reply.attachments[0].file : '';
+    const vPhotoGet = await fetch(SH + `/__feedback/api/${cFile}?key=${keys.view}`);
+    const cPhotoDel = await fetch(SH + `/__feedback/api/${cFile}?key=${keys.comment}`, { method: 'DELETE', headers: J });
+    check('share: view cannot upload a photo; comment can and adds it to a reply; view sees it; only the host deletes it',
+      vUp.status === 403 && cUp.status === 201 && !!cFile && vPhotoGet.status === 200 && cPhotoDel.status === 403);
     const vRound = await fetch(SH + `/__feedback/api/round?key=${keys.view}`);
     const cRoundPost = await fetch(SH + `/__feedback/api/round?key=${keys.comment}`, { method: 'POST', headers: J });
     check('share: anyone on the link may read the round, only admin may start a new one',

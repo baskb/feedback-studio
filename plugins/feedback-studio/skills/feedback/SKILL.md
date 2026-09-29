@@ -167,6 +167,15 @@ belongs to the site whose `.feedback/` it lives in, and its image paths resolve 
      `object-fit` (or `background-size`), `position` → `object-position` (or
      `background-position`), `w`/`h` if the box should resize. Same confidence rule: if you
      can't confidently locate the element, leave it open and ask for a re-pin.
+   - **Look at the photos a person added.** A comment, and any reply in its thread, may carry
+     `attachments`: photos the reviewer added (project photos, a snapshot of a problem, a
+     sketch), each at `.feedback/<file>` (e.g. `.feedback/attachments/c_…/a_….jpg`) with `name`,
+     the file name it had on their device. Read (view) them before acting. They do not replace
+     an element on the page (that is `imageReplace`); they are material. Put a photo into the
+     site only where the comment or reply asks for it: copy it into the project's own image
+     folder under a descriptive name and use it the way the project already handles images. A
+     reply that is only photos is the reviewer answering a request for them. Photos can show
+     private places or people: never publish one the comment did not ask to publish.
 5. Present changes as **diffs grouped by page**. Honour `autonomy`: `review` (default) = show
    first; `auto` = apply directly. If the server is running, **claim each item before you
    touch it** — `POST /__feedback/api/agent-status` with `{"state":"working","commentId":"<id>"}`

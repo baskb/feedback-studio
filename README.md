@@ -176,6 +176,11 @@ reverse.
 - **Swap an image on the page** — drop a new picture onto any `<img>` or CSS
   background, frame/crop it live; auto-downscaled in-browser, placed into your
   repo by the agent.
+- **Hand over photos** — add several photos to a comment or a reply, from the
+  phone's camera or photo library too: project photos for a new page, a
+  snapshot of a problem, a sketch. Each is shrunk in the browser (which drops
+  the location data) and sent while you type; the agent finds them next to the
+  comment and places them only where the comment asks.
 - **Several sites, one repo** — `--label` + `--data-dir` isolate each site's
   comments/images so your agent never mixes them up.
 - **Popups, drawers and menus too** — open the site's mobile menu, cookie
@@ -334,6 +339,9 @@ reads the files directly; no always-on server in every turn). Full setup is in
   exact style/text deltas, thread, status, autonomy).
 - `.feedback/FEEDBACK.md` — readable digest grouped by page.
 - `.feedback/shots/` — pin-time element screenshots (visual ground truth).
+- `.feedback/attachments/<comment id>/` — photos added to a comment or its
+  replies (`.feedback/uploads/` holds a photo for the minutes between picking it
+  and saving; one never saved is removed after a day).
 
 Add `.feedback/` to your `.gitignore` — it's review data, not site content, and
 screenshots can capture whatever was on screen. The server checks this at

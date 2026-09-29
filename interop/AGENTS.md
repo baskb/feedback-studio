@@ -24,7 +24,9 @@ When the user says **PPF** (*Please Process Feedback*) — or just "process the 
   and **refuse rather than edit the wrong element.** Act per its `type` (web: `fix` / `change`
   / `improve`; Markdown: edit the `sourceFile`, not the rendered HTML). A `question` (either
   mode) is the user ASKING — **answer it in a reply with a `file:line` pointer, don't edit.**
-  A comment with `via:"narration"` was spoken (wording may be looser). Present a diff.
+  A comment with `via:"narration"` was spoken (wording may be looser). `attachments` on a
+  comment or reply are photos the user added (path relative to that `.feedback/` dir): look at
+  them, and put one in the site only where the comment asks for it. Present a diff.
 - **Resolve** when done, and **leave a short reply** on each saying what you changed (plain,
   one sentence — the overlay's "walk me through the changes" reads it aloud): `set_status`
   (MCP), else PATCH `/__feedback/api/comments/<id>` `{"status":"resolved"}`, else edit the

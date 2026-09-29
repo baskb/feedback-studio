@@ -296,6 +296,7 @@ export const S = {
   // crop modal without closing the composer under it).
   teardown: [],                                // [{ key, fn }]
   variantPreview: null,                        // { comment, reply, el, prevDisplay, container, bar, index, scrubbed }
+  photoViewer: null,                           // { close } while a photo of a comment or reply is shown full size
 
   // narration ("Talk me through it")
   narrating: false,

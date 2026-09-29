@@ -26,6 +26,7 @@ export * from './schema.mjs';
 import {
   SCHEMA_VERSION, FILE_VERSION, WEB_TYPES, MD_TYPES, UNIVERSAL_TYPES,
   ALLOWED_TYPES, AUTONOMY, TWEAKABLE_PROPS, coerceRound, DEFAULT_ROUND,
+  ATTACH_EXTS, ATTACH_ID_RE, ATTACH_MIME, ATTACH_MAX_BYTES,
 } from './schema.mjs';
 
 // `layer`: the popup, dialog or menu the element sits in (a short selector), when it does.
@@ -125,6 +126,40 @@ export function sanitizeImageReplace(input) {
   return out;
 }
 
+// Photos added to a comment or a reply (see ATTACH_* in schema.mjs). The name is
+// what the person's device called the file ("IMG_2231.jpg"), kept for display
+// and for the agent's report. It is never used as a path: on disk the file is
+// named after its id.
+export function sanitizeAttachmentName(v) {
+  const base = String(v == null ? '' : v).split(/[\\/]/).pop();
+  return base.replace(/[\u0000-\u001f\u007f<>"'`|*?:]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+
+// One stored photo record, rebuilt field by field. `file` has to be exactly the
+// place this comment's photos live, so a record can never point at another
+// comment's photo or anything else in the data dir. Returns null otherwise.
+// Whether the file is really on disk is the caller's check (this module does no
+// synchronous I/O).
+export function sanitizeAttachment(rec, commentId) {
+  if (!rec || typeof rec !== 'object') return null;
+  const id = String(rec.id || '');
+  if (!ATTACH_ID_RE.test(id)) return null;
+  const ext = ATTACH_EXTS.find((e) => rec.file === 'attachments/' + commentId + '/' + id + '.' + e);
+  if (!ext) return null;
+  const whole = (v, max) => { const n = Number(v); return Number.isInteger(n) && n > 0 && n <= max ? n : undefined; };
+  const out = { id, file: 'attachments/' + commentId + '/' + id + '.' + ext, mime: ATTACH_MIME[ext] };
+  const name = sanitizeAttachmentName(rec.name);
+  if (name) out.name = name;
+  const w = whole(rec.w, 100000), h = whole(rec.h, 100000), bytes = whole(rec.bytes, ATTACH_MAX_BYTES);
+  if (w) out.w = w;
+  if (h) out.h = h;
+  if (bytes) out.bytes = bytes;
+  out.addedAt = typeof rec.addedAt === 'string' && ISO_INSTANT.test(rec.addedAt) ? rec.addedAt : new Date().toISOString();
+  return out;
+}
+
 // Keep only well-formed {prop, from, to} deltas on whitelisted properties.
 // One entry per property, no unchanged/empty targets, and no characters that
 // could break out of the contexts the values are rendered into (FEEDBACK.md
@@ -151,10 +186,12 @@ export function sanitizeEdits(edits) {
 // The one place a comment object is constructed. Both servers call this so the
 // stored shape (and the default type per mode) is identical regardless of author.
 //
-// `authorHash` and `shotAfter` are deliberately NOT read from `input`: the first
-// is set by the server from a request header, the second by the "after"
-// screenshot route. A client sending either would otherwise claim ownership of a
-// comment, or point it at a file that is not on disk.
+// `authorHash`, `shotAfter` and `attachments` are deliberately NOT read from
+// `input`: the first is set by the server from a request header, the second by
+// the "after" screenshot route, the third by the server when it claims uploaded
+// photos (the same holds for a reply's `attachments` in makeReply). A client
+// sending any of them would otherwise claim ownership of a comment, or point it
+// at a file that is not on disk.
 export function makeComment(input = {}) {
   const now = new Date().toISOString();
   const sourceFile = str(input.sourceFile, 300);
@@ -456,6 +493,16 @@ const collapse = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
 // Escape a value for use inside an inline `code span` (backticks would break it).
 const code = (s) => '`' + String(s == null ? '' : s).replace(/`/g, 'ˋ') + '`';
 
+// The photos on a comment or a reply as one FEEDBACK.md line: each file's path
+// (relative to the agent's cwd, like `shot`) with the name it had on the
+// person's device. Empty string when there are none.
+function photoList(list, d) {
+  if (!Array.isArray(list) || !list.length) return '';
+  return list.filter((a) => a && a.file)
+    .map((a) => code(d + '/' + a.file) + (a.name ? ` (${collapse(a.name)})` : ''))
+    .join(', ');
+}
+
 // One `## <page>` section per page, with its comments under it. Split out of
 // exportMarkdown so the round grouping can call it once per round; `heading` is
 // the marker for the page lines, which drops a level when rounds are shown.
@@ -499,12 +546,17 @@ function renderPages(comments, d, heading) {
         const bits = [ir.fit ? `fit: ${ir.fit}` : '', ir.position ? `pos: ${ir.position}` : '', ir.w ? `${ir.w}×${ir.h || '?'}` : '', ir.crop ? 'cropped' : '', ir.alt ? `alt: "${collapse(ir.alt)}"` : ''].filter(Boolean).join(', ');
         md += `  - image replace: ${ir.target === 'background' ? 'background of' : 'src of'} this element → new image at ${code(d + '/' + ir.media)}${bits ? ` (${bits})` : ''}\n`;
       }
-      if (c.text || !((Array.isArray(c.edits) && c.edits.length) || (c.textEdit && c.textEdit.after) || (c.imageReplace && c.imageReplace.media))) {
+      const photos = photoList(c.attachments, d);
+      if (photos) md += `  - photos: ${photos}\n`;
+      if (c.text || !((Array.isArray(c.edits) && c.edits.length) || (c.textEdit && c.textEdit.after) || (c.imageReplace && c.imageReplace.media) || photos)) {
         md += `  - ${who}:\n${String(c.text || '').trim().split('\n').map((l) => `    ${l}`).join('\n')}\n`;
       }
       for (const r of c.thread || []) {
         const rwho = r.author === 'agent' ? `agent${r.authorName ? ' (' + collapse(r.authorName) + ')' : ''}` : 'user';
-        md += `  - ↳ ${rwho}:\n${String(r.text || '').trim().split('\n').map((l) => `    ${l}`).join('\n')}\n`;
+        const rphotos = photoList(r.attachments, d);
+        const rtext = String(r.text || '').trim();
+        md += rphotos && !rtext ? `  - ↳ ${rwho}: (photos only)\n` : `  - ↳ ${rwho}:\n${rtext.split('\n').map((l) => `    ${l}`).join('\n')}\n`;
+        if (rphotos) md += `    - photos: ${rphotos}\n`;
         for (const v of r.variants || []) {
           md += `    - variant ${code(v.label)}${v.note ? ` — ${collapse(v.note)}` : ''} (html in comments.json)\n`;
         }
@@ -522,7 +574,7 @@ export async function exportMarkdown(dir, comments) {
   let md = `# Feedback export\n\n`;
   md += `_Generated from \`${d}/comments.json\` (the source of truth). Read-only, human-glance mirror: do not edit or act off this file, act off \`comments.json\` (or the MCP tools)._\n\n`;
   md += `_Generated ${new Date().toISOString()} — ${comments.length} comment(s): ${open} open, ${comments.length - open} resolved._\n\n`;
-  md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. \`question\` = the reviewer is ASKING, not requesting a change: answer in a thread reply with a \`file:line\` pointer to where the answer lives, do not edit anything, then resolve. A Markdown document uses its own verbs: \`comment\` = address the note in the text; \`rephrase\` = reword the same point; \`expand\` = say more about it; \`delete\` = remove the passage. For all four, edit the comment's \`sourceFile\` and never the rendered HTML, which is thrown away on the next run. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. An \`inside:\` line names the popup, dialog or menu the element lives in; look for it there. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin.\n>\n> \`tweak\` lines are exact CSS deltas the user dialled in live on the element (Tweak Mode). Apply them near-verbatim, translated to the project's styling idiom (stylesheet rule, utility class, or design token) — the target values are not suggestions, the *representation* is yours to choose. \`text edit\` lines are the user retyping the element's text in place: apply the exact after-wording at the anchored location (whitespace-flexible match on the before-text; in Markdown edit the \`sourceFile\`). If the before-text no longer matches, do NOT guess — leave it open for a re-pin.\n>\n> Comments are a two-way conversation. Some are authored \`by user\`, some \`by agent\` (a proposal/annotation you or another skill left on a component). Each can have a reply thread (lines marked \`↳\`). Statuses: \`open\` (needs work/decision), \`approved\` (the user said go ahead — implement it), \`rejected\` (do not), \`resolved\` (done). Implement approved items, reply to ask questions, and set the status as you go.\n\n`;
+  md += `> Each comment has a TYPE that sets how much latitude you have: \`fix\` = reproduce and patch what is broken; \`change\` = apply near-verbatim, do not redesign; \`improve\` = rewrite or redesign with judgement. \`question\` = the reviewer is ASKING, not requesting a change: answer in a thread reply with a \`file:line\` pointer to where the answer lives, do not edit anything, then resolve. A Markdown document uses its own verbs: \`comment\` = address the note in the text; \`rephrase\` = reword the same point; \`expand\` = say more about it; \`delete\` = remove the passage. For all four, edit the comment's \`sourceFile\` and never the rendered HTML, which is thrown away on the next run. Each anchor carries a css selector, an attr/xpath fallback, and a quoted snippet so the element can be re-found. An \`inside:\` line names the popup, dialog or menu the element lives in; look for it there. Resolve the element with confidence; if you cannot locate it confidently, do NOT edit a guess — flag it for a re-pin.\n>\n> \`tweak\` lines are exact CSS deltas the user dialled in live on the element (Tweak Mode). Apply them near-verbatim, translated to the project's styling idiom (stylesheet rule, utility class, or design token) — the target values are not suggestions, the *representation* is yours to choose. \`text edit\` lines are the user retyping the element's text in place: apply the exact after-wording at the anchored location (whitespace-flexible match on the before-text; in Markdown edit the \`sourceFile\`). If the before-text no longer matches, do NOT guess — leave it open for a re-pin.\n>\n> \`photos\` lines are pictures the reviewer added to a comment or a reply (project photos, a snapshot of a problem, a sketch). They do not replace an element on the page; that is \`image replace\`. Look at them before acting. Put one into the site only where the comment or reply asks for it: copy the file into the project's own image folder and use it the way the project already handles images.\n>\n> Comments are a two-way conversation. Some are authored \`by user\`, some \`by agent\` (a proposal/annotation you or another skill left on a component). Each can have a reply thread (lines marked \`↳\`). Statuses: \`open\` (needs work/decision), \`approved\` (the user said go ahead — implement it), \`rejected\` (do not), \`resolved\` (done). Implement approved items, reply to ask questions, and set the status as you go.\n\n`;
   // Rounds first, newest at the top: what was asked THIS time is what an agent
   // opens this file for, and the earlier rounds are the record behind it. With
   // only one round there is nothing to separate, so the file keeps the layout
@@ -623,6 +675,12 @@ it is exactly what the reviewer saw, and a mismatch with the element you located
   element: \`target:"img"\` set \`src\` (+\`alt\`, drop stale \`srcset\`); \`target:"background"\`
   update the CSS \`background-image:url(...)\`. Apply \`fit\`/\`position\`/size as
   \`object-fit\`/\`object-position\`/width (or \`background-size\`/\`-position\`).
+- A comment, and any reply in its thread, may carry \`attachments\`: photos the reviewer added
+  (project photos, a snapshot of a problem, a sketch), each at \`${d}/<file>\` with the name it
+  had on their device. They do not replace an element on the page (that is \`imageReplace\`).
+  Look at them before acting. Put one into the site only where the comment or reply asks for
+  it: copy the file into the project's own image folder and use it the way the project already
+  handles images. A reply that is only photos is the reviewer answering a request for them.
 - For a vague \`improve\` ("make this pop", "give me options"), you may propose **variants**:
   reply with \`variants: [{label, html, note}]\` (2–3 self-contained alternatives of the
   element's markup, styles inlined). The user previews them ON the page and picks; the pick
@@ -693,7 +751,9 @@ When the user says **PPF** (*Please Process Feedback*) — or just "process the 
   and **refuse rather than edit the wrong element.** Act per its \`type\` (web: \`fix\` / \`change\`
   / \`improve\`; Markdown: edit the \`sourceFile\`, not the rendered HTML). A \`question\` (either
   mode) is the user ASKING — **answer it in a reply with a \`file:line\` pointer, don't edit.**
-  A comment with \`via:"narration"\` was spoken (wording may be looser). Present a diff.
+  A comment with \`via:"narration"\` was spoken (wording may be looser). \`attachments\` on a
+  comment or reply are photos the user added (path relative to that \`.feedback/\` dir): look at
+  them, and put one in the site only where the comment asks for it. Present a diff.
 - **Resolve** when done, and **leave a short reply** on each saying what you changed (plain,
   one sentence — the overlay's "walk me through the changes" reads it aloud): \`set_status\`
   (MCP), else PATCH \`/__feedback/api/comments/<id>\` \`{"status":"resolved"}\`, else edit the

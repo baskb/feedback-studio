@@ -22,6 +22,44 @@ import { captureShot } from '/__feedback/overlay/shots.mjs';
 import { sortComments, comparator } from '/__feedback/lib/sort.mjs';
 import { t, tn } from '/__feedback/overlay/i18n.mjs';
 import { toastUndo } from '/__feedback/overlay/undo.mjs';
+import { createTray, photosHtml, photoCount, openPhotoViewer } from '/__feedback/overlay/attach.mjs';
+
+// Photos picked in a reply box, per comment id. Kept here, not in the card's
+// DOM, because the List redraws its cards on every live update.
+const replyTrays = new Map();
+const sendingReply = new Set();
+function replyTray(id) {
+  let tray = replyTrays.get(id);
+  if (!tray) {
+    tray = createTray(() => {
+      const slot = root.querySelector('.kbf-card[data-id="' + id + '"] .kbf-tray-slot');
+      if (slot) slot.innerHTML = tray.html();
+    });
+    replyTrays.set(id, tray);
+  }
+  return tray;
+}
+// One file input for every reply box, outside the cards: the List can redraw
+// while the phone's photo picker is still open, and a picker whose input was
+// replaced in the meantime would hand its photos to nobody.
+let replyPicker = null;
+let replyPickerFor = '';
+function pickReplyPhotos(id) {
+  if (!replyPicker) {
+    replyPicker = document.createElement('input');
+    replyPicker.type = 'file';
+    replyPicker.accept = 'image/*';
+    replyPicker.multiple = true;
+    replyPicker.hidden = true;
+    root.appendChild(replyPicker);
+    replyPicker.addEventListener('change', () => {
+      if (replyPickerFor) replyTray(replyPickerFor).add(replyPicker.files);
+      replyPicker.value = '';
+    });
+  }
+  replyPickerFor = id;
+  replyPicker.click();
+}
 
 export function setPanel(open) {
   const was = S.panelOpen;
@@ -288,6 +326,7 @@ function cardHtml(c, key, here, num) {
       ${Array.isArray(c.edits) && c.edits.length ? `<div class="kbf-card-edits">${c.edits.map((ed) => `
         <span class="kbf-edit-chip" title="${escapeHtml(ed.prop + ': ' + (ed.from || '?') + ' → ' + ed.to)}"><b>${escapeHtml(ed.prop)}</b>${/^#[0-9a-f]{6}$/i.test(ed.to) ? `<i class="kbf-edit-dot" style="background:${escapeHtml(ed.to)}"></i>` : ''}<span>${escapeHtml((ed.from || '?') + ' → ' + ed.to)}</span></span>`).join('')}</div>` : ''}
       ${c.imageReplace && c.imageReplace.media ? `<div class="kbf-card-imgrep"><img class="kbf-card-newimg" data-act="newimg" tabindex="0" role="button" src="${API}/media/${c.id}" alt="${t('Replacement image — open full size')}" title="${t('New image — click to open')}" loading="lazy"><span class="kbf-card-imglabel">${I.image} ${c.imageReplace.target === 'background' ? t('replaces the background') : t('replaces the image')}${c.imageReplace.fit ? ` · ${escapeHtml(c.imageReplace.fit)}` : ''}</span></div>` : ''}
+      ${photosHtml(c, '')}
       ${expanded ? `
         ${hasPair ? `
         <div class="kbf-ba" title="${t('Before and after: drag the handle to compare')}">
@@ -301,11 +340,14 @@ function cardHtml(c, key, here, num) {
           <div class="kbf-reply ${r.author === 'agent' ? 'is-agent' : ''}">
             <span class="kbf-reply-who">${escapeHtml(r.author === 'agent' ? (r.authorName || t('agent')) : (r.authorName || (ROLE === 'full' ? t('you') : t('host'))))}</span>
             <span class="kbf-reply-text">${escapeHtml(r.text)}</span>
+            ${photosHtml(c, r.id)}
             ${Array.isArray(r.variants) && r.variants.length ? `
               <button type="button" class="kbf-vpreview" data-act="variants" data-reply="${escapeHtml(r.id)}">${I.eye}<span>${tn('Try {n} option on the page', 'Try {n} options on the page', r.variants.length)}</span></button>` : ''}
             ${r.pick ? `<span class="kbf-vpicked">${I.check} ${escapeHtml(t('Picked: {label}', { label: r.pick.label || ('#' + (r.pick.index + 1)) }))}</span>` : ''}
           </div>`).join('')}</div>` : ''}
-        ${CAN_COMMENT ? `<div class="kbf-replybox">
+        ${CAN_COMMENT ? `<div class="kbf-tray-slot">${replyTrays.has(c.id) ? replyTrays.get(c.id).html() : ''}</div>
+        <div class="kbf-replybox">
+          <button type="button" class="kbf-reply-photo" data-act="reply-photos" title="${t('Add photos')}" aria-label="${t('Add photos')}">${I.image}</button>
           <textarea class="kbf-reply-input" placeholder="${t('Reply to this thread…')}" rows="1"></textarea>
           <button class="kbf-reply-send" data-act="send" title="${t('Send reply')}">${I.send}</button>
         </div>` : ''}
@@ -313,7 +355,7 @@ function cardHtml(c, key, here, num) {
           ${st !== 'approved' ? `<button class="kbf-chip-btn kbf-approve" data-act="approve">${I.check} ${t('Approve')}</button>` : ''}
           ${st !== 'rejected' ? `<button class="kbf-chip-btn kbf-rejectb" data-act="reject">${I.reject} ${t('Reject')}</button>` : ''}
         </div>` : ''}
-      ` : (thread.length ? `<button class="kbf-thread-toggle" data-act="thread">${I.comment}<span>${tn('{n} reply', '{n} replies', thread.length)}</span></button>` : '')}
+      ` : (thread.length ? `<button class="kbf-thread-toggle" data-act="thread">${I.comment}<span>${tn('{n} reply', '{n} replies', thread.length)}${threadPhotos(c) ? ' · ' + tn('{n} photo', '{n} photos', threadPhotos(c)) : ''}</span></button>` : '')}
       ${pinState && pinState !== 'hidden' && CAN_MANAGE ? `<button type="button" class="kbf-chip-btn kbf-repin" data-act="repin">${I.jump}<span>${t('Re-pin on the page')}</span></button>` : ''}
       <div class="kbf-card-foot">
         <span class="kbf-time" title="${escapeHtml(c.createdAt || '')}">${timeAgo(c.createdAt)}</span>
@@ -323,6 +365,11 @@ function cardHtml(c, key, here, num) {
         ${CAN_MANAGE || mine ? `<button class="kbf-mini kbf-mini--danger" data-act="delete" title="${t('Delete')}">${I.trash}</button>` : ''}
       </div>
     </div>`;
+}
+
+// Photos in the replies only (the comment's own are always on the card).
+function threadPhotos(c) {
+  return photoCount(c) - (Array.isArray(c.attachments) ? c.attachments.length : 0);
 }
 
 function toggleExpand(c) {
@@ -485,19 +532,33 @@ export async function setStatus(c, status) {
 
 async function sendReply(id) {
   const text = (S.replyDrafts[id] || '').trim();
-  if (!text) return;
+  const tray = replyTrays.get(id);
+  if (!text && !(tray && tray.count())) return;
+  if (sendingReply.has(id)) return; // photos still on their way from the last tap
+  sendingReply.add(id);
   try {
+    if (tray && tray.busy()) {
+      toast(t('Sending once the photos are ready…'));
+      await tray.settled();
+    }
+    const attachments = tray ? tray.ids() : [];
+    if (!text && !attachments.length) { toastError(t('None of the photos could be sent.')); return; }
     const data = await api('/comments/' + id + '/reply', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ author: 'user', text, authorName: ROLE === 'comment' ? (LS.get('kbf-name') || '') : '' }),
+      body: JSON.stringify({ author: 'user', text, authorName: ROLE === 'comment' ? (LS.get('kbf-name') || '') : '', attachments }),
     });
     const i = S.comments.findIndex((c) => c.id === id);
     if (i >= 0) S.comments[i] = data.comment;
-    delete S.replyDrafts[id];
+    // The draft is sent: a newer draft typed while the photos uploaded stays.
+    if ((S.replyDrafts[id] || '').trim() === text) delete S.replyDrafts[id];
+    const lost = (tray ? tray.failed() : 0) + attachments.length - (data.reply && Array.isArray(data.reply.attachments) ? data.reply.attachments.length : 0);
+    if (tray) { tray.clear(); replyTrays.delete(id); }
     S.expandedId = id;
     refresh();
-    toast(t('Reply sent'));
+    if (lost > 0) toastError(tn('Reply sent, but {n} photo could not be added.', 'Reply sent, but {n} photos could not be added.', lost));
+    else toast(t('Reply sent'));
   } catch (e) { toastError(t('Reply failed — {error}', { error: e.message })); }
+  finally { sendingReply.delete(id); }
 }
 
 // Put a deleted comment back exactly as it was (same id, thread, timestamps).
@@ -535,7 +596,11 @@ function shownMarkdown(list) {
     lines.push(`- [${c.status === 'resolved' || c.status === 'rejected' ? 'x' : ' '}] \`${c.type || 'comment'}\` ${c.page || '/'}${quote ? ` — "${quote.slice(0, 160)}"` : ''} · ${who}${c.status && c.status !== 'open' ? ' · ' + c.status : ''}`);
     if (c.text) lines.push(...String(c.text).trim().split('\n').map((l) => '  ' + l));
     if (c.textEdit && c.textEdit.after) lines.push(`  text: "${norm(c.textEdit.before || '')}" → "${norm(c.textEdit.after)}"`);
-    for (const r of (Array.isArray(c.thread) ? c.thread : [])) lines.push(`  - ↳ ${r.author === 'agent' ? 'agent' : 'user'}: ${norm(r.text || '')}`);
+    if (Array.isArray(c.attachments) && c.attachments.length) lines.push(`  photos: ${c.attachments.map((a) => a.file).join(', ')}`);
+    for (const r of (Array.isArray(c.thread) ? c.thread : [])) {
+      lines.push(`  - ↳ ${r.author === 'agent' ? 'agent' : 'user'}: ${norm(r.text || '')}`);
+      if (Array.isArray(r.attachments) && r.attachments.length) lines.push(`    photos: ${r.attachments.map((a) => a.file).join(', ')}`);
+    }
   }
   return lines.join('\n') + '\n';
 }
@@ -684,6 +749,9 @@ export function initPanel() {
     const c = S.comments.find((x) => x.id === id);
     if (!c) return;
     if (e.target.closest('.kbf-reply-input') || e.target.closest('.kbf-ba')) return;
+    const trayX = e.target.closest('[data-tray-remove]');
+    if (trayX) { const tr = replyTrays.get(id); if (tr) tr.remove(trayX.dataset.trayRemove); return; }
+    if (e.target.closest('.kbf-tray-slot')) return; // the tray itself is not a toggle
     const actBtn = e.target.closest('[data-act]');
     const act = actBtn && actBtn.dataset.act;
     if (act === 'delete') return deleteComment(id);
@@ -691,6 +759,8 @@ export function initPanel() {
     if (act === 'edit') return editFromCard(c);
     if (act === 'thread') return toggleExpand(c);
     if (act === 'send') return sendReply(id);
+    if (act === 'reply-photos') return pickReplyPhotos(id);
+    if (act === 'photo') return openPhotoViewer(id, actBtn.dataset.owner || '', Number(actBtn.dataset.i) || 0);
     if (act === 'approve') return setStatus(c, 'approved');
     if (act === 'reject') return setStatus(c, 'rejected');
     if (act === 'jump') return goToComment(c);

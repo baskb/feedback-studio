@@ -17,9 +17,10 @@ import { setupTextEdit } from '/__feedback/overlay/textedit.mjs';
 import { setupImageReplace } from '/__feedback/overlay/image.mjs';
 import { captureShot } from '/__feedback/overlay/shots.mjs';
 import { stopRecognition, toggleRecognition, setVoiceLang } from '/__feedback/overlay/voice.mjs';
-import { t } from '/__feedback/overlay/i18n.mjs';
+import { t, tn } from '/__feedback/overlay/i18n.mjs';
 import { toastUndo } from '/__feedback/overlay/undo.mjs';
 import { markMine } from '/__feedback/overlay/state.mjs';
+import { createTray } from '/__feedback/overlay/attach.mjs';
 
 export function closeComposer() {
   stopRecognition();
@@ -28,6 +29,8 @@ export function closeComposer() {
   // Every live on-page preview registered an undo: the variant swap, the
   // retyped text, the replacement image, an open crop modal.
   drainTeardown();
+  // Photos picked but not saved: forget them (their uploads expire on the server).
+  if (S.activeComposer && S.activeComposer.tray) S.activeComposer.tray.clear();
   if (S.activeComposer && S.activeComposer.releaseFocus) S.activeComposer.releaseFocus();
   S.activeComposer = null;
   composerSlot.innerHTML = '';
@@ -157,6 +160,11 @@ export function openComposer(opts) {
       ${ROLE === 'comment' ? `<input class="kbf-name-input" maxlength="60" placeholder="${t('Your name (shown with your comment)')}" value="${escapeHtml(LS.get('kbf-name') || '')}" aria-label="${t('Your name')}">` : ''}
       <textarea class="kbf-textarea" placeholder="${escapeHtml(placeholderFor(S.ctype))}"></textarea>
       <div class="kbf-rec-hint" role="status" aria-live="polite"><span class="kbf-rec-dot"></span> <span class="kbf-rec-text">${t('Listening…')}</span></div>
+      ${isEdit ? '' : `<div class="kbf-attach-row">
+        <button type="button" class="kbf-editext-btn kbf-attach" data-act="photos">${I.image}<span class="kbf-editext-label">${t('Add photos')}</span></button>
+        <input type="file" class="kbf-attach-input" accept="image/*" multiple hidden>
+      </div>
+      <div class="kbf-tray-slot"></div>`}
       <div class="kbf-composer-foot">
         <button class="kbf-mic" data-act="mic" aria-pressed="false" aria-label="${t('Dictate (voice to text)')}" title="${SR ? t('Dictate (voice to text)') : t('Voice not supported in this browser')}">${I.mic}</button>
         <label class="kbf-langwrap" title="${escapeHtml(t('Voice language: {name}', { name: langName(S.speechLang) }))}">
@@ -225,10 +233,12 @@ export function openComposer(opts) {
   }
 
   function validate() {
+    if (opts.saving) return;
     saveBtn.disabled = !ta.value.trim()
       && !(opts.tweaks && opts.tweaks.count())
       && !(opts.textEditApi && opts.textEditApi.changed())
-      && !(opts.imageReplace && opts.imageReplace.count());
+      && !(opts.imageReplace && opts.imageReplace.count())
+      && !(opts.tray && opts.tray.count());
   }
   const grow = () => autoGrow(ta, 240);
   ta.addEventListener('input', () => { validate(); grow(); });
@@ -260,6 +270,23 @@ export function openComposer(opts) {
     if (opts.startTextEdit && opts.textEditApi) setTimeout(() => opts.textEditApi.start(), 60);
   }
 
+  // Photos: a new comment only (an existing one gets more through a reply).
+  // accept="image/*" lets a phone offer both the camera and the photo library.
+  if (!isEdit) {
+    const slot = box.querySelector('.kbf-tray-slot');
+    const input = box.querySelector('.kbf-attach-input');
+    opts.tray = createTray(() => {
+      slot.innerHTML = opts.tray.html();
+      validate();
+      if (!userMovedComposer) keepComposerInView(box);
+    });
+    input.addEventListener('change', () => { opts.tray.add(input.files); input.value = ''; });
+    slot.addEventListener('click', (e) => {
+      const x = e.target.closest('[data-tray-remove]');
+      if (x) opts.tray.remove(x.dataset.trayRemove);
+    });
+  }
+
   box.addEventListener('click', (e) => {
     const typeBtn = e.target.closest('[data-type]');
     if (typeBtn) {
@@ -273,6 +300,7 @@ export function openComposer(opts) {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'cancel') closeComposer();
     else if (act === 'mic') toggleRecognition(ta, micBtn, hint, hintText, validate, grow);
+    else if (act === 'photos') box.querySelector('.kbf-attach-input').click();
     else if (act === 'save') doSave(opts, ta.value.trim());
   });
   langSel.addEventListener('change', () => { setVoiceLang(langSel.value, box, micBtn, hintText); langSel.blur(); });
@@ -291,9 +319,25 @@ async function doSave(opts, text) {
   const textEdit = opts.textEditApi ? opts.textEditApi.getTextEdit() : null;
   const imageReplace = opts.imageReplace ? opts.imageReplace.getMeta() : null;
   const imageDataUrl = opts.imageReplace ? opts.imageReplace.getDataUrl() : null;
-  if (!text && !edits.length && !textEdit && !imageReplace) return;
+  const tray = opts.tray || null;
+  if (!text && !edits.length && !textEdit && !imageReplace && !(tray && tray.count())) return;
+  if (opts.saving) return; // a second Save while photos are still on their way
   let savedNew = null;
+  const saveBtn = composerSlot.querySelector('[data-act="save"]');
+  const saveHtml = saveBtn ? saveBtn.innerHTML : '';
   try {
+    // Photos still being prepared or sent: wait for them, then save once.
+    if (tray && tray.busy()) {
+      opts.saving = true;
+      if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = t('Sending photos…'); }
+      await tray.settled();
+      if (S.activeComposer !== opts) return; // cancelled while waiting
+    }
+    const attachments = tray ? tray.ids() : [];
+    if (!text && !edits.length && !textEdit && !imageReplace && !attachments.length) {
+      toastError(t('None of the photos could be sent.'));
+      return;
+    }
     if (opts.kind === 'edit') {
       const body = { text, type: S.ctype };
       // Only rewrite edits when the user actually touched a knob this session,
@@ -330,11 +374,13 @@ async function doSave(opts, text) {
       if (nameEl) LS.set('kbf-name', authorName);
       const data = await api('/comments', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ page: S.page, pageTitle: document.title, url: location.href, anchor: opts.anchor, text, type: S.ctype, edits, textEdit, imageReplace, authorName, sourceFile: SOURCE }),
+        body: JSON.stringify({ page: S.page, pageTitle: document.title, url: location.href, anchor: opts.anchor, text, type: S.ctype, edits, textEdit, imageReplace, authorName, sourceFile: SOURCE, attachments }),
       });
       S.comments.push(data.comment);
       markMine(data.comment.id);
-      toast(edits.length || textEdit || imageReplace ? t('Saved — the page reverts; your agent applies it to source') : t('Comment saved'));
+      const photosLost = (tray ? tray.failed() : 0) + attachments.length - (Array.isArray(data.comment.attachments) ? data.comment.attachments.length : 0);
+      if (photosLost > 0) toastError(tn('Comment saved, but {n} photo could not be added.', 'Comment saved, but {n} photos could not be added.', photosLost));
+      else toast(edits.length || textEdit || imageReplace ? t('Saved — the page reverts; your agent applies it to source') : t('Comment saved'));
       savedNew = data.comment;
     }
     // Upload the replacement image bytes to .feedback/media (needs the id), then
@@ -365,5 +411,9 @@ async function doSave(opts, text) {
     if (savedNew && !imageReplace) captureShot(savedNew.id, opts);
   } catch (e) {
     toastError(t('Save failed — {error}', { error: e.message }));
+  } finally {
+    // Still open (the save failed, or was cancelled mid-wait): give the button back.
+    if (opts.saving && saveBtn && saveBtn.isConnected) { saveBtn.innerHTML = saveHtml; saveBtn.disabled = false; }
+    opts.saving = false;
   }
 }

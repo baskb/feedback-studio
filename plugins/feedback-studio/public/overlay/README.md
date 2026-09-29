@@ -27,6 +27,7 @@ A module never imports one listed below it. The few calls that do run upward go 
 | `textedit.mjs` | 130 | Edit-in-place text on the page. |
 | `image.mjs` | 328 | Image replacement and the crop modal. |
 | `shots.mjs` | 72 | Element screenshots at pin time. |
+| `attach.mjs` | 270 | Photos added to a comment or a reply: the tray (shrink, upload on pick, remove before saving), the thumbnails on cards and replies, and the full-size viewer. |
 | `voice.mjs` | 109 | Composer dictation (Web Speech). |
 | `composer.mjs` | 352 | The composer dialog, its target highlight, and `doSave`. |
 | `variants.mjs` | 210 | Agent-proposed alternatives previewed on the page, and their second sanitation pass. |
@@ -43,7 +44,7 @@ Everything else is a direct import.
 
 | Event | Emitted by | Handled by |
 | --- | --- | --- |
-| `refresh` | `composer` after a save | `panel.refresh` |
+| `refresh` | `composer` after a save, `attach` after a photo is deleted | `panel.refresh` |
 | `comment:focus` | `pins` when a pin is clicked | `panel.focusComment` |
 | `variants:open` | `panel` from a reply's "try these options" | `variants.openVariantPreview` |
 | `reposition` | `pins.schedulePos`, once per frame | `composer.positionTarget`, then `mode.repositionAim`, then `variants.repositionVariantBar` — in that order, which is the order the old `schedulePos` ran them in |

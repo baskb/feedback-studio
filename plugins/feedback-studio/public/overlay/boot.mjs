@@ -28,6 +28,7 @@ import { initKeys, toggleHelp } from '/__feedback/overlay/keys.mjs';
 import { initHistory, openHistory, historyChanged } from '/__feedback/overlay/history.mjs';
 import { applyRound, offerSourceChange } from '/__feedback/overlay/live.mjs';
 import { captureShot } from '/__feedback/overlay/shots.mjs';
+import { closePhotoViewer } from '/__feedback/overlay/attach.mjs';
 import { t, tn, getLang, setLang } from '/__feedback/overlay/i18n.mjs';
 
 // ---------- the few upward calls, wired once ----------
@@ -187,6 +188,7 @@ function wireRouting() {
 // Escape closes the topmost thing of ours. True when something was closed.
 function consumeEscape() {
   if (helpEl && !helpEl.hidden) { toggleHelp(false); return true; } // the shortcut sheet is topmost
+  if (closePhotoViewer()) return true; // a photo shown full size sits over everything else of ours
   if (S.walkState) { closeWalkthrough(); return true; } // Stop the walkthrough tour
   if (S.narrating) { stopNarrate(); return true; } // Stop narration → draft tray
   if (S.draftTray) { closeDraftTray(); return true; }

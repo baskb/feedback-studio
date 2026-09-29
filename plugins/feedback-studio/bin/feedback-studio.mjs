@@ -18,7 +18,7 @@ import tls from 'node:tls';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import { exec, execSync, execFileSync, spawn } from 'node:child_process';
-import { readFile, writeFile, mkdir, stat, readdir, chmod, unlink, rename, utimes, mkdtemp, cp } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, stat, readdir, chmod, unlink, rename, utimes, mkdtemp, cp, rm } from 'node:fs/promises';
 import { existsSync, readFileSync, statSync, watch, createReadStream, createWriteStream, unlinkSync, readdirSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -27,6 +27,8 @@ import {
   readComments, writeComments, writeJson, mutate, makeComment, makeReply, exportMarkdown,
   exportProcessInstructions, seedAgentsFile, sanitizeEdits, sanitizeTextEdit,
   coerceType, modeFor, schemeIsEvil, sanitizeImageReplace, sanitizeAnchor,
+  newId, sanitizeAttachment, sanitizeAttachmentName,
+  ATTACH_MAX_PER_MESSAGE, ATTACH_MAX_BYTES, ATTACH_EXTS, ATTACH_ID_RE, ATTACH_MIME,
 } from '../lib/store.mjs';
 import { exportMarkers as stampMarkers } from '../lib/markers.mjs';
 import {
@@ -412,6 +414,10 @@ const BODY_LIMIT = 1_000_000; // 1 MB default
 // that as base64 (×4/3) plus envelope, so it needs its own higher cap.
 const MEDIA_BODY_LIMIT = 5_000_000;
 function readBody(req, limit = BODY_LIMIT) {
+  return readRaw(req, limit).then((b) => b.toString('utf-8'));
+}
+// The request body as bytes (a photo upload sends the image itself, not JSON).
+function readRaw(req, limit = BODY_LIMIT) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
@@ -428,7 +434,7 @@ function readBody(req, limit = BODY_LIMIT) {
       }
       chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }
@@ -580,6 +586,69 @@ function validImageBuffer(fmt, b) {
   return false;
 }
 
+// ---------- photos added to a comment or a reply ----------
+// A photo is uploaded on its own the moment it is picked (on a phone that
+// happens while the person is still typing) and waits in uploads/ until the
+// comment or reply that gets saved claims it by id. Claimed photos live in
+// attachments/<comment id>/<attachment id>.<ext>; what is never claimed is
+// removed after a day. The id is the only handle on a waiting upload, and it is
+// a random UUID nobody else has seen, so it doubles as the permission to claim.
+const uploadsDir = () => path.join(DATA_DIR, 'uploads'); // DATA_DIR is final only after startup (--demo)
+const UPLOAD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const UPLOADS_MAX_WAITING = 100;
+// Content-Type of the upload → [format validImageBuffer checks, extension on disk].
+const UPLOAD_TYPES = { 'image/jpeg': ['jpeg', 'jpg'], 'image/png': ['png', 'png'], 'image/webp': ['webp', 'webp'] };
+const ATTACH_FILE_RE = /^(a_[A-Za-z0-9-]{8,64})\.(jpg|png|webp)$/;
+
+async function pruneUploads() {
+  let names = [];
+  try { names = await readdir(uploadsDir()); } catch (e) { return; }
+  for (const n of names) {
+    const f = path.join(uploadsDir(), n);
+    try { if (Date.now() - (await stat(f)).mtimeMs > UPLOAD_MAX_AGE_MS) await unlink(f); } catch (e) {}
+  }
+}
+
+// Move the waiting uploads named in `ids` into this comment's folder and return
+// their records, at most `room` of them. An id that is malformed, unknown, or
+// already claimed is skipped; the caller sees the shortfall in what comes back.
+// Called inside mutate(), so it runs under the comments.json lock and two saves
+// can never claim the same upload.
+async function claimUploads(ids, commentId, room = ATTACH_MAX_PER_MESSAGE) {
+  const out = [];
+  if (!Array.isArray(ids) || !SAFE_SHOT_ID.test(commentId)) return out;
+  const seen = new Set();
+  for (const raw of ids) {
+    if (out.length >= room) break;
+    const id = String(raw || '');
+    if (!ATTACH_ID_RE.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    let meta;
+    try { meta = JSON.parse(await readFile(path.join(uploadsDir(), id + '.json'), 'utf-8')); } catch (e) { continue; }
+    const ext = meta && ATTACH_EXTS.includes(meta.ext) ? meta.ext : '';
+    if (!ext) continue;
+    const dir = path.join(DATA_DIR, 'attachments', commentId);
+    await mkdir(dir, { recursive: true });
+    try { await rename(path.join(uploadsDir(), id + '.' + ext), path.join(dir, id + '.' + ext)); } catch (e) { continue; }
+    await unlink(path.join(uploadsDir(), id + '.json')).catch(() => {});
+    const rec = sanitizeAttachment({ ...meta, id, file: 'attachments/' + commentId + '/' + id + '.' + ext, addedAt: new Date().toISOString() }, commentId);
+    if (rec) out.push(rec);
+  }
+  return out;
+}
+
+// The photos a restored comment or reply may keep: records that point into this
+// comment's own folder and whose file is really there.
+function photosOnDisk(list, commentId) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const a of list.slice(0, ATTACH_MAX_PER_MESSAGE)) {
+    const rec = sanitizeAttachment(a, commentId);
+    if (rec && existsSync(path.join(DATA_DIR, rec.file))) out.push(rec);
+  }
+  return out;
+}
+
 // ---------- watching the reviewed Markdown source ----------
 // In --md mode the reviewed file is a file on disk that the agent is about to
 // edit. Keeping a copy of it every time it changes is what lets the reviewer see
@@ -695,18 +764,23 @@ async function persistRound() {
 // image at once, which made the overlay's undo a half-undo: the comment came
 // back, the pictures did not. They are moved here instead. The subfolder is
 // kept — shots/<id>.png and media/<id>.png share a filename, and a flat trash
-// would have one overwrite the other.
+// would have one overwrite the other. A comment's added photos are a folder
+// (attachments/<id>/), which moves the same way as one file.
 const TRASH_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const trashDir = (kind) => path.join(DATA_DIR, 'trash', kind);
+const TRASH_KINDS = ['shots', 'media', 'attachments'];
 
 async function moveAside(kind, name) {
   const from = path.join(DATA_DIR, kind, name);
   if (!existsSync(from)) return false;
   const to = path.join(trashDir(kind), name);
   await mkdir(trashDir(kind), { recursive: true });
-  // A file we cannot move is removed, as before: leaving it in place would show
+  // An older copy in the trash (delete, undo, delete again) would block a
+  // folder from moving in; the newer one is the one to keep.
+  await rm(to, { recursive: true, force: true }).catch(() => {});
+  // What we cannot move is removed, as before: leaving it in place would show
   // the picture of a comment that no longer exists.
-  try { await rename(from, to); } catch (e) { await unlink(from).catch(() => {}); return false; }
+  try { await rename(from, to); } catch (e) { await rm(from, { recursive: true, force: true }).catch(() => {}); return false; }
   // Stamp it with the time it was thrown away. A rename keeps the original
   // timestamp, so without this a screenshot taken yesterday would be pruned by
   // the very same request that trashed it — losing the pictures of exactly the
@@ -725,12 +799,12 @@ async function bringBack(kind, name) {
 // Undo is a matter of seconds, so a day is generous. Run on each delete, which
 // is the only thing that puts files here.
 async function pruneTrash() {
-  for (const kind of ['shots', 'media']) {
+  for (const kind of TRASH_KINDS) {
     let names = [];
     try { names = await readdir(trashDir(kind)); } catch (e) { continue; }
     for (const n of names) {
       const f = path.join(trashDir(kind), n);
-      try { if (Date.now() - (await stat(f)).mtimeMs > TRASH_MAX_AGE_MS) await unlink(f); } catch (e) {}
+      try { if (Date.now() - (await stat(f)).mtimeMs > TRASH_MAX_AGE_MS) await rm(f, { recursive: true, force: true }); } catch (e) {}
     }
   }
 }
@@ -744,8 +818,9 @@ const REPLY_ID_RE = /^r_[A-Za-z0-9-]{8,64}$/;
 const THREAD_MAX = 200;
 // Every reply is rebuilt through makeReply, so a restore re-runs the same
 // sanitizers a fresh reply goes through. Its id and time are kept when they are
-// well-formed, so the conversation reads exactly as it did.
-function restoreThread(thread) {
+// well-formed, so the conversation reads exactly as it did. Its photos come back
+// only as far as they are on disk in this comment's own folder.
+function restoreThread(thread, commentId) {
   if (!Array.isArray(thread)) return [];
   const out = [];
   for (const entry of thread.slice(0, THREAD_MAX)) {
@@ -753,6 +828,8 @@ function restoreThread(thread) {
     const r = makeReply(entry);
     if (REPLY_ID_RE.test(String(entry.id || ''))) r.id = entry.id;
     r.createdAt = isoOr(entry.createdAt, r.createdAt);
+    const photos = photosOnDisk(entry.attachments, commentId);
+    if (photos.length) r.attachments = photos;
     out.push(r);
   }
   return out;
@@ -797,7 +874,7 @@ async function handleApi(req, res, url) {
         // Variants carry HTML that other viewers' overlays inject into the page:
         // proposing them is the host/agent side's privilege. Picking one is not.
         if (body.variants && !canManage) return deny();
-        const out = await mutate(DATA_DIR, (list) => {
+        const out = await mutate(DATA_DIR, async (list) => {
           const c = list.find((x) => x.id === id);
           if (!c) return { comments: list, value: { notFound: true } };
           if (!Array.isArray(c.thread)) c.thread = [];
@@ -806,6 +883,9 @@ async function handleApi(req, res, url) {
           // reviewer claiming author:"agent" would render with the agent's
           // visual authority and export "by agent" — downgrade, don't trust.
           const reply = makeReply({ author: canManage ? body.author : 'user', authorName: body.authorName, text: body.text, variants: body.variants, pick: body.pick });
+          // Photos uploaded for this reply beforehand, claimed by id.
+          const photos = await claimUploads(body.attachments, c.id);
+          if (photos.length) reply.attachments = photos;
           c.thread.push(reply);
           c.updatedAt = new Date().toISOString();
           return { comments: list, value: { comment: c, reply } };
@@ -826,13 +906,15 @@ async function handleApi(req, res, url) {
       if (req.method === 'POST' && !id) {
         if (!canComment) return deny();
         const body = await readJson(req);
-        const comment = await mutate(DATA_DIR, (list) => {
+        const comment = await mutate(DATA_DIR, async (list) => {
           // Same rule as replies: only full/admin may author as the agent.
           const c = makeComment(canManage ? body : { ...body, author: 'user' });
           // Set here, never from the body: makeComment ignores an input
           // authorHash on purpose, so a client cannot claim someone else's.
           if (authorHash) c.authorHash = authorHash;
           c.round = currentRound; // a new comment always belongs to the round we are in
+          const photos = await claimUploads(body.attachments, c.id);
+          if (photos.length) c.attachments = photos;
 
           list.push(c);
           return { comments: list, value: c };
@@ -925,6 +1007,7 @@ async function handleApi(req, res, url) {
         await bringBack('shots', id + '.png');
         await bringBack('shots', id + '-after.png');
         for (const ext of MEDIA_EXTS) await bringBack('media', id + '.' + ext);
+        await bringBack('attachments', id); // the folder of added photos
 
         const c = makeComment(body); // re-sanitizes text, anchor, type, edits, imageReplace, via
         c.id = id;
@@ -932,7 +1015,9 @@ async function handleApi(req, res, url) {
         c.updatedAt = isoOr(body.updatedAt, c.updatedAt);
         if (STATUSES.includes(body.status)) c.status = body.status;
         c.round = coerceRound(body.round);
-        c.thread = restoreThread(body.thread);
+        c.thread = restoreThread(body.thread, id);
+        const photos = photosOnDisk(body.attachments, id);
+        if (photos.length) c.attachments = photos;
         if (existsSync(path.join(DATA_DIR, 'shots', id + '.png'))) c.shot = 'shots/' + id + '.png';
         if (existsSync(path.join(DATA_DIR, 'shots', id + '-after.png'))) c.shotAfter = 'shots/' + id + '-after.png';
         // Only the format is read off the body; the name is always the comment id.
@@ -974,6 +1059,7 @@ async function handleApi(req, res, url) {
           await moveAside('shots', id + '.png');       // the pin-time screenshot
           await moveAside('shots', id + '-after.png'); // …and the "after" one
           for (const ext of MEDIA_EXTS) await moveAside('media', id + '.' + ext);
+          await moveAside('attachments', id);          // the photos added to it and its replies
           await pruneTrash();
         }
         broadcastSoon();
@@ -1064,6 +1150,68 @@ async function handleApi(req, res, url) {
         return sendJSON(res, 200, { ...out, comment: publicComment(out.comment) });
       }
     }
+    // A photo for a comment or reply that is about to be saved. The body is the
+    // image itself (the overlay already shrank it), its name and size travel in
+    // the query. It waits in uploads/ until a save claims it (see claimUploads).
+    if (resource === 'uploads' && !parts[1] && req.method === 'POST') {
+      if (!canComment) return deny();
+      const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+      const fmt = UPLOAD_TYPES[type];
+      if (!fmt) return sendJSON(res, 415, { error: 'send a JPEG, PNG or WebP image' });
+      const buf = await readRaw(req, ATTACH_MAX_BYTES);
+      // header AND trailer must match the declared format — no appended payload
+      if (!validImageBuffer(fmt[0], buf)) return sendJSON(res, 400, { error: 'not a valid ' + fmt[0] + ' image' });
+      await pruneUploads();
+      const waiting = (await readdir(uploadsDir()).catch(() => [])).filter((n) => !n.endsWith('.json')).length;
+      if (waiting >= UPLOADS_MAX_WAITING) return sendJSON(res, 429, { error: 'too many photos are waiting to be saved; save or cancel the open comment first' });
+      const whole = (v) => { const n = Number(v); return Number.isInteger(n) && n > 0 && n <= 100000 ? n : undefined; };
+      const id = newId('a');
+      const meta = { ext: fmt[1], name: sanitizeAttachmentName(url.searchParams.get('name')), w: whole(url.searchParams.get('w')), h: whole(url.searchParams.get('h')), bytes: buf.length };
+      await mkdir(uploadsDir(), { recursive: true });
+      await writeFile(path.join(uploadsDir(), id + '.' + fmt[1]), buf);
+      await writeFile(path.join(uploadsDir(), id + '.json'), JSON.stringify(meta)); // last: claimable once this exists
+      return sendJSON(res, 201, { upload: { id, name: meta.name, w: meta.w, h: meta.h, bytes: meta.bytes, mime: ATTACH_MIME[fmt[1]] } });
+    }
+
+    // A photo on a comment or reply: GET shows it to anyone who may read the
+    // comments, DELETE (host side only) takes it off and removes the file.
+    if (resource === 'attachments' && parts[1]) {
+      const cid = parts[1];
+      const m = ATTACH_FILE_RE.exec(parts[2] || '');
+      if (!SAFE_SHOT_ID.test(cid) || !m || parts.length > 3) return sendJSON(res, 400, { error: 'bad photo path' });
+      const file = path.join(DATA_DIR, 'attachments', cid, m[0]);
+      if (req.method === 'GET') {
+        if (!existsSync(file)) return sendJSON(res, 404, { error: 'no such photo' });
+        // The same id is never used for another photo, so the browser may keep it.
+        res.writeHead(200, { 'Content-Type': ATTACH_MIME[m[2]], 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+        return res.end(readFileSync(file));
+      }
+      if (req.method === 'DELETE') {
+        if (!canManage) return deny();
+        const out = await mutate(DATA_DIR, (list) => {
+          const c = list.find((x) => x.id === cid);
+          if (!c) return { comments: list, value: { notFound: true } };
+          let hit = false;
+          const without = (owner) => {
+            if (!Array.isArray(owner.attachments)) return;
+            const rest = owner.attachments.filter((a) => !(a && a.id === m[1]));
+            if (rest.length === owner.attachments.length) return;
+            hit = true;
+            if (rest.length) owner.attachments = rest; else delete owner.attachments;
+          };
+          without(c);
+          for (const r of Array.isArray(c.thread) ? c.thread : []) without(r);
+          if (!hit) return { comments: list, value: { notFound: true } };
+          c.updatedAt = new Date().toISOString();
+          return { comments: list, value: { comment: c } };
+        });
+        if (out.notFound) return sendJSON(res, 404, { error: 'no such photo' });
+        await unlink(file).catch(() => {});
+        broadcastSoon();
+        return sendJSON(res, 200, { comment: publicComment(out.comment) });
+      }
+    }
+
     // Watch-mode presence: an agent announces itself (online / working / offline)
     // so open overlays can show "agent is here" live. In-memory only — presence
     // is ephemeral by nature; the overlay ages it out if heartbeats stop.
@@ -2541,6 +2689,7 @@ async function main() {
   // Drop the self-contained processing guide next to the data (regenerated each run,
   // like FEEDBACK.md) so any agent — plugin or not — has the workflow on hand.
   await exportProcessInstructions(DATA_DIR, LABEL).catch(() => {});
+  await pruneUploads(); // photos uploaded a day ago and never saved with a comment
 
   const ips = lanIPs();
   populateAllowedHosts(ips);

@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-09-30
+
 ### Changed
 - **Resolving asks first when the agent has not answered yet.** A reviewer read the Dutch "Alles oplossen" as "solve all of this", an instruction to the agent, and resolved fourteen comments in one tap; seven of them the agent had never seen, and an agent that only picks up open comments then never does. Resolving a comment whose last word is not the agent's (no answer yet, or a newer reply from the reviewer) now shows a toast that says so, "Claude has not handled this comment yet" or "…3 of these 14 comments yet", with a "Resolve anyway" button; nothing changes unless that button is pressed. This holds for the check button on a card, the X key, "Resolve all" and "Delete all". The agent's name comes from its presence (Agent when it has none). Comments the agent has answered resolve at once, as before.
 - **Dutch: "afvinken" instead of "oplossen".** "Oplossen" can mean "solve", so "Alles oplossen" read like a request. The Dutch overlay now says "Afvinken", "Alles afvinken", "Afgevinkt" and "afgevinkt" (the filter chip, the status, the toasts, the keyboard help and the tooltips), and the bulk tooltip adds "markeren als afgehandeld".
@@ -716,7 +718,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/baskb/feedback-studio/releases/tag/v1.6.1
 [1.6.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.6.0
 [1.5.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.5.0
 [1.4.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.4.0

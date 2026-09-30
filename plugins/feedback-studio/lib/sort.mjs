@@ -36,6 +36,16 @@ const STATUS_RANK = { open: 0, approved: 1, rejected: 2, resolved: 3 };
 const isOpen = (c) => c.status !== 'resolved' && c.status !== 'rejected';
 const agentReplied = (c) => (Array.isArray(c.thread) ? c.thread : []).some((r) => r.author === 'agent');
 
+// True when the agent still owes this comment an answer: the last word on it
+// (the newest reply, or the comment itself) is not the agent's. Resolving such
+// a comment takes it out of the agent's queue before it was ever handled, so
+// the List asks first. A Dutch reviewer read "Alles oplossen" as "solve all of
+// this" and resolved seven comments the agent had never seen (2026-09-30).
+export function awaitsAgent(c) {
+  const th = Array.isArray(c.thread) ? c.thread : [];
+  return (th.length ? th[th.length - 1] : c).author !== 'agent';
+}
+
 // Lower = needs a person sooner. A pin that cannot be found blocks the agent
 // entirely; an agent proposal waits for approval; a question waits for an
 // answer; a plain open comment is next; resolved work is last.

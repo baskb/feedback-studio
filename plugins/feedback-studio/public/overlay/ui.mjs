@@ -487,7 +487,7 @@ export function trapFocus(container, opts = {}) {
 export function toast(msg, opts = {}) {
   const t = document.createElement('div');
   t.className = 'kbf-toast' + (opts.error ? ' kbf-toast--error' : '');
-  t.innerHTML = (opts.error ? I.alert : I.check) + '<span>' + escapeHtml(msg) + '</span>';
+  t.innerHTML = (opts.icon || (opts.error ? I.alert : I.check)) + '<span>' + escapeHtml(msg) + '</span>';
   let dismissed = false;
   const remove = () => { if (dismissed) return; dismissed = true; t.classList.add('is-out'); setTimeout(() => t.remove(), 220); };
   if (opts.actionLabel) {

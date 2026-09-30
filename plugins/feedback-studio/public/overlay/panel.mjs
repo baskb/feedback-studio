@@ -19,7 +19,7 @@ import { setMode, pickElement } from '/__feedback/overlay/mode.mjs';
 import { openComposer } from '/__feedback/overlay/composer.mjs';
 import { TWEAK_STYLE_ID } from '/__feedback/overlay/tweaks.mjs';
 import { captureShot } from '/__feedback/overlay/shots.mjs';
-import { sortComments, comparator } from '/__feedback/lib/sort.mjs';
+import { sortComments, comparator, awaitsAgent } from '/__feedback/lib/sort.mjs';
 import { t, tn } from '/__feedback/overlay/i18n.mjs';
 import { toastUndo } from '/__feedback/overlay/undo.mjs';
 import { createTray, photosHtml, photoCount, openPhotoViewer } from '/__feedback/overlay/attach.mjs';
@@ -486,7 +486,26 @@ function editFromCard(c) {
   setTimeout(() => openComposer({ kind: 'edit', anchor: c.anchor, rect: (el ? el.getBoundingClientRect() : rect), comment: c, el }), el ? 260 : 0);
 }
 
-export async function toggleResolve(c) {
+// Resolving (or bulk-deleting) a comment the agent never answered takes it
+// out of the agent's queue for good. So the List asks first, in a toast with
+// a button: nothing happens unless the reviewer confirms. (2026-09-30: a
+// reviewer read "Alles oplossen" as "solve all of this" and resolved seven
+// comments the agent had never seen; nobody noticed for hours.)
+function askFirst(msg, actionLabel, run) {
+  toast(msg, { icon: I.alert, actionLabel, duration: 10000, onAction: run });
+}
+function notHandledMsg(waiting, total) {
+  const name = agentName();
+  if (total === 1) return t('{name} has not handled this comment yet.', { name });
+  if (waiting === total) return t('{name} has not handled these {n} comments yet.', { name, n: total });
+  return t('{name} has not handled {n} of these {total} comments yet.', { name, n: waiting, total });
+}
+
+export async function toggleResolve(c, opts = {}) {
+  if (c.status !== 'resolved' && !opts.confirmed && awaitsAgent(c)) {
+    askFirst(notHandledMsg(1, 1), t('Resolve anyway'), () => toggleResolve(c, { confirmed: true }));
+    return;
+  }
   await setStatus(c, c.status === 'resolved' ? 'open' : 'resolved');
 }
 
@@ -634,7 +653,7 @@ function shownMarkdown(list) {
   return lines.join('\n') + '\n';
 }
 
-async function bulk(action) {
+async function bulk(action, opts = {}) {
   const list = shownComments();
   if (!list.length) return;
   if (action === 'copy') {
@@ -647,6 +666,11 @@ async function bulk(action) {
   if (!CAN_MANAGE) return;
   if (action === 'resolve') {
     const todo = list.filter((c) => c.status !== 'resolved');
+    const waiting = todo.filter(awaitsAgent).length;
+    if (waiting && !opts.confirmed) {
+      askFirst(notHandledMsg(waiting, todo.length), t('Resolve anyway'), () => bulk('resolve', { confirmed: true }));
+      return;
+    }
     const prev = todo.map((c) => [c.id, c.status || 'open']);
     let failed = null;
     for (const c of todo) {
@@ -669,6 +693,11 @@ async function bulk(action) {
     return;
   }
   if (action === 'delete') {
+    const waiting = list.filter(awaitsAgent).length;
+    if (waiting && !opts.confirmed) {
+      askFirst(notHandledMsg(waiting, list.length), t('Delete anyway'), () => bulk('delete', { confirmed: true }));
+      return;
+    }
     const removed = [];
     let failed = null;
     for (const c of list) {

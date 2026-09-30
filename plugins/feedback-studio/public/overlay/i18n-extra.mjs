@@ -191,7 +191,7 @@ export const NL_EXTRA = {
   'proposed variants': 'stelde varianten voor',
   'started on this comment': 'begon aan deze opmerking',
   'left the session': 'is weg',
-  'resolved': 'afgehandeld',
+  'resolved': 'afgevinkt',
   'rejected': 'afgewezen',
   'approved': 'goedgekeurd',
   'reopened': 'weer geopend',

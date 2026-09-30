@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  lastTouch, sortComments, comparator, matchesQuery, attentionRank, defaultDir, isSortKey, SORT_KEYS,
+  lastTouch, sortComments, comparator, matchesQuery, attentionRank, defaultDir, isSortKey, SORT_KEYS, awaitsAgent,
 } from '../lib/sort.mjs';
 
 const T = (h) => `2026-09-05T${String(h).padStart(2, '0')}:00:00.000Z`;
@@ -114,4 +114,15 @@ test('search matches every word, case-insensitively, across text, anchor, author
   assert.equal(matchesQuery(c, 'c_abc123'), true);        // id
   assert.equal(matchesQuery(c, 'button footer'), false);  // one word missing
   assert.equal(matchesQuery(mk('x', { anchor: null, thread: null }), 'text'), true); // tolerant of missing fields
+});
+
+// 2026-09-30: "Alles oplossen" resolved seven comments the agent never saw.
+// The List now asks first for exactly these: the last word is not the agent's.
+test("awaitsAgent: the agent still owes an answer when the last word is not its own", () => {
+  assert.equal(awaitsAgent(mk("a")), true);                                              // nobody answered
+  assert.equal(awaitsAgent(mk("a", { thread: [{ author: "agent", text: "done" }] })), false);
+  assert.equal(awaitsAgent(mk("a", { thread: [{ author: "agent", text: "which photo?" }, { author: "user", text: "this one" }] })), true);
+  assert.equal(awaitsAgent(mk("a", { author: "agent" })), false);                        // the agent's own review comment
+  assert.equal(awaitsAgent(mk("a", { author: "agent", thread: [{ author: "user", text: "no" }] })), true);
+  assert.equal(awaitsAgent(mk("a", { thread: null })), true);
 });

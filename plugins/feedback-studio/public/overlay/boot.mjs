@@ -27,6 +27,7 @@ import { initFab } from '/__feedback/overlay/fab.mjs';
 import { initKeys, toggleHelp } from '/__feedback/overlay/keys.mjs';
 import { initHistory, openHistory, historyChanged } from '/__feedback/overlay/history.mjs';
 import { applyRound, offerSourceChange } from '/__feedback/overlay/live.mjs';
+import { restoreDrafts } from '/__feedback/overlay/restore.mjs';
 import { captureShot } from '/__feedback/overlay/shots.mjs';
 import { closePhotoViewer } from '/__feedback/overlay/attach.mjs';
 import { t, tn, getLang, setLang } from '/__feedback/overlay/i18n.mjs';
@@ -253,6 +254,7 @@ async function load() {
   startDomObserver();
   captureAfterShots();
   offerSourceChange();
+  restoreDrafts().catch(() => {}); // an unsent comment or reply from before the reload
 }
 
 export function boot() {

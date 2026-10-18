@@ -34,7 +34,8 @@ A module never imports one listed below it. The few calls that do run upward go 
 | `narrate.mjs` | 490 | "Talk me through it", the spoken-draft tray, and the walkthrough that reads the agent's replies aloud. |
 | `panel.mjs` | 473 | The review list: rendering, card actions, re-pinning, `refresh`, the DOM observer. |
 | `presence.mjs` | 158 | What the agent is doing: chip, activity drawer, tab title and favicon. |
-| `live.mjs` | 114 | The server-sent event stream and the agent-requested reload. |
+| `live.mjs` | 154 | The server-sent event stream and the agent-requested reload. |
+| `restore.mjs` | 157 | After a load, brings back an unsent comment or reply that a reload interrupted: the comment box on its spot when that is found with high confidence, else the "needs a spot" tray. The rules are in `lib/drafts.mjs`; `composer.mjs` and `panel.mjs` write the drafts. |
 | `theme.mjs` | 27 | Light / dark. |
 | `fab.mjs` | 90 | The floating button cluster and its drag-to-a-corner. |
 

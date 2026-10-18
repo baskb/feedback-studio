@@ -24,7 +24,7 @@ import { norm, buildElementAnchor, resolveAnchor } from '/__feedback/overlay/dom
 import { api } from '/__feedback/overlay/api.mjs';
 import { captureShot } from '/__feedback/overlay/shots.mjs';
 import { setMode, pickElement } from '/__feedback/overlay/mode.mjs';
-import { closeComposer } from '/__feedback/overlay/composer.mjs';
+import { closeComposer, openComposer } from '/__feedback/overlay/composer.mjs';
 import { setPanel, refresh } from '/__feedback/overlay/panel.mjs';
 import { t, tn } from '/__feedback/overlay/i18n.mjs';
 
@@ -210,28 +210,40 @@ export async function stopNarrate() {
 
 // POST one narration draft as a real comment (the confident path + the "placed
 // it" path both call this). Behaves like a manual save: pin appears, PPF sees it.
+// A comment brought back after a reload (d.restored, see restore.mjs) takes
+// this path too, typed rather than spoken and with its photos.
 async function saveNarrationComment(d) {
   const text = (d.text || '').trim();
   if (!text) return null;
+  const body = { page: S.page, pageTitle: document.title, url: location.href, anchor: d.anchor || {}, text, type: d.type, authorName: ROLE === 'comment' ? (LS.get('kbf-name') || '') : '' };
+  if (d.restored) body.attachments = (d.photos || []).map((p) => p.id);
+  else body.via = 'narration';
   const data = await api('/comments', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ page: S.page, pageTitle: document.title, url: location.href, anchor: d.anchor || {}, text, type: d.type, via: 'narration', authorName: ROLE === 'comment' ? (LS.get('kbf-name') || '') : '' }),
+    body: JSON.stringify(body),
   });
   S.comments.push(data.comment);
   if (d.anchor) captureShot(data.comment.id, { anchor: d.anchor });
   return data.comment;
 }
 
-// ---------- draft tray — ONLY for spoken comments we couldn't confidently place ----------
-function openDraftTray(drafts) {
+// ---------- draft tray — ONLY for comments we couldn't confidently place ----------
+// Spoken ones by default. restore.mjs passes its own heading and line for an
+// unsent comment whose spot was not found again after a reload.
+const spokenWords = {
+  heading: (n) => tn('{n} spoken comment needs a spot', '{n} spoken comments need a spot', n),
+  sub: (n) => tn('I heard this but wasn’t sure where — point at the element', 'I heard these but wasn’t sure where — point at the element', n),
+};
+export function openDraftTray(drafts, words = spokenWords) {
   closeDraftTray();
   const n = drafts.length;
   S.draftTray = document.createElement('div');
   S.draftTray.className = 'kbf-drafts';
+  S.draftTray._words = words;
   S.draftTray.innerHTML = `
     <div class="kbf-drafts-head">
-      <b>${tn('{n} spoken comment needs a spot', '{n} spoken comments need a spot', n)}</b>
-      <span class="kbf-drafts-sub">${tn('I heard this but wasn’t sure where — point at the element', 'I heard these but wasn’t sure where — point at the element', n)}</span>
+      <b>${escapeHtml(words.heading(n))}</b>
+      <span class="kbf-drafts-sub">${escapeHtml(words.sub(n))}</span>
       <button type="button" class="kbf-x" data-dr="close" title="${t('Dismiss')}">${I.close}</button>
     </div>
     <div class="kbf-drafts-list"></div>
@@ -246,7 +258,11 @@ function openDraftTray(drafts) {
   drafts.forEach((d, i) => list.appendChild(renderDraftRow(d, i)));
   S.draftTray.addEventListener('click', (e) => {
     const act = e.target.closest('[data-dr]')?.dataset.dr;
-    if (act === 'close' || act === 'discardall') { closeDraftTray(); return; }
+    if (act === 'close' || act === 'discardall') {
+      S.draftTray.querySelectorAll('.kbf-draft').forEach((r) => draftGone(r._draft));
+      closeDraftTray();
+      return;
+    }
     if (act === 'saveall') { saveAllUnpinned(); return; }
   });
 }
@@ -273,14 +289,14 @@ function renderDraftRow(d, i) {
       <button type="button" class="kbf-chip-btn kbf-draft-accept" data-d="accept">${I.check} ${needsSpot ? t('Save anyway') : t('Retry')}</button>
     </div>`;
   const ta = row.querySelector('.kbf-draft-text');
-  ta.addEventListener('input', () => { d.text = ta.value; autoGrow(ta, 120); });
+  ta.addEventListener('input', () => { d.text = ta.value; if (d.onEdit) d.onEdit(); autoGrow(ta, 120); });
   setTimeout(() => autoGrow(ta, 120), 0);
   row.addEventListener('click', (e) => {
     const act = e.target.closest('[data-d]')?.dataset.d;
     // (No "show me" here — needs-a-spot drafts have no anchor yet; the user
     // places one with "Point to it".)
-    if (act === 'discard') { row.remove(); updateDraftCount(); return; }
-    if (act === 'pin') { startDraftPin(d, row); return; }
+    if (act === 'discard') { draftGone(d); row.remove(); updateDraftCount(); return; }
+    if (act === 'pin') { if (d.restored) startRestoredPin(d, row); else startDraftPin(d, row); return; }
     if (act === 'accept') { acceptDraft(d, row); return; }
   });
   return row;
@@ -296,6 +312,25 @@ function startDraftPin(d, row) {
     }
   });
 }
+// A restored comment that gets its spot goes back into the comment box, not
+// straight to the server: the reviewer had not pressed Save yet.
+function startRestoredPin(d, row) {
+  if (S.draftTray) S.draftTray.style.display = 'none';
+  toast(t('Click the element this is about'), { duration: 4000 });
+  pickElement((el) => {
+    if (S.draftTray) S.draftTray.style.display = '';
+    if (!(el instanceof Element) || el === document.body) return;
+    row.remove();
+    updateDraftCount();
+    openComposer({
+      kind: 'new', anchor: buildElementAnchor(el), rect: el.getBoundingClientRect(), el,
+      restore: { text: d.text, type: d.type, typePicked: d.typePicked, photos: d.photos },
+    });
+    draftGone(d); // the open comment box keeps it from here on
+  });
+}
+// The draft left the tray for good (saved, discarded, or handed to the box).
+function draftGone(d) { if (d && d.onDone) { try { d.onDone(); } catch (e) {} } }
 async function acceptDraft(d, row) {
   if (d._saving) return; // idempotent: ignore repeat clicks while the POST is in flight
   if (!(d.text || '').trim()) { toastError(t('Add a note or discard this')); return; }
@@ -303,6 +338,7 @@ async function acceptDraft(d, row) {
   if (row) row.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   try {
     await saveNarrationComment(d);
+    draftGone(d);
     if (row) row.remove();
     refresh();
     toast(t('Comment added'));
@@ -325,10 +361,11 @@ function updateDraftCount() {
   if (!S.draftTray) return;
   const n = S.draftTray.querySelectorAll('.kbf-draft').length;
   if (!n) { closeDraftTray(); return; }
+  const words = S.draftTray._words || spokenWords;
   const b = S.draftTray.querySelector('.kbf-drafts-head b');
-  if (b) b.textContent = tn('{n} spoken comment needs a spot', '{n} spoken comments need a spot', n);
+  if (b) b.textContent = words.heading(n);
   const sub = S.draftTray.querySelector('.kbf-drafts-sub');
-  if (sub) sub.textContent = tn('I heard this but wasn’t sure where — point at the element', 'I heard these but wasn’t sure where — point at the element', n);
+  if (sub) sub.textContent = words.sub(n);
 }
 export function closeDraftTray() { if (S.draftTray) { try { S.draftTray.remove(); } catch (e) {} S.draftTray = null; setChromeHidden(false); } }
 

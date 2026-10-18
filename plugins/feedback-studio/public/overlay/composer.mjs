@@ -2,7 +2,7 @@
 // saved comment, and everything that has to be undone when it closes.
 
 import {
-  S, MODE, ROLE, SOURCE, LS, LANGS, SR, TYPES, TYPE_IDS,
+  S, MODE, ROLE, SOURCE, LS, SS, LANGS, SR, TYPES, TYPE_IDS,
   langName, langShort, placeholderFor, drainTeardown,
 } from '/__feedback/overlay/state.mjs';
 import {
@@ -21,8 +21,13 @@ import { t, tn } from '/__feedback/overlay/i18n.mjs';
 import { toastUndo } from '/__feedback/overlay/undo.mjs';
 import { markMine } from '/__feedback/overlay/state.mjs';
 import { createTray } from '/__feedback/overlay/attach.mjs';
+import { DRAFT_KEY, packDraft } from '/__feedback/lib/drafts.mjs';
 
 export function closeComposer() {
+  // Saved, cancelled or replaced: the unsent draft is no longer needed. Only when
+  // a box was open: the load calls this too (setMode), before restore.mjs has
+  // read the draft from before the reload.
+  if (S.activeComposer) SS.remove(DRAFT_KEY);
   stopRecognition();
   clearTarget();
   clearTweakPreview();
@@ -37,6 +42,28 @@ export function closeComposer() {
   S.pickChain = [];
   S.pickIdx = 0;
   picker.style.display = 'none';
+}
+
+// Keep what is being typed in this tab, so a reload (by the agent, a dev
+// server, the reviewer, or a phone dropping the tab) brings it back; see
+// lib/drafts.mjs and restore.mjs. Live on-page previews (style tweaks, retyped
+// text, a replacement image) cannot be brought back; the draft only notes them.
+function persistDraft(opts, text) {
+  if (S.activeComposer !== opts) return;
+  const raw = packDraft({
+    kind: opts.kind,
+    commentId: opts.comment ? opts.comment.id : '',
+    original: opts.comment ? { text: opts.comment.text, type: opts.comment.type } : null,
+    page: S.page, source: SOURCE, anchor: opts.anchor,
+    text, type: S.ctype, typePicked: !!opts.typePicked,
+    photos: opts.tray ? opts.tray.saved() : [],
+    lost: {
+      tweaks: !!(opts.tweaks && opts.tweaks.count()),
+      textEdit: !!(opts.textEditApi && opts.textEditApi.changed()),
+      image: !!(opts.imageReplace && opts.imageReplace.count()),
+    },
+  });
+  if (raw) SS.set(DRAFT_KEY, raw); else SS.remove(DRAFT_KEY);
 }
 
 // Rainbow highlight over exactly what's being commented on, while the composer
@@ -233,6 +260,7 @@ export function openComposer(opts) {
   }
 
   function validate() {
+    persistDraft(opts, ta.value);
     if (opts.saving) return;
     saveBtn.disabled = !ta.value.trim()
       && !(opts.tweaks && opts.tweaks.count())
@@ -250,7 +278,7 @@ export function openComposer(opts) {
     S.ctype = t;
     box.querySelectorAll('.kbf-type').forEach((b) => b.classList.toggle('is-active', b.dataset.type === S.ctype));
   };
-  opts.markTypePicked = () => { userPickedType = true; };
+  opts.markTypePicked = () => { userPickedType = true; opts.typePicked = true; };
 
   // Element anchors get the show-don't-tell sections (a text range has no box).
   if (anchor.type !== 'range') {
@@ -287,6 +315,20 @@ export function openComposer(opts) {
     });
   }
 
+  // A draft brought back after a reload (restore.mjs): its words, its type,
+  // its photos. A type the reviewer picked by hand stays theirs.
+  if (opts.restore) {
+    const r = opts.restore;
+    if (typeof r.text === 'string') ta.value = r.text;
+    if (r.type && TYPE_IDS.includes(r.type)) {
+      S.ctype = r.type;
+      box.querySelectorAll('.kbf-type').forEach((b) => b.classList.toggle('is-active', b.dataset.type === S.ctype));
+      if (!ta.value) ta.placeholder = placeholderFor(S.ctype);
+    }
+    if (r.typePicked) opts.markTypePicked();
+    if (opts.tray && r.photos && r.photos.length) opts.tray.restore(r.photos);
+  }
+
   box.addEventListener('click', (e) => {
     const typeBtn = e.target.closest('[data-type]');
     if (typeBtn) {
@@ -295,6 +337,7 @@ export function openComposer(opts) {
       box.querySelectorAll('.kbf-type').forEach((b) => b.classList.toggle('is-active', b.dataset.type === S.ctype));
       const taEl = box.querySelector('.kbf-textarea'); // prompt matches the picked type
       if (taEl && !taEl.value) taEl.placeholder = placeholderFor(S.ctype);
+      validate();
       return;
     }
     const act = e.target.closest('[data-act]')?.dataset.act;

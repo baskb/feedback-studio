@@ -51,7 +51,13 @@ function requestReload() {
     return;
   }
   toast(t('Applying your agent’s edits — reloading…'), { duration: 1200 });
-  setTimeout(doReload, 700);
+  // Look again when the moment comes: a comment box opened in the meantime
+  // turns this into the held-back reload above.
+  setTimeout(() => {
+    if (!reloadIsUnsafe()) { doReload(); return; }
+    S.reloadPending = false;
+    requestReload();
+  }, 700);
 }
 export { requestReload };
 

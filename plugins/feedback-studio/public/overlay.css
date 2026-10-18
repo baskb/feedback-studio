@@ -1498,12 +1498,14 @@ button {
 .kbf-drafts-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   padding: 13px 14px 11px;
   border-bottom: 1px solid var(--kbf-border);
 }
-.kbf-drafts-head b { font-size: 14px; }
-.kbf-drafts-sub { flex: 1; font-size: 11.5px; color: var(--kbf-muted); }
+.kbf-drafts-head b { flex: 1; font-size: 14px; }
+/* The explanation gets its own line under the heading and the close button. */
+.kbf-drafts-sub { flex: 1 1 100%; order: 3; font-size: 11.5px; color: var(--kbf-muted); }
 .kbf-drafts-list { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
 .kbf-drafts-foot { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--kbf-border); }
 

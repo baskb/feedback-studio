@@ -8,7 +8,7 @@
 //      write them as `S.comments`, `S.mode`, … from anywhere.
 //   3. Pure helpers over that state (no DOM, no network).
 //
-// This module imports nothing but the shared schema and the anchoring helper,
+// This module imports nothing but shared lib/ modules and the translations,
 // so it can never take part in an import cycle.
 
 import { WEB_TYPES, MD_TYPES, UNIVERSAL_TYPES } from '/__feedback/lib/schema.mjs';
@@ -16,6 +16,7 @@ import { norm } from '/__feedback/lib/anchor.mjs';
 import { normalizePath } from '/__feedback/lib/nav.mjs';
 import { lastTouch, matchesQuery, SORT_DEFAULT, isSortKey, defaultDir } from '/__feedback/lib/sort.mjs';
 import { t } from '/__feedback/overlay/i18n.mjs';
+import { REPLY_KEY, readReplyDrafts, packReplyDrafts } from '/__feedback/lib/drafts.mjs';
 export { normalizePath, lastTouch };
 
 // ---------- role / config ----------
@@ -299,10 +300,11 @@ export const S = {
   targetEls: [],                               // rainbow highlight boxes over the element/text being commented on
   expandedId: null,                            // which comment's conversation thread is open in the panel
   focusReplyNext: false,                       // focus the reply box on the next render (after an explicit expand)
-  // id -> in-progress reply text, preserved across re-renders. Entries are only
-  // removed on a successful send; a draft for a deleted comment is harmless
-  // (ids are UUIDs, never reused) and the map clears on page reload.
-  replyDrafts: {},
+  // id -> in-progress reply text, preserved across re-renders and, through
+  // sessionStorage, across a reload of this tab (saveReplyDrafts). Entries are
+  // only removed on a successful send; a draft for a deleted comment is
+  // harmless (ids are UUIDs, never reused) and expires with the rest.
+  replyDrafts: readReplyDrafts(SS.get(REPLY_KEY)),
 
   // voice dictation (composer)
   recognizing: false,
@@ -367,6 +369,12 @@ export const S = {
 
   justDraggedFab: false,                       // set true on a FAB drag so the trailing click doesn't toggle
 };
+
+// Write the half-written replies to this tab's storage (see lib/drafts.mjs).
+export function saveReplyDrafts() {
+  const raw = packReplyDrafts(S.replyDrafts);
+  if (raw) SS.set(REPLY_KEY, raw); else SS.remove(REPLY_KEY);
+}
 
 // ---------- preview teardown registry ----------
 export function addTeardown(key, fn) {

@@ -95,6 +95,16 @@ export function createTray(onChange) {
     busy: () => items.some((i) => i.status === 'working'),
     failed: () => items.filter((i) => i.status === 'failed').length,
     ids: () => items.filter((i) => i.status === 'done').map((i) => i.id),
+    // The uploaded photos, for the unsent draft kept across a reload, and the
+    // way back in: they are on the server already, so they come back as done.
+    saved: () => items.filter((i) => i.status === 'done').map((i) => ({ id: i.id, name: i.name, thumb: i.thumb })),
+    restore(list) {
+      for (const p of list || []) {
+        if (!p || !p.id || items.length >= ATTACH_MAX_PER_MESSAGE) continue;
+        items.push({ key: 'p' + (++seq), name: String(p.name || '').slice(0, 120), status: 'done', id: p.id, thumb: String(p.thumb || ''), error: '' });
+      }
+      changed();
+    },
     // Resolves once every photo picked so far is uploaded or has failed.
     settled: () => queue,
     clear() { alive = false; items.length = 0; },

@@ -5,7 +5,7 @@
 import {
   S, MODE, API, ROLE, CAN_COMMENT, CAN_MANAGE, SS, LS,
   normalizePath, isOpenC, lastTouch, filtered, agentRepliedAfter, isMineC, defaultDir,
-  agentName, fmtDur, activityText, walkComments, pinFilterOn, pinLabel,
+  agentName, fmtDur, activityText, walkComments, pinFilterOn, pinLabel, saveReplyDrafts,
 } from '/__feedback/overlay/state.mjs';
 import {
   I, root, host, panel, listEl, subEl, countEl, readyEl,
@@ -598,7 +598,7 @@ async function sendReply(id) {
     const i = S.comments.findIndex((c) => c.id === id);
     if (i >= 0) S.comments[i] = data.comment;
     // The draft is sent: a newer draft typed while the photos uploaded stays.
-    if ((S.replyDrafts[id] || '').trim() === text) delete S.replyDrafts[id];
+    if ((S.replyDrafts[id] || '').trim() === text) { delete S.replyDrafts[id]; saveReplyDrafts(); }
     const lost = (tray ? tray.failed() : 0) + attachments.length - (data.reply && Array.isArray(data.reply.attachments) ? data.reply.attachments.length : 0);
     if (tray) { tray.clear(); replyTrays.delete(id); }
     S.expandedId = id;
@@ -773,6 +773,7 @@ export function initPanel() {
     if (e.target.classList.contains('kbf-reply-input')) {
       const card = e.target.closest('.kbf-card'); // the draft belongs to ITS card, whichever is expanded
       S.replyDrafts[(card && card.dataset.id) || S.expandedId] = e.target.value;
+      saveReplyDrafts();
       autoGrow(e.target, 120);
       return;
     }

@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-10-18
+
 ### Fixed
 - **A half-written comment or reply survives a page reload.** The overlay already held back the reloads it starts itself while a comment box was open, but other reloads reloaded the page anyway: a dev server behind `--proxy` reloading the page after the agent saved a file, "Reload now", a manual refresh, a phone dropping the tab in the background, and a reply box the cursor had left. Now the open comment box (its words, type and uploaded photos) and every half-written reply are kept in the tab's own storage on each change, and come back after the load. A new comment reopens on its spot only when that spot is found again with high confidence, the same rule as every other on-page action. When the agent has just changed the thing the comment was about, the text goes to the "needs a spot" tray with "Point to it" instead, and never attaches to a guessed element. An edit reopens while its comment exists. A reply's card opens again with the text in its box. Save or Cancel clears the draft. Drafts expire after a day, like unclaimed photo uploads. Changes made on the page itself (style tweaks, retyped text, a replacement image) cannot be brought back; when the box also held words, the message says so. The rules are in `lib/drafts.mjs` (tested in `test/drafts.test.mjs`); the browser side is `public/overlay/restore.mjs`.
 - **An agent's reload no longer reloads away a comment box opened just before it.** The reload waited 0.7 s after the check for open work; a comment box opened in that time was reloaded away. It now checks again just before reloading.
@@ -723,7 +725,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.6.2...HEAD
+[1.6.2]: https://github.com/baskb/feedback-studio/releases/tag/v1.6.2
 [1.6.1]: https://github.com/baskb/feedback-studio/releases/tag/v1.6.1
 [1.6.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.6.0
 [1.5.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.5.0

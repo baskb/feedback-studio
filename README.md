@@ -1,6 +1,6 @@
 # Feedback Studio
 
-https://github.com/user-attachments/assets/e76db2d8-4886-4824-93b2-49af158c92b6
+https://github.com/user-attachments/assets/307e6a74-d69d-4160-b701-3e7dc20cdf99
 
 Point, comment, done. Feedback Studio overlays a local website you're building —
 or a Markdown file you're writing — so you can click any element, select any

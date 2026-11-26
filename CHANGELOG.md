@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-11-26
+
 ### Security
 - **`--tunnel` downloads one fixed `cloudflared` release and checks it every time.** Before, it fetched the newest release without a check unless you set `FBS_CLOUDFLARED_VERSION` and `FBS_CLOUDFLARED_SHA256`, and a copy saved earlier was run without a check even when you had. Now the release is 2026.11.2 and the SHA-256 of every file is built in (`lib/cloudflared.mjs`, tested in `test/cloudflared.test.mjs`). The download goes to a temporary name and only gets its real name after the check, so a half-finished download is never run. The saved program is checked on every start; one that does not match is deleted and downloaded again. It is saved as `cloudflared-<version>`, so the unchecked `cloudflared` an older version saved is not used. A `cloudflared` on PATH is still used as it is. Reported in the Omarchy plugin marketplace review.
 - **The self-signed HTTPS private key is readable by you only.** `.feedback/.cert/key.pem` was written with the default mode, which is often 0644, so other users on the same machine could read it. The folder is now 0700 and the key 0600, also for a key an older version already wrote. The key `tailscale cert` writes for `--tailscale` gets the same treatment. Reported in the same review.
@@ -735,7 +737,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of echoing whatever the client sent.
 - Lazy `npm install` of `selfsigned`/`marked` now runs with `--ignore-scripts`.
 
-[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.6.2...HEAD
+[Unreleased]: https://github.com/baskb/feedback-studio/compare/v1.6.3...HEAD
+[1.6.3]: https://github.com/baskb/feedback-studio/releases/tag/v1.6.3
 [1.6.2]: https://github.com/baskb/feedback-studio/releases/tag/v1.6.2
 [1.6.1]: https://github.com/baskb/feedback-studio/releases/tag/v1.6.1
 [1.6.0]: https://github.com/baskb/feedback-studio/releases/tag/v1.6.0

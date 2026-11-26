@@ -10,7 +10,7 @@ you opt into the matching flag.
 |---|---|---|
 | [marked](https://github.com/markedjs/marked) | `--md` (Markdown rendering) | MIT |
 | [selfsigned](https://github.com/jfromaniello/selfsigned) | `--https` (self-signed TLS cert) | MIT |
-| [cloudflared](https://github.com/cloudflare/cloudflared) (downloaded binary) | `--tunnel` (public HTTPS tunnel) | Apache-2.0 |
+| [cloudflared](https://github.com/cloudflare/cloudflared) (the one on PATH, else release 2026.11.2, downloaded and checked by SHA-256) | `--tunnel` (public HTTPS tunnel) | Apache-2.0 |
 
 Each helper is the property of its respective authors and is distributed under its
 own license, linked above.

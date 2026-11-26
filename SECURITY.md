@@ -42,11 +42,9 @@ staying local (loopback) when reviewing a file you didn't write.
 
 ## Pinning the `cloudflared` helper
 
-`--tunnel` downloads the `cloudflared` binary on first use. By default it fetches
-the latest release. To make that deterministic and verifiable, set
-`FBS_CLOUDFLARED_VERSION` to a specific release tag (e.g. `2024.12.2`) and
-`FBS_CLOUDFLARED_SHA256` to the published SHA-256 of the asset for your
-platform — the server refuses to run a binary that doesn't match.
+`--tunnel` runs `cloudflared`. A `cloudflared` on your PATH (installed by you or your package manager) is used as it is. Without one, Feedback Studio downloads one fixed release (2026.11.2) into `~/.feedback-studio/bin`. The SHA-256 of every file it can download is written in `lib/cloudflared.mjs`. The download goes to a temporary name and is checked before it gets its real name, so a half-finished or changed download is never run. The saved program is checked again on every start, and a copy that does not match is deleted and downloaded again. A copy saved by an older version (named plain `cloudflared`, fetched from "latest" without a check) is not used.
+
+To use another release, set `FBS_CLOUDFLARED_VERSION` to its tag and `FBS_CLOUDFLARED_SHA256` to the SHA-256 of the program that runs. On macOS that is the `cloudflared` file inside the `.tgz`, not the archive. A version without a hash is refused, and the server stays local.
 
 When you use `--tunnel`:
 

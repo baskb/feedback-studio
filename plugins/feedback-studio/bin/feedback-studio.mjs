@@ -35,6 +35,7 @@ import {
   listVersions, readVersion as readHistoryVersion, diffVersions, recordSnapshot, latestVersion,
 } from '../lib/history.mjs';
 import { parseTailscaleStatus, certNeedsRefresh } from '../lib/tailscale.mjs';
+import { cloudflaredPlan, sha256File } from '../lib/cloudflared.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -377,6 +378,16 @@ async function serveVendorHti(res, url) {
   res.end(readFileSync(file));
 }
 
+// A TLS private key is for this user only: its folder 0700, the key 0600.
+// writeFile's `mode` only applies when it creates the file, so an existing key
+// (an older version wrote it with the default mode, often 0644) is set here too.
+// Windows has no such permission bits; there the user's profile folder decides.
+async function keepKeyPrivate(dir, keyFile) {
+  if (process.platform === 'win32') return;
+  await chmod(dir, 0o700).catch(() => {});
+  if (existsSync(keyFile)) await chmod(keyFile, 0o600).catch(() => {});
+}
+
 // Self-signed certificate for localhost + the given IPs (and any extra DNS
 // names, e.g. the MagicDNS name when --tailscale has no real cert to offer).
 async function getTlsOptions(ips, dnsNames = []) {
@@ -385,7 +396,12 @@ async function getTlsOptions(ips, dnsNames = []) {
   const metaFile = path.join(CERT_DIR, 'ips.json');
   const wanted = JSON.stringify([...ips, ...dnsNames].sort());
   if (existsSync(keyFile) && existsSync(certFile) && existsSync(metaFile)) {
-    try { if (readFileSync(metaFile, 'utf-8') === wanted) return { key: readFileSync(keyFile), cert: readFileSync(certFile) }; } catch (e) {}
+    try {
+      if (readFileSync(metaFile, 'utf-8') === wanted) {
+        await keepKeyPrivate(CERT_DIR, keyFile);
+        return { key: readFileSync(keyFile), cert: readFileSync(certFile) };
+      }
+    } catch (e) {}
   }
   const selfsigned = await ensureSelfsigned();
   const altNames = [
@@ -395,8 +411,11 @@ async function getTlsOptions(ips, dnsNames = []) {
   const pems = await selfsigned.generate([{ name: 'commonName', value: 'localhost' }], {
     days: 825, keySize: 2048, algorithm: 'sha256', extensions: [{ name: 'subjectAltName', altNames }],
   });
-  await mkdir(CERT_DIR, { recursive: true });
-  await writeFile(keyFile, pems.private);
+  await mkdir(CERT_DIR, { recursive: true, mode: 0o700 });
+  // Before the write: a key file left by an older version keeps its mode when
+  // it is overwritten, so it is made private first.
+  await keepKeyPrivate(CERT_DIR, keyFile);
+  await writeFile(keyFile, pems.private, { mode: 0o600 });
   await writeFile(certFile, pems.cert);
   await writeFile(metaFile, wanted);
   return { key: pems.private, cert: pems.cert };
@@ -1802,26 +1821,11 @@ function openBrowser(url) {
 
 // ---------- secure tunnel (cloudflared quick tunnel) ----------
 // Gives the phone a real-certificate https://<rand>.trycloudflare.com URL, so
-// there's no self-signed warning and the mic works on any network. The helper
-// binary is fetched once into ~/.feedback-studio/bin (same lazy pattern as the
-// --https / --md helpers); no Cloudflare account is needed for a quick tunnel.
-function cloudflaredAsset() {
-  // Default to the latest release. Set FBS_CLOUDFLARED_VERSION (e.g. "2024.12.2")
-  // to pin a specific tag so the downloaded artifact is deterministic and can be
-  // checksum-verified — see verifyChecksum / FBS_CLOUDFLARED_SHA256 below.
-  const ver = (process.env.FBS_CLOUDFLARED_VERSION || '').trim();
-  const base = ver
-    ? `https://github.com/cloudflare/cloudflared/releases/download/${ver}/`
-    : 'https://github.com/cloudflare/cloudflared/releases/latest/download/';
-  const a64 = process.arch === 'arm64' ? 'arm64' : 'amd64';
-  if (process.platform === 'win32') return { url: base + `cloudflared-windows-${a64}.exe`, kind: 'exe' };
-  if (process.platform === 'darwin') return { url: base + `cloudflared-darwin-${a64}.tgz`, kind: 'tgz' };
-  if (process.platform === 'linux') {
-    const a = process.arch === 'arm64' ? 'arm64' : (process.arch === 'arm' ? 'arm' : 'amd64');
-    return { url: base + `cloudflared-linux-${a}`, kind: 'bin' };
-  }
-  return null;
-}
+// there's no self-signed warning and the mic works on any network. A
+// cloudflared on PATH is used as it is; otherwise one fixed release is
+// downloaded once into ~/.feedback-studio/bin and checked against its SHA-256
+// before every start (lib/cloudflared.mjs holds the version and the hashes).
+// No Cloudflare account is needed for a quick tunnel.
 function httpDownload(url, dest) {
   return new Promise((resolve, reject) => {
     const file = createWriteStream(dest);
@@ -1834,49 +1838,61 @@ function httpDownload(url, dest) {
     get(url);
   });
 }
-// Verify a downloaded artifact against an expected SHA-256 when the user has
-// pinned one via FBS_CLOUDFLARED_SHA256. cloudflared is a ~50 MB executable we
-// fetch and run, so a pin lets a security-conscious user guarantee they're
-// running exactly the audited binary (publish a hash, set the env, done). No
-// env set = no check (the default keeps the zero-config quick-tunnel working).
-async function verifyChecksum(file, label) {
-  const want = (process.env.FBS_CLOUDFLARED_SHA256 || '').trim().toLowerCase();
-  if (!want) return;
-  const got = crypto.createHash('sha256').update(await readFile(file)).digest('hex');
+// Throws, after deleting the file, when its SHA-256 is not `want`.
+async function checkSha256(file, want, label) {
+  const got = await sha256File(file);
   if (got !== want) {
     await unlink(file).catch(() => {});
-    throw new Error(`${label} failed checksum verification (expected ${want}, got ${got}). Refusing to run it.`);
+    throw new Error(`${label} does not match its SHA-256 (expected ${want}, got ${got}). It was deleted and not run.`);
   }
-  console.log('  Verified ' + label + ' against FBS_CLOUDFLARED_SHA256.');
 }
 async function ensureCloudflared() {
-  // 1) already on PATH?
+  // 1) Installed by the user or a package manager: used as it is.
   try {
     const probe = process.platform === 'win32' ? 'where cloudflared' : 'command -v cloudflared';
     const out = execSync(probe, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim().split(/\r?\n/)[0];
     if (out) return out;
   } catch (e) {}
-  // 2) previously downloaded?
+  // 2) The fixed release (or the one set with FBS_CLOUDFLARED_VERSION and
+  // FBS_CLOUDFLARED_SHA256). Throws when there is no checkable choice.
+  const plan = cloudflaredPlan(process.platform, process.arch, process.env);
   const binDir = path.join(GLOBAL_DATA, 'bin');
-  const exe = path.join(binDir, process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared');
-  if (existsSync(exe)) return exe;
-  // 3) fetch it
-  const asset = cloudflaredAsset();
-  if (!asset) throw new Error('no prebuilt cloudflared for ' + process.platform + '/' + process.arch + ' — install cloudflared manually, then re-run with --tunnel');
-  console.log('  Setting up the secure tunnel helper (one-time, ~50 MB)...');
-  await mkdir(binDir, { recursive: true });
-  if (asset.kind === 'tgz') {
-    const tgz = exe + '.tgz';
-    await httpDownload(asset.url, tgz);
-    await verifyChecksum(tgz, 'cloudflared archive');
-    execSync(`tar -xzf "${tgz}" -C "${binDir}"`); // extracts a `cloudflared` binary
-    await chmod(exe, 0o755).catch(() => {});
-  } else {
-    await httpDownload(asset.url, exe);
-    await verifyChecksum(exe, 'cloudflared binary');
-    if (process.platform !== 'win32') await chmod(exe, 0o755).catch(() => {});
+  const exe = path.join(binDir, plan.fileName);
+  // 3) Saved before: checked again on every start, then used. A copy that does
+  // not match is deleted and downloaded again below.
+  if (existsSync(exe)) {
+    try {
+      await checkSha256(exe, plan.programSha256, 'The saved cloudflared ' + plan.version);
+      return exe;
+    } catch (e) {
+      console.log('  ' + e.message + ' Downloading it again.');
+    }
   }
-  if (!existsSync(exe)) throw new Error('cloudflared did not install correctly');
+  // 4) Download under a temporary name, check, and only then give it its
+  // real name, so a half-finished download is never run.
+  console.log(`  Setting up the secure tunnel helper, cloudflared ${plan.version} (one-time, ~40 MB)...`);
+  await mkdir(binDir, { recursive: true });
+  const work = await mkdtemp(path.join(binDir, '.download-'));
+  try {
+    let program;
+    if (plan.kind === 'tgz') {
+      const tgz = path.join(work, 'cloudflared.tgz');
+      await httpDownload(plan.url, tgz);
+      if (plan.archiveSha256) await checkSha256(tgz, plan.archiveSha256, 'The downloaded cloudflared archive');
+      execFileSync('tar', ['-xzf', tgz, '-C', work], { stdio: 'ignore' }); // holds one `cloudflared` program
+      program = path.join(work, 'cloudflared');
+      if (!existsSync(program)) throw new Error('the cloudflared archive did not contain a cloudflared program');
+    } else {
+      program = path.join(work, plan.fileName);
+      await httpDownload(plan.url, program);
+    }
+    await checkSha256(program, plan.programSha256, 'The downloaded cloudflared ' + plan.version);
+    if (process.platform !== 'win32') await chmod(program, 0o755);
+    await rename(program, exe);
+    console.log(`  Checked cloudflared ${plan.version} against its SHA-256.`);
+  } finally {
+    await rm(work, { recursive: true, force: true }).catch(() => {});
+  }
   return exe;
 }
 let tunnelProc = null;
@@ -1944,13 +1960,18 @@ async function getTailscaleTlsOptions(name) {
   if (existsSync(certFile) && existsSync(keyFile)) {
     try {
       const x = new crypto.X509Certificate(readFileSync(certFile));
-      if (x.checkHost(name) && !certNeedsRefresh(x.validTo)) return { key: readFileSync(keyFile), cert: readFileSync(certFile) };
+      if (x.checkHost(name) && !certNeedsRefresh(x.validTo)) {
+        await keepKeyPrivate(dir, keyFile);
+        return { key: readFileSync(keyFile), cert: readFileSync(certFile) };
+      }
     } catch (e) { /* unreadable or foreign: fetch a fresh pair */ }
   }
   console.log(`  Getting the certificate for ${name} from Tailscale (cached afterwards)...`);
-  await mkdir(dir, { recursive: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await keepKeyPrivate(dir, keyFile);
   execFileSync('tailscale', ['cert', '--cert-file', certFile, '--key-file', keyFile, name],
     { timeout: 120000, stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8' });
+  await keepKeyPrivate(dir, keyFile);
   const x = new crypto.X509Certificate(readFileSync(certFile));
   if (!x.checkHost(name)) throw new Error('the certificate Tailscale wrote is not for ' + name);
   return { key: readFileSync(keyFile), cert: readFileSync(certFile) };
